@@ -606,7 +606,7 @@
       <div class="conv-meta">
         <span class="conv-preview">${esc(preview)}</span>
         ${channel ? `<span class="conv-channel" title="${esc(channel)}">${channel === "whatsapp" ? icon("message") : icon("globe")}</span>` : ""}
-        <button class="icon-btn sm" data-action="conv-menu" data-id="${esc(c.id)}" title="Conversation menu" style="width:20px;height:18px;opacity:.65">${icon("more", "sm")}</button>
+        <button class="icon-btn sm" data-action="conv-menu" data-id="${esc(c.id)}" title="Conversation menu" style="width:28px;height:22px;opacity:.75">${icon("more", "sm")}</button>
       </div>
     </div>`;
   }
@@ -1807,7 +1807,7 @@
     openModal(`${modalHead("Control center", "Agents, channels, routing and account")}<div class="settings-layout">
       <nav class="settings-tabs">${tabs.map(([id, ic, label]) => `<button class="settings-tab ${S.settingsTab === id ? "active" : ""}" data-action="settings-tab" data-tab="${id}">${icon(ic)}<span>${label}</span></button>`).join("")}</nav>
       <div class="settings-content" id="settings-content">${body}</div>
-    </div>`, { size: "" });
+    </div>`, { size: "settings-modal" });
     if (S.settingsTab === "channels") startQRTimer();
   }
 

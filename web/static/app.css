@@ -511,11 +511,33 @@ a:hover { text-decoration: underline; }
   .welcome { padding: 30px 18px 60px; }
   .suggestion-grid { grid-template-columns: 1fr; }
   .welcome-orb { width: 54px; height: 54px; font-size: 25px; }
-  .settings-layout { grid-template-columns: 1fr; }
-  .settings-tabs { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 8px; }
-  .settings-tab { white-space: nowrap; padding: 7px 9px; }
-  .settings-tab .icon { display: none; }
-  .settings-content { padding: 15px; }
+  .modal.settings-modal { height: 94dvh; }
+  .settings-modal .settings-layout { flex: 1; min-height: 0; }
+  .settings-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+  .settings-tabs {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: stretch; align-self: start; gap: 2px;
+    border-right: 0; border-bottom: 1px solid var(--border); padding: 7px 6px;
+  }
+  .settings-tab {
+    flex-direction: column; justify-content: center; gap: 3px;
+    min-width: 0; min-height: 52px; padding: 6px 3px; border-radius: 8px;
+    font-size: 10.5px; line-height: 1.15; text-align: center;
+  }
+  .settings-tab .icon { display: block; width: 18px; height: 18px; }
+  .settings-tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .settings-content { padding: 16px; }
+  .agent-card { flex-wrap: wrap; }
+  .agent-card-main { flex: 1 1 180px; }
+  .agent-card-actions {
+    flex: 0 0 100%; justify-content: flex-end; gap: 2px;
+    margin-top: 2px; padding-top: 6px; border-top: 1px solid var(--border);
+  }
+  .agent-card-actions .icon-btn.sm, .mcp-actions .icon-btn.sm { width: 36px; height: 36px; }
+  .agent-card-actions .icon.sm, .mcp-actions .icon.sm { width: 17px; height: 17px; }
+  .topbar .icon-btn { width: 36px; height: 36px; }
+  .topbar .icon-btn .icon { width: 20px; height: 20px; }
+  .topbar .pill-btn { min-height: 36px; }
   .modal-overlay { padding: 0; align-items: flex-end; }
   .modal { width: 100%; max-height: 94dvh; border-radius: 18px 18px 0 0; border-bottom: 0; }
   .modal-head { padding: 13px 15px; }
@@ -531,13 +553,18 @@ a:hover { text-decoration: underline; }
   .topbar-title-wrap { flex: 1; }
 }
 @media (max-width: 480px) {
+  .settings-tab { font-size: 10px; }
   .topbar-actions .pill-btn:not(.agent-pill) { display: none; }
-  .topbar-actions .icon-btn { width: 30px; }
   .chat-inner { padding: 14px 11px 8px; }
   .msg.user { padding-left: 0; }
   .msg.user .msg-body { max-width: 94%; }
   .attach-thumb { width: 96px; height: 72px; }
+  .composer-hint { display: none; }
   .composer textarea { font-size: 16px; } /* prevents iOS zoom */
+  .topbar-actions .icon-btn { width: 36px; height: 36px; }
+}
+@media (max-width: 360px) {
+  .settings-tab { font-size: 9.5px; letter-spacing: -0.01em; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
