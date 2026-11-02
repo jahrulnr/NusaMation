@@ -1,0 +1,510 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/jahrulnr/nusamation/internal/acp"
+	"github.com/jahrulnr/nusamation/internal/config"
+	"github.com/jahrulnr/nusamation/internal/store"
+)
+
+type Sink interface {
+	AgentState(agentID, status, lastError string)
+	SessionCreated(s *Session, configOptions json.RawMessage, recovered bool)
+	SessionUpdate(s *Session, update acp.SessionUpdate, raw json.RawMessage)
+	SessionConfigUpdated(s *Session, configOptions json.RawMessage)
+	Permission(ctx context.Context, s *Session, req acp.PermissionRequest) (acp.PermissionResponse, error)
+	AgentLog(agentID, line string)
+	AgentExit(agentID string, err error)
+	SessionLost(s *Session, err error)
+}
+
+type NopSink struct{}
+
+func (NopSink) AgentState(string, string, string)                          {}
+func (NopSink) SessionCreated(*Session, json.RawMessage, bool)             {}
+func (NopSink) SessionUpdate(*Session, acp.SessionUpdate, json.RawMessage) {}
+func (NopSink) SessionConfigUpdated(*Session, json.RawMessage)             {}
+func (NopSink) Permission(context.Context, *Session, acp.PermissionRequest) (acp.PermissionResponse, error) {
+	return acp.PermissionResponse{Outcome: acp.PermissionOutcome{Outcome: "cancelled"}}, nil
+}
+func (NopSink) AgentLog(string, string)     {}
+func (NopSink) AgentExit(string, error)     {}
+func (NopSink) SessionLost(*Session, error) {}
+
+type Session struct {
+	agentID        string
+	conversationID string
+	acpID          string
+	cwd            string
+	roots          []string
+	configOptions  json.RawMessage
+	loaded         bool
+	recovered      bool
+	createdAt      time.Time
+	lastUsed       time.Time
+	mu             sync.Mutex
+	ensureMu       sync.Mutex
+	replaying      atomic.Bool
+}
+
+func (s *Session) AgentID() string        { return s.agentID }
+func (s *Session) ConversationID() string { return s.conversationID }
+func (s *Session) ACPID() string          { s.mu.Lock(); defer s.mu.Unlock(); return s.acpID }
+func (s *Session) Cwd() string            { return s.cwd }
+func (s *Session) Config() json.RawMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append(json.RawMessage(nil), s.configOptions...)
+}
+func (s *Session) Roots() []string      { return append([]string(nil), s.roots...) }
+func (s *Session) Recovered() bool      { s.mu.Lock(); defer s.mu.Unlock(); return s.recovered }
+func (s *Session) ClearRecovered()      { s.mu.Lock(); s.recovered = false; s.mu.Unlock() }
+func (s *Session) CreatedAt() time.Time { return s.createdAt }
+func (s *Session) LastUsed() time.Time  { s.mu.Lock(); defer s.mu.Unlock(); return s.lastUsed }
+func (s *Session) touch()               { s.mu.Lock(); s.lastUsed = time.Now(); s.mu.Unlock() }
+
+type EnsureRequest struct {
+	AgentID        string
+	ConversationID string
+	Cwd            string
+	ACPSessionID   string
+	AdditionalDirs []string
+	DesiredModel   string
+	DesiredConfig  map[string]any
+	CachedConfig   json.RawMessage
+	ForceNew       bool
+}
+
+type Manager struct {
+	store     *store.Store
+	log       *slog.Logger
+	terminals *TerminalManager
+
+	mu       sync.Mutex
+	sink     Sink
+	runtimes map[string]*Runtime
+	byConv   map[string]*Session
+}
+
+func NewManager(st *store.Store, log *slog.Logger) *Manager {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Manager{
+		store:     st,
+		log:       log.With("component", "agents"),
+		terminals: NewTerminalManager(log),
+		sink:      NopSink{},
+		runtimes:  map[string]*Runtime{},
+		byConv:    map[string]*Session{},
+	}
+}
+
+func (m *Manager) SetSink(s Sink) {
+	if s == nil {
+		s = NopSink{}
+	}
+	m.mu.Lock()
+	m.sink = s
+	m.mu.Unlock()
+}
+
+func (m *Manager) Sink() Sink {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sink
+}
+
+func (m *Manager) ensureRuntime(agent store.Agent) *Runtime {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r, ok := m.runtimes[agent.ID]; ok {
+		return r
+	}
+	r := &Runtime{mgr: m, agent: agent, sessions: map[string]*Session{}, byACP: map[string]*Session{}, pending: map[string][]pendingNotif{}, state: "unknown"}
+	m.runtimes[agent.ID] = r
+	return r
+}
+
+func (m *Manager) InvalidateAgent(agentID string) {
+	m.mu.Lock()
+	r := m.runtimes[agentID]
+	delete(m.runtimes, agentID)
+	m.mu.Unlock()
+	if r != nil {
+		r.Stop("agent configuration changed")
+	}
+}
+
+func (m *Manager) EnsureSession(ctx context.Context, req EnsureRequest) (*Session, error) {
+	agent, err := m.store.GetAgent(ctx, req.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	if !agent.Enabled {
+		return nil, fmt.Errorf("agent %q is disabled", agent.Name)
+	}
+	if req.Cwd == "" {
+		req.Cwd = agent.Cwd
+	}
+	if !filepath.IsAbs(req.Cwd) {
+		return nil, fmt.Errorf("working directory must be absolute")
+	}
+	if st, err := os.Stat(req.Cwd); err != nil || !st.IsDir() {
+		return nil, fmt.Errorf("working directory %s is not accessible", req.Cwd)
+	}
+	for _, d := range req.AdditionalDirs {
+		if d == "" {
+			continue
+		}
+		if !filepath.IsAbs(d) {
+			return nil, fmt.Errorf("additional directory %q must be absolute", d)
+		}
+	}
+	r := m.ensureRuntime(agent)
+	return r.EnsureSession(ctx, req)
+}
+
+// Session returns the live ACP session for a conversation, if one is loaded.
+func (m *Manager) Session(conversationID string) *Session {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.byConv[conversationID]
+}
+
+// PromptCapabilities reports the active agent's prompt capabilities. It is
+// intentionally conservative: agents that have not started yet advertise no
+// optional capabilities until probed.
+func (m *Manager) PromptCapabilities(agentID string) acp.PromptCapabilities {
+	r := m.runtimeFor(agentID)
+	if r == nil {
+		return acp.PromptCapabilities{}
+	}
+	r.mu.Lock()
+	c := r.client
+	r.mu.Unlock()
+	if c == nil {
+		return acp.PromptCapabilities{}
+	}
+	return c.PromptCapabilities()
+}
+
+func (m *Manager) Prompt(ctx context.Context, s *Session, blocks []acp.ContentBlock) (acp.PromptResult, error) {
+	r := m.runtimeFor(s.agentID)
+	if r == nil {
+		return acp.PromptResult{}, errors.New("agent runtime is not running")
+	}
+	return r.Prompt(ctx, s, blocks)
+}
+
+func (m *Manager) Cancel(ctx context.Context, s *Session) error {
+	r := m.runtimeFor(s.agentID)
+	if r == nil {
+		return nil
+	}
+	return r.Cancel(ctx, s)
+}
+
+func (m *Manager) SetConfig(ctx context.Context, s *Session, configID string, value any) (json.RawMessage, error) {
+	r := m.runtimeFor(s.agentID)
+	if r == nil {
+		return nil, errors.New("agent runtime is not running")
+	}
+	return r.SetConfig(ctx, s, configID, value)
+}
+
+func (m *Manager) ResetConversation(ctx context.Context, conversationID string) {
+	m.mu.Lock()
+	s := m.byConv[conversationID]
+	m.mu.Unlock()
+	if s == nil {
+		return
+	}
+	r := m.runtimeFor(s.agentID)
+	if r != nil {
+		r.DropSession(ctx, s)
+	}
+	m.mu.Lock()
+	if m.byConv[conversationID] == s {
+		delete(m.byConv, conversationID)
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) runtimeFor(agentID string) *Runtime {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.runtimes[agentID]
+}
+
+func (m *Manager) AgentRuntimeInfo(agentID string) (status string, pid int, uptime time.Duration, logs []string) {
+	r := m.runtimeFor(agentID)
+	if r == nil {
+		return "stopped", 0, 0, nil
+	}
+	return r.Info()
+}
+
+func (m *Manager) Authenticate(ctx context.Context, agentID, methodID string) error {
+	agent, err := m.store.GetAgent(ctx, agentID)
+	if err != nil {
+		return err
+	}
+	r := m.ensureRuntime(agent)
+	return r.Authenticate(ctx, methodID)
+}
+
+func (m *Manager) Logout(ctx context.Context, agentID string) error {
+	r := m.runtimeFor(agentID)
+	if r == nil {
+		return nil
+	}
+	return r.Logout(ctx)
+}
+
+func (m *Manager) StopAll() {
+	m.mu.Lock()
+	runtimes := make([]*Runtime, 0, len(m.runtimes))
+	for _, r := range m.runtimes {
+		runtimes = append(runtimes, r)
+	}
+	m.mu.Unlock()
+	for _, r := range runtimes {
+		r.Stop("server shutting down")
+	}
+	m.terminals.CloseAll()
+}
+
+type ProbeResult struct {
+	AgentInfo     *acp.Implementation `json:"agentInfo,omitempty"`
+	Capabilities  json.RawMessage     `json:"capabilities"`
+	AuthMethods   json.RawMessage     `json:"authMethods"`
+	ConfigOptions json.RawMessage     `json:"configOptions"`
+	Models        json.RawMessage     `json:"models"`
+	Protocol      int                 `json:"protocolVersion"`
+	DurationMS    int64               `json:"durationMs"`
+}
+
+type probeHandler struct{}
+
+func (probeHandler) OnNotification(string, string, json.RawMessage) {}
+func (probeHandler) OnStderr(string)                                {}
+func (probeHandler) OnExit(error)                                   {}
+func (probeHandler) OnRequest(_ context.Context, method string, _ json.RawMessage) (any, *acp.RPCError) {
+	return nil, &acp.RPCError{Code: acp.CodeMethodNotFound, Message: "probe client does not support " + method}
+}
+
+func (m *Manager) Probe(ctx context.Context, agentID string) (ProbeResult, error) {
+	agent, err := m.store.GetAgent(ctx, agentID)
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	start := time.Now()
+	_ = m.store.UpdateAgentStatus(ctx, agentID, "starting", "")
+	m.Sink().AgentState(agentID, "starting", "")
+	defer func() {}()
+
+	procCfg := acp.ProcessConfig{
+		Command: agent.Command,
+		Args:    agent.Args,
+		Env:     envMap(agent.Env),
+		Dir:     agent.Cwd,
+		Log:     m.log.With("agent", agent.Slug),
+	}
+	client, err := acp.Start(ctx, acp.ClientConfig{
+		ProcessConfig: procCfg,
+		ClientInfo:    acp.Implementation{Name: "nusamation", Title: "NusaMation", Version: config.Version},
+	}, probeHandler{})
+	if err != nil {
+		_ = m.store.UpdateAgentStatus(ctx, agentID, "error", err.Error())
+		m.Sink().AgentState(agentID, "error", err.Error())
+		return ProbeResult{}, err
+	}
+	defer client.Close()
+
+	sessionCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+	sess, err := client.NewSession(sessionCtx, acp.NewSessionRequest{Cwd: agent.Cwd, MCPServers: []acp.MCPServerConfig{}})
+	if err != nil {
+		_ = m.store.UpdateAgentStatus(ctx, agentID, "error", err.Error())
+		m.Sink().AgentState(agentID, "error", err.Error())
+		return ProbeResult{}, err
+	}
+	if client.SupportsClose() {
+		_ = client.CloseSession(context.Background(), sess.SessionID)
+	}
+	caps, _ := json.Marshal(client.Capabilities().AgentCapabilities)
+	auths, _ := json.Marshal(client.AuthMethods())
+	configs := sess.ConfigOptions
+	if len(configs) == 0 {
+		configs = json.RawMessage("[]")
+	}
+	models := store.ExtractModels(configs)
+	res := ProbeResult{
+		AgentInfo:     client.AgentInfo(),
+		Capabilities:  caps,
+		AuthMethods:   auths,
+		ConfigOptions: configs,
+		Models:        models,
+		Protocol:      client.Capabilities().ProtocolVersion,
+		DurationMS:    time.Since(start).Milliseconds(),
+	}
+	if err := m.store.UpdateAgentProbe(ctx, agentID, "ready", "", models, configs, caps, auths); err != nil {
+		return res, err
+	}
+	m.Sink().AgentState(agentID, "ready", "")
+	return res, nil
+}
+
+func envMap(env store.SecretList) map[string]string {
+	out := map[string]string{}
+	for _, e := range env {
+		if e.Name != "" {
+			out[e.Name] = e.Value
+		}
+	}
+	return out
+}
+
+func mcpConfigs(list []store.MCPServer, caps acp.AgentCapabilities) []acp.MCPServerConfig {
+	var out []acp.MCPServerConfig
+	for _, s := range list {
+		if !s.Enabled {
+			continue
+		}
+		cfg := acp.MCPServerConfig{Name: s.Name, Type: s.Transport}
+		switch s.Transport {
+		case "http":
+			if !caps.MCPCapabilities.HTTP {
+				continue
+			}
+			cfg.URL = s.URL
+			for _, h := range s.Headers {
+				cfg.Headers = append(cfg.Headers, acp.EnvVar{Name: h.Name, Value: h.Value})
+			}
+		case "sse":
+			if !caps.MCPCapabilities.SSE {
+				continue
+			}
+			cfg.URL = s.URL
+			for _, h := range s.Headers {
+				cfg.Headers = append(cfg.Headers, acp.EnvVar{Name: h.Name, Value: h.Value})
+			}
+		default:
+			cfg.Type = ""
+			cfg.Command = s.Command
+			cfg.Args = s.Args
+			for _, e := range s.Env {
+				cfg.Env = append(cfg.Env, acp.EnvVar{Name: e.Name, Value: e.Value})
+			}
+		}
+		out = append(out, cfg)
+	}
+	return out
+}
+
+func sessionConfigs(raw json.RawMessage, category string) (configID string, current any, choices []string) {
+	var opts []struct {
+		ID       string          `json:"id"`
+		Category string          `json:"category"`
+		Type     string          `json:"type"`
+		Current  json.RawMessage `json:"currentValue"`
+		Options  json.RawMessage `json:"options"`
+	}
+	if json.Unmarshal(raw, &opts) != nil {
+		return "", nil, nil
+	}
+	for _, o := range opts {
+		if o.Category != category {
+			continue
+		}
+		configID = o.ID
+		_ = json.Unmarshal(o.Current, &current)
+		var flat []struct {
+			Value string `json:"value"`
+		}
+		if json.Unmarshal(o.Options, &flat) == nil {
+			for _, f := range flat {
+				if f.Value != "" {
+					choices = append(choices, f.Value)
+				}
+			}
+		}
+		if len(choices) == 0 {
+			var groups []struct {
+				Options []struct {
+					Value string `json:"value"`
+				} `json:"options"`
+			}
+			if json.Unmarshal(o.Options, &groups) == nil {
+				for _, g := range groups {
+					for _, f := range g.Options {
+						choices = append(choices, f.Value)
+					}
+				}
+			}
+		}
+		return
+	}
+	return
+}
+
+func findConfigCurrent(raw json.RawMessage, id string) any {
+	var opts []struct {
+		ID      string          `json:"id"`
+		Current json.RawMessage `json:"currentValue"`
+	}
+	if json.Unmarshal(raw, &opts) != nil {
+		return nil
+	}
+	for _, o := range opts {
+		if o.ID == id {
+			var v any
+			_ = json.Unmarshal(o.Current, &v)
+			return v
+		}
+	}
+	return nil
+}
+
+func anyEqual(a, b any) bool {
+	ab, _ := json.Marshal(a)
+	bb, _ := json.Marshal(b)
+	return string(ab) == string(bb)
+}
+
+func AgentStatusForError(err error) (status, msg string) {
+	if err == nil {
+		return "ready", ""
+	}
+	if acp.IsAuthRequired(err) {
+		return "needs_auth", err.Error()
+	}
+	return "error", err.Error()
+}
+
+func trimErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	if len(s) > 2000 {
+		s = s[:2000]
+	}
+	return s
+}
+
+func joinCommand(cmd string, args []string) string {
+	return strings.TrimSpace(cmd + " " + strings.Join(args, " "))
+}

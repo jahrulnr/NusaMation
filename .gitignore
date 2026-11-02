@@ -1,0 +1,25 @@
+# binaries
+/bin/
+nusamation
+fake-acp
+
+# runtime data
+/data/
+*.db
+*.db-shm
+*.db-wal
+*.key
+/logs/
+/workspace/
+/.env
+.env.local
+
+# editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# test artifacts
+/tmp/
+coverage.out

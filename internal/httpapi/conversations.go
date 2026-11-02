@@ -1,0 +1,333 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/jahrulnr/nusamation/internal/chat"
+	"github.com/jahrulnr/nusamation/internal/store"
+)
+
+type messageView struct {
+	store.Message
+	Attachments []store.Upload `json:"attachments,omitempty"`
+}
+
+func (s *Server) hydrateMessages(r *http.Request, msgs []store.Message) []messageView {
+	out := make([]messageView, 0, len(msgs))
+	for _, m := range msgs {
+		v := messageView{Message: m}
+		if ups, err := s.store.ListUploadsForMessage(r.Context(), m.ID); err == nil {
+			v.Attachments = ups
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func (s *Server) handleListConversations(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	archived := q.Get("archived") == "1" || strings.EqualFold(q.Get("archived"), "true")
+	limit := parseInt(q.Get("limit"), 100)
+	if limit > 500 {
+		limit = 500
+	}
+	list, err := s.store.ListConversations(r.Context(), store.ConversationFilter{
+		Query: q.Get("q"), AgentID: q.Get("agentId"), Channel: q.Get("channel"),
+		Archived: archived, Limit: limit, Offset: parseInt(q.Get("offset"), 0),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "conversations", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversations": list})
+}
+
+func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID string `json:"agentId"`
+		Title   string `json:"title"`
+		Cwd     string `json:"cwd"`
+	}
+	if err := readJSON(w, r, &in, 64<<10); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid conversation payload.")
+		return
+	}
+	conv, err := s.chat.CreateConversation(r.Context(), in.AgentID, in.Title, in.Cwd, "web", "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "create_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"conversation": conv})
+}
+
+func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	conv, err := s.store.GetConversation(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
+		return
+	}
+	msgs, _ := s.store.ListMessages(r.Context(), id, 0, 0, 150)
+	approvals, _ := s.store.ListApprovalsForConversation(r.Context(), id, 100)
+	views := s.hydrateMessages(r, msgs)
+	configs, _ := s.chat.ConversationConfig(r.Context(), id)
+	activeTurnID, activeStatus, active := s.chat.ActiveStatus(id)
+	ag, _ := s.store.GetAgent(r.Context(), conv.AgentID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"conversation": conv,
+		"messages":     views,
+		"approvals":    approvals,
+		"configs":      configs,
+		"active":       map[string]any{"running": active, "turnId": activeTurnID, "status": activeStatus},
+		"agent":        ag.Public(),
+	})
+}
+
+func (s *Server) handleUpdateConversation(w http.ResponseWriter, r *http.Request) {
+	var in chat.ConversationPatch
+	if err := readJSON(w, r, &in, 256<<10); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid conversation update.")
+		return
+	}
+	conv, err := s.chat.UpdateConversation(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "update_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversation": conv})
+}
+
+func (s *Server) handleDeleteConversation(w http.ResponseWriter, r *http.Request) {
+	if err := s.chat.DeleteConversation(r.Context(), r.PathValue("id")); err != nil {
+		if store.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "delete_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleDeleteAllConversations(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Confirm string `json:"confirm"`
+	}
+	if err := readJSON(w, r, &in, 64<<10); err != nil || in.Confirm != "DELETE" {
+		writeError(w, http.StatusBadRequest, "confirm_required", `Send {"confirm":"DELETE"} to erase all conversations.`)
+		return
+	}
+	list, err := s.store.ListConversations(r.Context(), store.ConversationFilter{Limit: 500, Archived: true})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list_failed", err.Error())
+		return
+	}
+	active, _ := s.store.ListConversations(r.Context(), store.ConversationFilter{Limit: 500})
+	list = append(list, active...)
+	for _, c := range list {
+		_ = s.chat.DeleteConversation(r.Context(), c.ID)
+	}
+	if err := s.store.DeleteAllConversations(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "delete_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	after := int64(parseInt(q.Get("after"), 0))
+	before := int64(parseInt(q.Get("before"), 0))
+	limit := parseInt(q.Get("limit"), 100)
+	if limit > 500 {
+		limit = 500
+	}
+	msgs, err := s.store.ListMessages(r.Context(), r.PathValue("id"), after, before, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "messages", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"messages": s.hydrateMessages(r, msgs),
+		"hasMore":  len(msgs) == limit,
+	})
+}
+
+func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Text           string                  `json:"text"`
+		Attachments    []store.AttachmentInput `json:"attachments"`
+		ReplyToChannel bool                    `json:"replyToChannel"`
+		ReplyChannel   string                  `json:"replyChannel"`
+	}
+	if err := readJSON(w, r, &in, 1<<20); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid message payload.")
+		return
+	}
+	msg, turn, err := s.chat.Submit(r.Context(), chat.SubmitInput{
+		ConversationID: r.PathValue("id"), Text: in.Text, Attachments: in.Attachments,
+		Channel: "web", ReplyToChannel: in.ReplyToChannel, ReplyChannel: in.ReplyChannel,
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, chat.ErrInvalidPrompt) {
+			status = http.StatusUnprocessableEntity
+		}
+		writeError(w, status, "prompt_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"message": s.hydrateMessagesOne(r, msg), "turn": turn})
+}
+
+func (s *Server) hydrateMessagesOne(r *http.Request, m store.Message) messageView {
+	views := s.hydrateMessages(r, []store.Message{m})
+	if len(views) == 0 {
+		return messageView{Message: m}
+	}
+	return views[0]
+}
+
+func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
+	if err := s.chat.Cancel(r.Context(), r.PathValue("id")); err != nil {
+		status := http.StatusConflict
+		if errors.Is(err, chat.ErrNoActiveTurn) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, "cancel_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleRetry(w http.ResponseWriter, r *http.Request) {
+	turn, err := s.chat.Retry(r.Context(), r.PathValue("id"), "web", "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "retry_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"turn": turn})
+}
+
+func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ConfigID string          `json:"configId"`
+		Value    json.RawMessage `json:"value"`
+		Model    string          `json:"model"`
+	}
+	if err := readJSON(w, r, &in, 64<<10); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid config payload.")
+		return
+	}
+	var conv store.Conversation
+	var err error
+	if in.Model != "" {
+		conv, err = s.chat.SetModel(r.Context(), r.PathValue("id"), in.Model)
+	} else {
+		var value any
+		if len(in.Value) == 0 {
+			writeError(w, http.StatusBadRequest, "bad_request", "A config value is required.")
+			return
+		}
+		if err := json.Unmarshal(in.Value, &value); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Invalid config value.")
+			return
+		}
+		conv, err = s.chat.SetConfig(r.Context(), r.PathValue("id"), in.ConfigID, value)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "config_failed", err.Error())
+		return
+	}
+	configs, _ := s.chat.ConversationConfig(r.Context(), conv.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"conversation": conv, "configs": configs})
+}
+
+func (s *Server) handleSwitchAgent(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID string `json:"agentId"`
+	}
+	if err := readJSON(w, r, &in, 64<<10); err != nil || in.AgentID == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "Choose an agent.")
+		return
+	}
+	conv, err := s.chat.SwitchAgent(r.Context(), r.PathValue("id"), in.AgentID)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, chat.ErrBusy) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, "switch_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversation": conv})
+}
+
+func (s *Server) handleRouting(w http.ResponseWriter, r *http.Request) {
+	var routing store.Routing
+	if err := readJSON(w, r, &routing, 64<<10); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid routing payload.")
+		return
+	}
+	conv, err := s.chat.UpdateConversation(r.Context(), r.PathValue("id"), chat.ConversationPatch{Routing: &routing})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "routing_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversation": conv})
+}
+
+func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
+	convID, approvalID := r.PathValue("id"), r.PathValue("approvalId")
+	ap, err := s.store.GetApproval(r.Context(), approvalID)
+	if err != nil || ap.ConversationID != convID {
+		writeError(w, http.StatusNotFound, "not_found", "Approval not found in this conversation.")
+		return
+	}
+	s.resolveApproval(w, r, approvalID)
+}
+
+func (s *Server) handleResolveApprovalByID(w http.ResponseWriter, r *http.Request) {
+	s.resolveApproval(w, r, r.PathValue("id"))
+}
+
+func (s *Server) resolveApproval(w http.ResponseWriter, r *http.Request, approvalID string) {
+	var in struct {
+		OptionID string `json:"optionId"`
+	}
+	if err := readJSON(w, r, &in, 64<<10); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Choose an option.")
+		return
+	}
+	ap, err := s.chat.ResolveApproval(r.Context(), approvalID, in.OptionID)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, chat.ErrApprovalGone) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, "approval_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"approval": ap})
+}
+
+func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
+	conv, msgs, err := s.store.ExportConversation(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
+		return
+	}
+	approvals, _ := s.store.ListApprovalsForConversation(r.Context(), conv.ID, 500)
+	payload := map[string]any{
+		"exportedAt":   nowMillis(),
+		"conversation": conv,
+		"messages":     s.hydrateMessages(r, msgs),
+		"approvals":    approvals,
+	}
+	filename := fmt.Sprintf("nusamation-%s.json", conv.ID)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	writeJSON(w, http.StatusOK, payload)
+}
