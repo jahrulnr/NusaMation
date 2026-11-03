@@ -22,4 +22,5 @@
 
 # test artifacts
 /tmp/
+.playwright/
 coverage.out

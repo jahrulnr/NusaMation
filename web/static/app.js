@@ -10,6 +10,8 @@
   const now = () => Date.now();
   const uid = (p = "x") => p + "_" + Math.random().toString(36).slice(2, 10);
   const isMobile = () => window.matchMedia("(max-width: 800px)").matches;
+  const isShort = () => window.matchMedia("(max-height: 500px)").matches;
+  const REQUEST_TIMEOUT_MS = 20000;
   function readActivityState() {
     try { return JSON.parse(sessionStorage.getItem("nusamation:activity-state") || "{}"); } catch { return {}; }
   }
@@ -78,6 +80,8 @@
     scrollPinned: true,
     booted: false,
     loadingConversation: false,
+    loadError: "",
+    loadSeq: 0,
     preparing: "",
     prepareController: null,
     slowTimer: null,
@@ -167,18 +171,20 @@
       body = JSON.stringify(body);
     }
     if (S.csrf) headers.set("X-CSRF-Token", S.csrf);
-    let res;
+    const timeout = opts.timeout ?? ((opts.method || "GET") === "GET" ? REQUEST_TIMEOUT_MS : 0);
+    let res, text;
     try {
-      res = await fetch("/api" + path, { ...opts, body, headers, credentials: "same-origin" });
+      res = await fetch("/api" + path, { ...opts, body, headers, credentials: "same-origin", signal: timeout ? AbortSignal.timeout?.(timeout) : opts.signal });
+      text = await res.text();
     } catch (e) {
+      if (e.name === "TimeoutError") throw new ApiError("The server took too long to respond.", 0, "timeout");
       throw new ApiError("Network error. Check your connection.", 0, "network");
     }
-    const text = await res.text();
     let data = {};
     try {
       data = text ? JSON.parse(text) : {};
     } catch {
-      data = { error: text || "Unexpected response from server" };
+      if (res.ok) throw new ApiError("Unexpected response from server.", res.status, "bad_response");
     }
     if (res.status === 401 && !opts.noAuthRedirect) {
       handleLoggedOut();
@@ -262,8 +268,7 @@
   /* ---------------- boot / auth ---------------- */
   async function boot() {
     try {
-      const res = await fetch("/api/auth/status", { credentials: "same-origin" });
-      const st = await res.json();
+      const st = await api("/auth/status");
       S.authInitialized = !!st.initialized;
       if (st.authenticated && st.csrf) {
         S.csrf = st.csrf;
@@ -330,14 +335,7 @@
     btn.disabled = true;
     btn.innerHTML = `<span class="spinner"></span> Signing in…`;
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ password: pw, remember }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Sign in failed.");
+      const data = await api("/auth/login", { method: "POST", body: { password: pw, remember }, noAuthRedirect: true, timeout: REQUEST_TIMEOUT_MS });
       S.csrf = data.csrf;
       await startApp();
     } catch (e) {
@@ -378,8 +376,12 @@
       if (S.whatsappNeedRefresh) refreshChannels();
     } catch (e) {
       if (e.status === 401) return;
-      renderLogin(e.message || "Could not load NusaMation.");
+      renderBootError(e.message || "Could not load NusaMation.");
     }
+  }
+
+  function renderBootError(message) {
+    $("#app").innerHTML = `<div class="boot"><div class="boot-orb"></div><div class="boot-name">NusaMation</div><div class="boot-sub" role="alert">${esc(message)}</div><button class="btn btn-secondary" data-action="retry-boot">${icon("refresh", "sm")} Retry</button></div>`;
   }
 
   function applyBootstrap(data) {
@@ -435,7 +437,9 @@
   }
 
   async function loadConversation(id, push = true) {
+    const seq = ++S.loadSeq;
     S.loadingConversation = true;
+    S.loadError = "";
     S.draft = "";
     S.attachments = [];
     S.scrollPinned = true;
@@ -446,6 +450,7 @@
     renderChat(true);
     try {
       const data = await api(`/conversations/${encodeURIComponent(id)}`);
+      if (seq !== S.loadSeq) return;
       S.current = data.conversation;
       S.messages = (data.messages || []).map(normalizeMessage);
       S.turns = data.turns || {};
@@ -467,6 +472,7 @@
       closeMobileSidebar();
       if (!S.active) prepareComposer();
     } catch (e) {
+      if (seq !== S.loadSeq) return;
       S.loadingConversation = false;
       if (e.status === 404) {
         S.conversations = S.conversations.filter((c) => c.id !== id);
@@ -478,6 +484,7 @@
         renderTopbar();
         renderComposer();
       } else {
+        S.loadError = id;
         toast("Could not open conversation", e.message, "error");
         renderChat();
       }
@@ -625,7 +632,7 @@
       <div class="conv-meta">
         <span class="conv-preview">${esc(preview)}</span>
         ${channel ? `<span class="conv-channel" title="${esc(channel)}">${channel === "whatsapp" ? icon("message") : icon("globe")}</span>` : ""}
-        <button class="icon-btn sm" data-action="conv-menu" data-id="${esc(c.id)}" title="Conversation menu" style="width:28px;height:22px;opacity:.75">${icon("more", "sm")}</button>
+        <button class="icon-btn sm" data-action="conv-menu" data-id="${esc(c.id)}" title="Conversation menu">${icon("more", "sm")}</button>
       </div>
     </div>`;
   }
@@ -712,6 +719,10 @@
     const focusedAction = focused && chat.contains(focused) ? [focused.dataset.action, focused.dataset.id] : null;
     if (skeleton || (S.loadingConversation && !S.messages.length)) {
       chat.innerHTML = `<div class="loading-row"><span class="spinner"></span> Loading conversation…</div>`;
+      return;
+    }
+    if (S.loadError && S.loadError === S.current?.id) {
+      chat.innerHTML = `<div class="loading-row" role="alert">${icon("alert", "sm")}<span>Could not open this conversation.</span><button class="btn btn-secondary btn-xs" data-action="retry-load" data-id="${esc(S.loadError)}">${icon("refresh", "sm")} Retry</button></div>`;
       return;
     }
     if (!S.current) {
@@ -1179,7 +1190,7 @@
     if (!ta) return;
     ta.style.height = "auto";
     const viewportHeight = Math.min(window.innerHeight, window.visualViewport?.height || window.innerHeight);
-    const limit = isMobile() ? Math.min(220, Math.max(60, Math.floor(viewportHeight * 0.28))) : 220;
+    const limit = isShort() ? Math.max(44, Math.floor(viewportHeight * 0.25)) : isMobile() ? Math.min(220, Math.max(60, Math.floor(viewportHeight * 0.28))) : 220;
     ta.style.height = Math.min(limit, ta.scrollHeight) + "px";
     updateComposerState();
   }
@@ -1769,7 +1780,12 @@
 
   function openComposerSettings(anchor, includeMode = false) {
     const opts = S.configs.filter((o) => o && o.id && ["select", "boolean"].includes(o.type) && (includeMode || String(o.category || "").toLowerCase() !== "mode"));
-    openPopover(anchor, `<div class="popover-title">Agent options</div><div class="popover-list composer-options">${opts.map((o) => `<button class="menu-item" data-action="composer-subconfig" data-id="${esc(o.id)}"><span class="popover-main"><b>${esc(o.name || o.id)}</b>${o.description ? `<small>${esc(o.description)}</small>` : ""}</span><span class="composer-option-value">${esc(configLabel(o))}</span>${icon("chevron-right", "sm")}</button>`).join("")}</div>`, { width: 300, class: "composer-popover" });
+    const links = (S.current?.links || []).filter((l) => l.channel !== "web");
+    const compact = isShort() ? [
+      links.length ? menuItem(S.replyToChannel ? "check" : "message", S.replyToChannel ? "Stop replying to chat" : "Reply to chat", "reply-toggle") : "",
+      S.elicitations.some((e) => e.conversationId === S.current?.id) ? menuItem("info", "Respond", "show-agent-request") : "",
+    ].join("") : "";
+    openPopover(anchor, `<div class="popover-title">Agent options</div><div class="popover-list composer-options">${compact}${opts.map((o) => `<button class="menu-item" data-action="composer-subconfig" data-id="${esc(o.id)}"><span class="popover-main"><b>${esc(o.name || o.id)}</b>${o.description ? `<small>${esc(o.description)}</small>` : ""}</span><span class="composer-option-value">${esc(configLabel(o))}</span>${icon("chevron-right", "sm")}</button>`).join("")}</div>`, { width: 300, class: "composer-popover" });
   }
 
   function openComposerConfig(anchor, id, nested = false) {
@@ -1826,13 +1842,39 @@
     openModal(`${modalHead("Still waiting for the agent", agentName(currentAgent()))}<div class="modal-body" style="padding:18px"><p class="muted">${connecting ? "The agent has not finished connecting." : "The agent has not sent a response yet."} You can keep waiting, inspect its details, or stop.</p></div><div class="modal-foot"><button class="btn btn-secondary" data-action="agent-logs" data-id="${esc(currentAgent()?.id || "")}">Agent details</button><button class="btn btn-secondary" data-action="${connecting ? "stop-preparing" : "stop-slow-turn"}">Stop</button><button class="btn btn-primary" data-action="close-modal">Keep waiting</button></div>`, { size: "md" });
   }
 
+  let xtermLoading = null;
+  function loadXterm() {
+    if (window.Terminal) return Promise.resolve();
+    if (!xtermLoading) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "/static/vendor/xterm/xterm.css";
+      document.head.appendChild(link);
+      const load = (src) => new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = () => reject(new Error(`Could not load ${src}`));
+        document.head.appendChild(s);
+      });
+      xtermLoading = load("/static/vendor/xterm/xterm.js")
+        .then(() => load("/static/vendor/xterm/addon-web-links.js"))
+        .catch((e) => { xtermLoading = null; throw e; });
+    }
+    return xtermLoading;
+  }
+
   function openAuthTerminal(agentId, methodId) {
     closeModal();
     const agent = agentById(agentId);
     const conversationId = S.current?.id;
     S.modal = { type: "auth-terminal", agentId };
     openModal(`${modalHead("Sign in to " + agentName(agent), "Follow the agent's login instructions below.")}<div class="modal-body" style="padding:16px"><div id="auth-terminal" class="auth-terminal"></div><div id="auth-terminal-status" class="auth-terminal-status">Connecting…</div></div><div class="modal-foot"><button class="btn btn-secondary" data-action="close-modal">Cancel</button></div>`, { size: "md" });
-    if (typeof Terminal === "undefined") { $("#auth-terminal-status").textContent = "Terminal could not be loaded."; return; }
+    loadXterm().then(() => startAuthTerminal(agentId, methodId, conversationId), () => { const status = $("#auth-terminal-status"); if (status) status.textContent = "Terminal could not be loaded."; });
+  }
+
+  function startAuthTerminal(agentId, methodId, conversationId) {
+    if (!$("#auth-terminal")) return;
     const term = new Terminal({ cursorBlink: true, fontSize: 13, rows: 20, cols: 70, theme: { background: "#0b0c0e", foreground: "#e8e8e8" } });
     if (typeof WebLinksAddon !== "undefined") term.loadAddon(new WebLinksAddon.WebLinksAddon());
     const container = $("#auth-terminal");
@@ -2820,6 +2862,8 @@
       case "send": await sendMessage(); break;
       case "stop": await stopTurn(); break;
       case "retry": await retryTurn(); break;
+      case "retry-boot": startApp(); break;
+      case "retry-load": await loadConversation(id, false); break;
       case "attach": $("#file-input")?.click(); break;
       case "reply-toggle": S.replyToChannel = !S.replyToChannel; renderComposer(); focusComposer(); break;
       case "remove-attachment": S.attachments = S.attachments.filter((a) => (a.upload || a).id !== id); renderPendingAttachments(); break;
@@ -2984,8 +3028,13 @@
     }
   });
 
-  window.addEventListener("online", () => { S.reconnectAttempt = 0; connectWS(); renderOffline(); });
+  window.addEventListener("online", () => { closeWS(); S.reconnectAttempt = Math.max(1, S.reconnectAttempt); connectWS(); renderOffline(); });
+  const syncAppHeight = () => {
+    const vv = window.visualViewport;
+    document.documentElement.style.setProperty("--app-h", Math.round(vv && vv.scale === 1 ? vv.height : window.innerHeight) + "px");
+  };
   window.addEventListener("resize", () => {
+    syncAppHeight();
     const searchPopover = isMobile() && document.activeElement?.matches(".composer-search") ? $(".composer-popover") : null;
     if (searchPopover) searchPopover._reposition?.(); else closePopover();
     autoGrow();
@@ -2998,9 +3047,11 @@
     }
   });
   window.visualViewport?.addEventListener("resize", () => {
+    syncAppHeight();
     autoGrow();
     if (isMobile() && document.activeElement?.matches(".composer-search")) $(".composer-popover")?._reposition?.();
   });
+  window.visualViewport?.addEventListener("scroll", syncAppHeight);
   window.addEventListener("offline", () => { S.wsState = "offline"; renderOffline(); renderSidebar(); });
   window.addEventListener("popstate", () => {
     const m = location.pathname.match(/^\/c\/([^/]+)/);
@@ -3015,5 +3066,6 @@
     renderLogin();
   }
 
+  syncAppHeight();
   boot();
 })();

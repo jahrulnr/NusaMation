@@ -30,6 +30,7 @@
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
   --font: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   --mono: "SFMono-Regular", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --topbar-h: 62px;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -69,7 +70,7 @@ a:hover { text-decoration: underline; }
 @keyframes breathe { 0%,100% { transform: scale(1) rotate(0deg); opacity: .9 } 50% { transform: scale(1.08) rotate(8deg); opacity: 1 } }
 
 /* Login */
-.login { min-height: 100dvh; display: grid; grid-template-columns: 1.05fr .95fr; background: var(--bg); }
+.login { height: var(--app-h, 100dvh); overflow-y: auto; display: grid; grid-template-columns: 1.05fr .95fr; background: var(--bg); }
 .login-art { position: relative; overflow: hidden; border-right: 1px solid var(--border); background: #090a0c; display: flex; flex-direction: column; justify-content: space-between; padding: 46px 54px; }
 .login-art::before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 52px 52px; mask-image: radial-gradient(800px 600px at 30% 20%, #000 10%, transparent 75%); }
 .login-art::after { content: ""; position: absolute; width: 640px; height: 640px; right: -260px; bottom: -300px; border-radius: 50%; background: radial-gradient(circle, rgba(245,181,68,.22), transparent 65%); filter: blur(20px); }
@@ -123,7 +124,7 @@ a:hover { text-decoration: underline; }
 .key-hint { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 5px; font-size: 10.5px; color: var(--muted); font-family: var(--mono); }
 
 /* Shell */
-.app { display: grid; grid-template-columns: 286px minmax(0, 1fr); height: 100dvh; background: var(--bg); }
+.app { display: grid; grid-template-columns: 286px minmax(0, 1fr); height: var(--app-h, 100dvh); background: var(--bg); }
 .sidebar { display: flex; flex-direction: column; min-height: 0; background: linear-gradient(180deg, #0a0c0f 0%, #090a0c 100%); border-right: 1px solid var(--border); position: relative; z-index: 30; }
 .sidebar-top { padding: 16px 14px 10px; display: flex; flex-direction: column; gap: 12px; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 4px; }
@@ -170,10 +171,11 @@ a:hover { text-decoration: underline; }
 .icon-btn:hover { background: rgba(255,255,255,.06); color: var(--text); }
 .icon-btn.active { background: var(--accent-dim); color: var(--accent); }
 .icon-btn.sm { width: 27px; height: 27px; border-radius: 8px; }
+.conv-meta > .icon-btn { width: 28px; height: 22px; opacity: .75; }
 
 /* Main */
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; background: radial-gradient(1000px 500px at 60% -10%, rgba(245,181,68,.045), transparent 60%), var(--bg); }
-.topbar { height: 62px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 18px 0 16px; border-bottom: 1px solid var(--border); background: rgba(8,9,11,.72); backdrop-filter: blur(14px); position: relative; z-index: 20; }
+.topbar { height: var(--topbar-h); flex: none; display: flex; align-items: center; gap: 10px; padding: 0 18px 0 16px; border-bottom: 1px solid var(--border); background: rgba(8,9,11,.72); backdrop-filter: blur(14px); position: relative; z-index: 20; }
 .menu-btn { display: none; }
 .topbar-title-wrap { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .topbar-title { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 38vw; }
@@ -411,7 +413,7 @@ a:hover { text-decoration: underline; }
 .composer-foot span { display: inline-flex; align-items: center; gap: 4px; }
 .drop-overlay { position: absolute; inset: 10px; border: 1.5px dashed var(--accent-line); border-radius: 18px; background: rgba(8,9,11,.86); backdrop-filter: blur(8px); display: none; place-items: center; z-index: 20; color: var(--accent); font-weight: 600; }
 .drop-overlay.show { display: grid; }
-.offline-banner { display: flex; align-items: center; justify-content: center; gap: 7px; background: var(--danger-dim); color: #ffb9b9; border-bottom: 1px solid rgba(255,118,118,.15); font-size: 11px; padding: 6px 12px; }
+.offline-banner { position: absolute; top: var(--topbar-h); left: 0; right: 0; z-index: 15; display: flex; align-items: center; justify-content: center; gap: 7px; background: var(--danger-dim); color: #ffb9b9; border-bottom: 1px solid rgba(255,118,118,.15); font-size: 11px; padding: 6px 12px; }
 
 /* Toasts */
 .toasts { position: fixed; left: 50%; top: 74px; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: min(380px, calc(100vw - 36px)); }
@@ -540,14 +542,15 @@ a:hover { text-decoration: underline; }
   .mobile-scrim { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 25; opacity: 0; pointer-events: none; transition: opacity .2s; }
   .mobile-scrim.show { opacity: 1; pointer-events: auto; }
   .menu-btn { display: inline-grid; }
-  .topbar { padding: 0 10px; height: 56px; gap: 6px; }
+  :root { --topbar-h: 56px; }
+  .topbar { padding: 0 10px; gap: 6px; }
   .topbar-title { max-width: 42vw; font-size: 13px; }
   .topbar-sub { display: none; }
   .topbar-actions { gap: 2px; }
   .pill-btn { padding: 6px; max-width: 44px; }
   .pill-btn .pill-label { display: none; }
   .pill-btn .icon.chev { display: none; }
-  .agent-pill { max-width: 36px; }
+  .agent-pill { max-width: 40px; }
   .chat-inner { padding: 18px 14px 12px; }
   .composer-wrap { padding: 0 10px calc(10px + env(safe-area-inset-bottom)); }
   .composer-configs { display: none; }
@@ -696,4 +699,32 @@ textarea, input, select { caret-color: var(--accent); }
 @media (max-width: 800px) {
   .popover { max-width: calc(100vw - 16px) !important; }
   .qr-placeholder { width: 200px; height: 200px; align-self: center; }
+}
+
+/* Touch targets, iOS input zoom and short viewports */
+@media (max-width: 800px), (pointer: coarse) {
+  .input, .textarea, .select, .sidebar-search input, .palette-input, .secret-row .input, .allowlist, .config-select, .composer textarea { font-size: 16px; }
+  .topbar .icon-btn, .sidebar-top .icon-btn, .conv-meta > .icon-btn, .composer-bar > .icon-btn { width: 40px; height: 40px; }
+  .topbar .pill-btn, .composer-choice, .composer .reply-toggle, .stop-btn { min-height: 40px; }
+  .topbar .agent-pill { min-width: 40px; justify-content: center; }
+  .send-btn, .composer-mobile-settings { width: 44px; height: 44px; }
+}
+@media (hover: none), (pointer: coarse) {
+  .code-copy { opacity: 1; width: 40px; height: 40px; }
+  .markdown pre code { padding-right: 56px; }
+}
+@media (max-height: 500px) {
+  :root { --topbar-h: 48px; }
+  .composer-foot { display: none; }
+  .composer-wrap { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+  .composer { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; align-items: center; column-gap: 4px; padding: 4px 4px 4px 6px; }
+  .composer-attachments { grid-column: 1 / -1; }
+  .composer textarea { grid-column: 3; grid-row: 2; min-height: 44px; padding: 11px 10px; line-height: 22px; }
+  .composer-bar { display: contents; }
+  .composer-bar > .icon-btn, .composer-bar > .composer-mobile-settings, .composer-bar > .stop-btn, .composer-bar > .send-btn { grid-row: 2; }
+  .composer-bar > .icon-btn { grid-column: 1; }
+  .composer-bar > .composer-mobile-settings { display: inline-grid; place-items: center; grid-column: 2; width: 44px; height: 44px; border-radius: 9px; color: var(--muted); font-size: 18px; }
+  .composer-bar > .stop-btn { grid-column: 4; }
+  .composer-bar > .send-btn { grid-column: 5; }
+  .composer-bar > .agent-choice, .composer-bar > .composer-configs, .composer-bar > .composer-mobile-summary, .composer-bar > .composer-choice, .composer-bar > .reply-toggle, .composer-bar > .grow { display: none; }
 }
