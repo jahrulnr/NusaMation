@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -18,20 +19,36 @@ import (
 
 func main() {
 	args := os.Args[1:]
-	if len(args) == 1 && (args[0] == "-version" || args[0] == "--version") {
-		fmt.Printf("%s %s\n", config.AppName, config.Version)
-		return
-	}
-	if len(args) > 0 && args[0] == "reset-password" {
-		if err := resetPassword(args[1:]); err != nil {
-			fmt.Fprintln(os.Stderr, "reset-password:", err)
-			os.Exit(1)
+	if len(args) > 0 {
+		switch args[0] {
+		case "-h", "--help", "-help", "help":
+			printUsage()
+			return
+		case "-v", "-version", "--version", "version":
+			fmt.Printf("%s %s\n", config.AppName, config.Version)
+			return
+		case "reset-password":
+			fail("reset-password", resetPassword(args[1:]))
+			return
+		case "agent", "agents":
+			fail("agent", agentCmd(args[1:]))
+			return
+		case "config", "settings":
+			fail("config", configCmd(args[1:]))
+			return
+		case "whatsapp", "wa":
+			fail("whatsapp", whatsappCmd(args[1:]))
+			return
 		}
-		return
 	}
 	cfg, err := config.Parse(args)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printUsage()
+			return
+		}
 		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "run '%s --help' for usage\n", progName())
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -42,14 +59,40 @@ func main() {
 	}
 }
 
+func printUsage() {
+	fmt.Printf(`%s %s - ACP-native personal agent mesh
+
+Usage:
+  %s [flags]                 Start the server
+  %s <command> [flags]       Manage NusaMation without the web UI
+
+Commands:
+  agent         Manage ACP agent CLIs (list, detect, get, add, set, remove)
+  config        Manage stored settings (list, get, add, set, remove)
+  whatsapp      Manage WhatsApp channel settings (show, set)
+  reset-password  Reset the admin password
+  version       Print version
+
+Server flags:
+`, config.AppName, config.Version, progName(), progName())
+	config.FlagUsage(os.Stdout)
+	fmt.Printf(`
+Environment variables mirror the flags: NUSAMATION_ADDR, NUSAMATION_DATA_DIR,
+NUSAMATION_PUBLIC_URL, NUSAMATION_PASSWORD, NUSAMATION_LOG_LEVEL,
+NUSAMATION_NO_WHATSAPP, NUSAMATION_OPEN, NUSAMATION_DEV.
+
+Use "%s <command> -h" for command-specific help.
+`, progName())
+}
+
 func resetPassword(args []string) error {
-	home, _ := os.UserHomeDir()
-	defaultDir := filepath.Join(home, ".nusamation")
-	fs := flag.NewFlagSet("reset-password", flag.ContinueOnError)
-	dataDir := fs.String("data-dir", defaultDir, "NusaMation data directory")
+	fs, dataDir := subFlagSet("reset-password", "usage: nusamation reset-password [-data-dir DIR] [-password P]\n")
 	password := fs.String("password", "", "new password (otherwise generated)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() > 0 {
+		return usagef("unexpected arguments: %s", fs.Arg(0))
 	}
 	if *password == "" {
 		*password = "nm_" + security.Token(9)

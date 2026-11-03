@@ -11,7 +11,9 @@ import (
 
 	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	wastore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -71,10 +73,17 @@ func New(st *appstore.Store, cfg config.Config, mgr *channels.Manager, log *slog
 	if err != nil {
 		return nil, fmt.Errorf("open WhatsApp store: %w", err)
 	}
+	// Show up as "Chrome (NusaMation)" in the phone's linked-devices list.
+	version, err := wastore.ParseVersion(config.Version)
+	if err != nil {
+		version = wastore.WAVersionContainer{0, 1, 0}
+	}
+	wastore.SetOSInfo(config.AppName, version)
+	wastore.DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Channel{
 		cfg: cfg, store: st, mgr: mgr, log: log.With("component", "whatsapp"),
-		container: container, settings: defaultSettings(), state: "unpaired", lifeCtx: ctx, lifeStop: cancel,
+		container: container, settings: DefaultSettings(), state: "unpaired", lifeCtx: ctx, lifeStop: cancel,
 		sem: make(chan struct{}, 4), groupCache: map[string]groupEntry{},
 	}
 	c.settings = c.loadSettings(context.Background())

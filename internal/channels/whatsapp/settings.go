@@ -10,7 +10,7 @@ import (
 	"github.com/jahrulnr/nusamation/internal/channels"
 )
 
-const settingsKey = "channel.whatsapp.settings"
+const SettingsKey = "channel.whatsapp.settings"
 
 type Settings struct {
 	Enabled        bool     `json:"enabled"`
@@ -22,7 +22,7 @@ type Settings struct {
 	StreamEdits    bool     `json:"streamEdits"`
 }
 
-func defaultSettings() Settings {
+func DefaultSettings() Settings {
 	return Settings{
 		Enabled: true, AutoStart: true, AllowedNumbers: []string{},
 		GroupPolicy: "mention", ReadReceipts: true, SendTyping: true, StreamEdits: true,
@@ -30,15 +30,15 @@ func defaultSettings() Settings {
 }
 
 func (c *Channel) loadSettings(ctx context.Context) Settings {
-	s := defaultSettings()
-	if err := c.store.GetJSONSetting(ctx, settingsKey, &s); err != nil {
-		return defaultSettings()
+	s := DefaultSettings()
+	if err := c.store.GetJSONSetting(ctx, SettingsKey, &s); err != nil {
+		return DefaultSettings()
 	}
-	s.normalize()
+	s.Normalize()
 	return s
 }
 
-func (s *Settings) normalize() {
+func (s *Settings) Normalize() {
 	if s.GroupPolicy != "disabled" && s.GroupPolicy != "mention" && s.GroupPolicy != "all" {
 		s.GroupPolicy = "mention"
 	}
@@ -48,7 +48,7 @@ func (s *Settings) normalize() {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(s.AllowedNumbers))
 	for _, raw := range s.AllowedNumbers {
-		v := normalizeNumber(raw)
+		v := NormalizeNumber(raw)
 		if v == "" || seen[v] {
 			continue
 		}
@@ -65,17 +65,17 @@ func (s Settings) allows(senderJIDs, chatJIDs []string) bool {
 	}
 	allowed := map[string]bool{}
 	for _, n := range s.AllowedNumbers {
-		allowed[normalizeNumber(n)] = true
+		allowed[NormalizeNumber(n)] = true
 	}
 	for _, j := range append(append([]string{}, senderJIDs...), chatJIDs...) {
-		if allowed[normalizeNumber(j)] {
+		if allowed[NormalizeNumber(j)] {
 			return true
 		}
 	}
 	return false
 }
 
-func normalizeNumber(raw string) string {
+func NormalizeNumber(raw string) string {
 	v := strings.TrimSpace(strings.ToLower(raw))
 	v = strings.TrimPrefix(v, "+")
 	v = strings.ReplaceAll(v, " ", "")
@@ -110,8 +110,8 @@ func (c *Channel) UpdateSettings(ctx context.Context, raw json.RawMessage) error
 	if err := json.Unmarshal(raw, &next); err != nil {
 		return err
 	}
-	next.normalize()
-	if err := c.store.SetJSONSetting(ctx, settingsKey, next); err != nil {
+	next.Normalize()
+	if err := c.store.SetJSONSetting(ctx, SettingsKey, next); err != nil {
 		return err
 	}
 	c.mu.Lock()

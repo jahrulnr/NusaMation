@@ -24,7 +24,16 @@ The adapter must implement ACP v1 and use newline-delimited JSON-RPC on stdio. N
 
 ## Add an agent
 
-**Control center → Agents → Add agent**
+**Control center → Agents → Add agent**, or the CLI:
+
+```bash
+nusamation agent add -name Codex -command codex -arg acp -cwd /work -policy auto_safe
+nusamation agent detect [-add]   # popular ACP CLIs found on PATH
+nusamation agent set codex -policy ask -env KEY=val
+nusamation agent remove codex
+```
+
+On first run (when no enabled agent exists) NusaMation scans `PATH` for the known ACP CLIs — `devin acp`, `claude-agent-acp`/`claude-code-acp`, `codex-acp`/`codex acp`, `gemini --acp`, `copilot --acp`, `opencode acp`, `auggie --acp`, `goose acp`, `kimi acp`, `cursor-agent acp`, `kilo acp`, `qwen --acp`, `vibe-acp`, `kiro-cli acp` — and seeds every one it finds.
 
 | Field | Notes |
 |---|---|
@@ -51,13 +60,13 @@ Args:    acp
 Cwd:     /path/to/workspace
 ```
 
-Devin is auto-seeded when `devin` is on `PATH`. Log in first with `devin login` (or use the **Authentication** buttons in the agent logs dialog). Devin publishes model, mode, thought level and speed config options; the web model picker uses the live list.
+Devin is auto-seeded when `devin` is on `PATH`, together with any other detected ACP CLI. Log in first with `devin login` (or use the **Authentication** buttons in the agent logs dialog). Devin publishes model, mode, thought level and speed config options; the web model picker uses the live list.
 
 If Devin is slow to start, run **Probe** once to pre-populate the UI, then send the first prompt. Devin's global MCP config may produce noisy stderr; NusaMation keeps it in a bounded ring buffer and never floods the chat.
 
 ### Claude Code / Codex / Gemini
 
-Use the ACP adapter/version appropriate to your installation. The command must:
+The seed catalog covers the common invocations (`claude-agent-acp`, `codex acp`, `gemini --acp`, …). For other distributions, use the ACP adapter/version appropriate to your installation. The command must:
 
 - speak ACP over stdio;
 - accept `initialize` and `session/new`;
@@ -121,6 +130,8 @@ The agent process inherits the NusaMation process environment, with per-agent en
 ## Workspace
 
 The first run seeds `data/workspace/README.md` and `AGENTS.md`. This is the shared working directory for all agents unless a conversation has a different cwd. Client-side ACP filesystem requests check the session roots and sensitive paths. For terminal requests, NusaMation checks the working directory but does not sandbox the command; the agent's own tools and sandbox have their own access rules.
+
+Every start also syncs operational docs into `data/docs/` (embedded in the binary, source in `assets/docs/`): `README.md`, `agents.md`, `whatsapp.md`, `settings.md`, `api.md`, `troubleshooting.md`. They teach agents how to operate NusaMation itself — manage agent CLIs, configure WhatsApp, edit settings, call the API, and debug. The seeded `workspace/AGENTS.md` (appended to existing files when missing) points agents at that directory, the resolved `-data-dir`, the CLI path and the log location. Ops docs live outside the session workspace roots, so client-side `fs/read_text_file` requests for them are denied — agents should read them with their own file tools or a terminal (`cat`), which most ACP agents provide.
 
 The agent's own sandbox controls its direct filesystem and command access; the ACP client-side filesystem checks do not confine commands run in a terminal.
 

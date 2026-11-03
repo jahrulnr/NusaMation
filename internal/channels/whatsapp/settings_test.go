@@ -3,12 +3,12 @@ package whatsapp
 import "testing"
 
 func TestAllowlistAndNormalization(t *testing.T) {
-	s := defaultSettings()
+	s := DefaultSettings()
 	if !s.allows([]string{"123@s.whatsapp.net"}, nil) {
 		t.Fatal("empty allowlist should allow all")
 	}
 	s.AllowedNumbers = []string{"+62 812-3456-7890", "1203630@g.us"}
-	s.normalize()
+	s.Normalize()
 	if len(s.AllowedNumbers) != 2 {
 		t.Fatalf("normalized allowlist = %#v", s.AllowedNumbers)
 	}
@@ -25,11 +25,11 @@ func TestAllowlistAndNormalization(t *testing.T) {
 
 func TestSettingsGroupPolicyNormalization(t *testing.T) {
 	s := Settings{GroupPolicy: "wat"}
-	s.normalize()
+	s.Normalize()
 	if s.GroupPolicy != "mention" {
 		t.Fatalf("group policy = %q", s.GroupPolicy)
 	}
-	if normalizeNumber("+62 (812) 3456") != "628123456" {
-		t.Fatalf("normalizeNumber = %q", normalizeNumber("+62 (812) 3456"))
+	if NormalizeNumber("+62 (812) 3456") != "628123456" {
+		t.Fatalf("NormalizeNumber = %q", NormalizeNumber("+62 (812) 3456"))
 	}
 }

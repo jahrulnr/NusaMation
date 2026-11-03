@@ -91,6 +91,12 @@ func (m MCPServer) Public() MCPServer {
 	return m
 }
 
+type Setting struct {
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
 type Routing struct {
 	ReplyToOrigin   bool `json:"replyToOrigin"`
 	MirrorFinal     bool `json:"mirrorFinal"`

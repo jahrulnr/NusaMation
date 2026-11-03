@@ -17,7 +17,7 @@ NusaMation is not another LLM wrapper. The brain is any **Agent Client Protocol 
 
 ## Quick start
 
-Requirements: Go **1.27+**, and an ACP agent CLI on `PATH` (Devin is auto-detected).
+Requirements: Go **1.27+**, and an ACP agent CLI on `PATH` (popular ones are auto-detected on first run).
 
 ```bash
 git clone https://github.com/jahrulnr/NusaMation.git
@@ -47,7 +47,7 @@ Forgot the password? Stop the app and reset it:
 ./nusamation reset-password -data-dir ~/.nusamation
 ```
 
-If `devin` is on `PATH`, the first-run setup seeds a **Devin** agent with `devin acp`. Otherwise add any ACP CLI in **Control center → Agents**.
+On first run NusaMation scans `PATH` for popular ACP CLIs (Devin, Claude Agent, Codex, Gemini, Copilot, OpenCode, Auggie, goose, Kimi, Cursor, Kilo, Qwen, Mistral Vibe, Kiro) and seeds every one it finds as an agent. Add more manually in **Control center → Agents** or with `nusamation agent add`.
 
 ### Install as a user service
 
@@ -213,6 +213,39 @@ Environment variables:
 
 Flags mirror the variables: `-addr`, `-data-dir`, `-public-url`, `-password`, `-log-level`, `-no-whatsapp`, `-open`, `-dev`.
 
+### CLI
+
+The binary doubles as a management CLI, so agents and scripts can reconfigure NusaMation without the web UI. Every command accepts `-data-dir` (default `~/.nusamation`); run `nusamation <command> -h` for full usage.
+
+```bash
+nusamation --help                       # global help
+nusamation --version                    # print version
+
+# ACP agents
+nusamation agent list                   # configured agents
+nusamation agent detect [-add]          # popular ACP CLIs found on PATH (-add registers them)
+nusamation agent get <slug|id> [-json] [-show-secrets]
+nusamation agent add -name X -command codex -arg acp -cwd /work -policy auto_safe -env KEY=val
+nusamation agent set <slug|id> -policy ask -env KEY=val -env-rm OLD -arg acp
+nusamation agent remove <slug|id>
+
+# Stored settings (key/value)
+nusamation config list [-json]
+nusamation config get channel.whatsapp.settings
+nusamation config set my.key 'value'        # upsert
+nusamation config add my.key 'value'        # fails if it exists
+nusamation config remove my.key
+# structured settings take JSON; -validate-json rejects non-JSON values
+nusamation config set routing.defaults '{"replyToOrigin":true,"notifyApprovals":true}' -validate-json
+
+# WhatsApp channel
+nusamation whatsapp show
+nusamation whatsapp set -enabled -group-policy mention \
+    -allow-add +628123456789 -allow-remove 999 -stream-edits=false
+```
+
+Mutations take effect on the next NusaMation start; a running instance keeps its cached settings.
+
 Data directory:
 
 ```text
@@ -222,6 +255,7 @@ Data directory:
 ├── secret.key         # AES-GCM key for agent/MCP secrets
 ├── uploads/           # web and WhatsApp attachments
 ├── workspace/         # shared agent working directory (README/AGENTS seeded)
+├── docs/              # ops docs for agents (agents.md, whatsapp.md, …; synced from binary)
 └── logs/nusamation.log
 ```
 
@@ -231,7 +265,7 @@ Back up the whole directory to preserve agents, conversations and the WhatsApp l
 
 1. Start NusaMation with WhatsApp enabled.
 2. Open **Control center → Channels → WhatsApp → Connect**.
-3. Scan the QR from **WhatsApp → Linked devices → Link a device**.
+3. Scan the QR from **WhatsApp → Linked devices → Link a device**. The device shows up as **Chrome (NusaMation)**.
 4. Set an allowlist and group policy once paired.
 
 Security notes:
@@ -249,11 +283,23 @@ Any ACP CLI works. Example commands (the exact adapter package varies):
 
 | Agent | Command | Notes |
 |---|---|---|
-| Devin | `devin acp` | Auto-detected when `devin` is on `PATH`; log in first. |
-| Claude Code ACP | e.g. `claude-code-acp` | Install the ACP adapter for your Claude Code distribution. |
-| Codex ACP | e.g. `codex acp` | Must implement ACP stdio. |
-| Gemini ACP | e.g. `gemini --experimental-acp` | Use the ACP mode supported by your CLI version. |
+| Devin | `devin acp` | Auto-detected; log in first. |
+| Claude Agent | `claude-agent-acp` / `claude-code-acp` | Auto-detected; ACP adapter for Claude Code. |
+| Codex | `codex-acp` / `codex acp` | Auto-detected. |
+| Gemini CLI | `gemini --acp` | Auto-detected. |
+| GitHub Copilot | `copilot --acp` | Auto-detected. |
+| OpenCode | `opencode acp` | Auto-detected. |
+| Auggie | `auggie --acp` | Auto-detected. |
+| goose | `goose acp` | Auto-detected. |
+| Kimi CLI | `kimi acp` | Auto-detected. |
+| Cursor | `cursor-agent acp` | Auto-detected. |
+| Kilo | `kilo acp` | Auto-detected. |
+| Qwen Code | `qwen --acp` | Auto-detected. |
+| Mistral Vibe | `vibe-acp` | Auto-detected. |
+| Kiro CLI | `kiro-cli acp --agent-engine=v3` | Auto-detected. |
 | Fake demo | `fake-acp` | In-repo deterministic agent for testing. |
+
+Any command that speaks ACP over stdio works — the catalog is just what gets auto-detected. Use `nusamation agent detect` to see which known CLIs are on your `PATH`.
 
 Use **Probe** to discover models and configuration options. Devin publishes model, mode, thought level and speed. The model picker in the top bar is populated from the live session.
 
@@ -269,43 +315,9 @@ make fake       # bin/fake-acp-agent
 make run        # go run ./cmd/nusamation
 ```
 
-The web UI is vanilla HTML/CSS/JS with vendored marked, DOMPurify and highlight.js. It is embedded using `//go:embed`; there is no Node/npm build step.
-
-The fake agent and integration test exercise the real ACP stdio transport, streaming updates, permission request/response, tool calls, plans and finalisation:
-
-```bash
-go test ./internal/chat -run TestOrchestratorApprovalFlow -v
-```
-
-## API
-
-The control center uses a small JSON/WebSocket API. Highlights:
-
-```text
-GET    /api/bootstrap
-GET    /api/conversations
-POST   /api/conversations
-GET    /api/conversations/{id}
-POST   /api/conversations/{id}/messages
-POST   /api/conversations/{id}/cancel
-POST   /api/conversations/{id}/retry
-POST   /api/conversations/{id}/config
-POST   /api/conversations/{id}/agent
-POST   /api/conversations/{id}/routing
-POST   /api/approvals/{id}
-GET    /api/agents
-POST   /api/agents/{id}/probe
-GET    /api/mcp
-GET    /api/channels
-GET    /api/channels/whatsapp/qr
-GET    /api/events              # authenticated WebSocket
-```
-
-All mutating API requests require the `X-CSRF-Token` returned by login. See [docs/API.md](docs/API.md).
-
 ## Security model
 
-NusaMation is a **single-admin local-first** application. It is designed to be exposed through a reverse proxy or a private network, not the public internet without TLS and additional controls. The default bind address is loopback.
+NusaMation is designed to be exposed through a reverse proxy or a private network, not the public internet without TLS and additional controls. The default bind address is loopback.
 
 - Password hashes use bcrypt; sessions store only SHA-256 token hashes.
 - CSRF token per session; Origin checks on mutations and WebSocket upgrades.
@@ -314,10 +326,6 @@ NusaMation is a **single-admin local-first** application. It is designed to be e
 - Filesystem and terminal requests are constrained to the agent workspace roots; sensitive paths (`.env*`, `.git/hooks`, agent config directories) are denied by default.
 - Uploaded files are served only through authenticated endpoints.
 - Approvals are local policy: `ask` is the safe default. `auto_all` is deliberately powerful.
-
-## Status
-
-Version `0.1.0`. The core web/WhatsApp/ACP loop, orchestrator, approvals, MCP and control center are functional. The channel manager is intentionally small so new adapters are easy to add.
 
 ## License
 

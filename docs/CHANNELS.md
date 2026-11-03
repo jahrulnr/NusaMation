@@ -68,7 +68,14 @@ Default routing for new conversations is in **Control center → Routing**. Per-
 
 ### Pairing
 
-The adapter stores the whatsmeow device in `data/whatsapp.db`. It does not auto-connect unpaired devices; press **Connect** to get a QR channel. The QR is rendered server-side as PNG and refreshed automatically until pairing succeeds.
+The adapter stores the whatsmeow device in `data/whatsapp.db`. It does not auto-connect unpaired devices; press **Connect** to get a QR channel. The QR is rendered server-side as PNG and refreshed automatically until pairing succeeds. The device announces itself as **Chrome (NusaMation)** in the phone's linked-devices list.
+
+Channel settings live under the `channel.whatsapp.settings` key and can also be managed from the CLI:
+
+```bash
+nusamation whatsapp show
+nusamation whatsapp set -enabled -group-policy mention -allow-add +628123456789
+```
 
 ### Allowlist
 

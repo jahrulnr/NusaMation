@@ -404,6 +404,35 @@ func (s *Store) SetJSONSetting(ctx context.Context, key string, v any) error {
 	return s.SetSetting(ctx, key, string(b))
 }
 
+func (s *Store) ListSettings(ctx context.Context) ([]Setting, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT key,value,updated_at FROM settings ORDER BY key ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Setting
+	for rows.Next() {
+		var st Setting
+		if err := rows.Scan(&st.Key, &st.Value, &st.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteSetting(ctx context.Context, key string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM settings WHERE key=?`, key)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) DeleteAllConversations(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM conversations`)
 	return err

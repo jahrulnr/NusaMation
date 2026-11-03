@@ -175,6 +175,36 @@ func TestChannelLinkAndInboundDedupe(t *testing.T) {
 	_ = link
 }
 
+func TestSettingsKV(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	if err := st.SetSetting(ctx, "k.b", "2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(ctx, "k.a", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(ctx, "k.b", "3"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := st.ListSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].Key != "k.a" || list[1].Key != "k.b" || list[1].Value != "3" {
+		t.Fatalf("ListSettings = %#v", list)
+	}
+	if err := st.DeleteSetting(ctx, "k.a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetSetting(ctx, "k.a"); !IsNotFound(err) {
+		t.Fatalf("expected not found, got %v", err)
+	}
+	if err := st.DeleteSetting(ctx, "k.a"); !IsNotFound(err) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
 func contains(haystack, needle string) bool {
 	for i := 0; i+len(needle) <= len(haystack); i++ {
 		if haystack[i:i+len(needle)] == needle {

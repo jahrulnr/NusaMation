@@ -180,11 +180,11 @@ func (c *Channel) mentionsMe(info types.MessageInfo, msg *waE2E.Message) bool {
 			continue
 		}
 		for _, jid := range ci.GetMentionedJID() {
-			if own[normalizeNumber(jid)] {
+			if own[NormalizeNumber(jid)] {
 				return true
 			}
 		}
-		if p := ci.GetParticipant(); p != "" && own[normalizeNumber(p)] {
+		if p := ci.GetParticipant(); p != "" && own[NormalizeNumber(p)] {
 			return true
 		}
 	}
@@ -205,12 +205,12 @@ func (c *Channel) ownIDs() map[string]bool {
 		return out
 	}
 	if c.client.Store.ID != nil {
-		out[normalizeNumber(c.client.Store.ID.User)] = true
-		out[normalizeNumber(c.client.Store.ID.ToNonAD().String())] = true
+		out[NormalizeNumber(c.client.Store.ID.User)] = true
+		out[NormalizeNumber(c.client.Store.ID.ToNonAD().String())] = true
 	}
 	if !c.client.Store.LID.IsEmpty() {
-		out[normalizeNumber(c.client.Store.LID.User)] = true
-		out[normalizeNumber(c.client.Store.LID.ToNonAD().String())] = true
+		out[NormalizeNumber(c.client.Store.LID.User)] = true
+		out[NormalizeNumber(c.client.Store.LID.ToNonAD().String())] = true
 	}
 	return out
 }

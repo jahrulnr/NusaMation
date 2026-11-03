@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jahrulnr/nusamation/assets"
 	"github.com/jahrulnr/nusamation/internal/agent"
 	"github.com/jahrulnr/nusamation/internal/auth"
 	"github.com/jahrulnr/nusamation/internal/channels"
@@ -49,7 +52,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 }
 
 func New(cfg config.Config) (*App, error) {
-	for _, dir := range []string{cfg.DataDir, cfg.UploadDir(), cfg.WorkspaceDir(), cfg.LogDir()} {
+	for _, dir := range []string{cfg.DataDir, cfg.UploadDir(), cfg.WorkspaceDir(), cfg.DocsDir(), cfg.LogDir()} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("create %s: %w", dir, err)
 		}
@@ -74,8 +77,11 @@ func New(cfg config.Config) (*App, error) {
 		_ = st.Close()
 		return nil, fmt.Errorf("auth bootstrap: %w", err)
 	}
-	if err := seedWorkspace(cfg.WorkspaceDir()); err != nil {
+	if err := seedWorkspace(cfg); err != nil {
 		logger.Warn("could not seed workspace", "error", err)
+	}
+	if err := seedDocs(cfg.DocsDir()); err != nil {
+		logger.Warn("could not seed docs", "error", err)
 	}
 	if err := seedAgent(context.Background(), st, cfg.WorkspaceDir(), logger); err != nil {
 		logger.Warn("could not seed default agent", "error", err)
@@ -222,7 +228,8 @@ func newLogger(cfg config.Config) (*slog.Logger, *os.File, error) {
 	return slog.New(h).With("app", "nusamation"), f, nil
 }
 
-func seedWorkspace(dir string) error {
+func seedWorkspace(cfg config.Config) error {
+	dir := cfg.WorkspaceDir()
 	readme := filepath.Join(dir, "README.md")
 	if _, err := os.Stat(readme); os.IsNotExist(err) {
 		content := `# NusaMation workspace
@@ -242,7 +249,10 @@ workspace.
 		}
 	}
 	agents := filepath.Join(dir, "AGENTS.md")
-	if _, err := os.Stat(agents); os.IsNotExist(err) {
+	ops := opsSection(cfg)
+	existing, err := os.ReadFile(agents)
+	switch {
+	case os.IsNotExist(err):
 		content := `# Agent notes
 
 You are operating inside a NusaMation workspace.
@@ -253,9 +263,104 @@ You are operating inside a NusaMation workspace.
 - Prefer small, verifiable steps. Report what you changed and how you checked it.
 - When you need a tool that is not available, explain the missing dependency
   instead of pretending it worked.
-`
+
+` + ops
 		if err := os.WriteFile(agents, []byte(content), 0o600); err != nil {
 			return err
+		}
+	case err != nil:
+		return err
+	case !strings.Contains(string(existing), opsMarker):
+		content := strings.TrimRight(string(existing), "\n") + "\n\n" + ops
+		if err := os.WriteFile(agents, []byte(content), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+const opsMarker = "## NusaMation operations"
+
+// opsSection points agents at the embedded ops docs seeded under the data dir.
+func opsSection(cfg config.Config) string {
+	exe, err := os.Executable()
+	// Under `go run` the executable is a throwaway temp binary.
+	if err != nil || exe == "" || strings.HasPrefix(exe, os.TempDir()) {
+		exe = "nusamation"
+	}
+	ui := cfg.PublicURL
+	if ui == "" {
+		host, port, err := net.SplitHostPort(cfg.Addr)
+		if err != nil {
+			host, port, _ = net.SplitHostPort(config.DefaultAddr)
+		}
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			host = "127.0.0.1"
+		}
+		ui = "http://" + net.JoinHostPort(host, port)
+	}
+	return fmt.Sprintf(`%s
+
+If a task asks you to configure, operate, or debug NusaMation itself (agents,
+WhatsApp, settings, logs), read the ops docs first — do not guess:
+
+- Docs:   %s/ — start with README.md, then the file matching the task
+          (agents.md, whatsapp.md, settings.md, api.md, troubleshooting.md).
+          If client-side fs/read is denied outside this workspace, read the
+          file via a terminal command (e.g. cat) instead.
+- CLI:    %s <command> -data-dir %s
+- Data:   %s
+- Logs:   %s
+- Web UI: %s
+
+Use the CLI (not SQL) to change state; mutations apply on the next server
+start. Never print secret.key or sealed env values.
+`, opsMarker, cfg.DocsDir(), exe, cfg.DataDir, cfg.DataDir,
+		filepath.Join(cfg.LogDir(), "nusamation.log"), ui)
+}
+
+// seedDocs syncs the embedded ops docs into the data dir: files are written
+// when missing or changed, and files no longer shipped by the binary are
+// removed so the directory always matches the running version.
+func seedDocs(dir string) error {
+	docs := assets.Docs()
+	shipped := map[string]bool{}
+	walkErr := fs.WalkDir(docs, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		shipped[filepath.FromSlash(path)] = true
+		data, err := fs.ReadFile(docs, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dir, filepath.FromSlash(path))
+		if existing, err := os.ReadFile(target); err == nil && bytes.Equal(existing, data) {
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o600)
+	})
+	if walkErr != nil {
+		return walkErr
+	}
+	entries, err := filepath.Glob(filepath.Join(dir, "*"))
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if info, err := os.Stat(e); err == nil && info.IsDir() {
+			continue
+		}
+		if !shipped[filepath.Base(e)] {
+			if err := os.Remove(e); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -271,21 +376,30 @@ func seedAgent(ctx context.Context, st *store.Store, workspace string, log *slog
 			return nil
 		}
 	}
-	path, err := exec.LookPath("devin")
-	if err != nil {
-		log.Info("Devin CLI not found; add an ACP agent in the web UI")
+	detected := agent.Detect()
+	if len(detected) == 0 {
+		log.Info("no known ACP CLI found on PATH; add an agent in the web UI")
 		return nil
 	}
 	enabled := true
-	ag, err := st.CreateAgent(ctx, store.AgentInput{
-		Name: "Devin", Slug: "devin", Description: "Cognition Devin over ACP",
-		Command: path, Args: []string{"acp"}, Cwd: workspace, Icon: "sparkles", Color: "amber",
-		Enabled: &enabled, ApprovalPolicy: "ask",
-	})
-	if err != nil {
-		return err
+	seeded := 0
+	for _, d := range detected {
+		ag, err := st.CreateAgent(ctx, store.AgentInput{
+			Name: d.Name, Slug: d.Slug, Description: d.Description,
+			Command: d.Command, Args: d.Args, Cwd: workspace,
+			Icon: d.Icon, Color: d.Color,
+			Enabled: &enabled, ApprovalPolicy: "ask",
+		})
+		if err != nil {
+			log.Warn("could not seed detected agent", "agent", d.Slug, "error", err)
+			continue
+		}
+		log.Info("seeded detected agent", "agent", ag.Slug, "command", ag.Command)
+		seeded++
 	}
-	log.Info("seeded default agent", "agent", ag.Slug, "command", path)
+	if seeded == 0 {
+		log.Info("detected ACP CLIs could not be seeded; add an agent in the web UI")
+	}
 	return nil
 }
 
