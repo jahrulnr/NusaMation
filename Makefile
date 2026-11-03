@@ -43,7 +43,8 @@ clean:
 	rm -rf bin
 
 # Install the binary under ~/.local/bin, then install and start a systemd user
-# service. Re-running is safe: data, env config and an existing unit are kept.
+# service. Re-running is safe: data and env config are kept and the unit is
+# regenerated from the current settings.
 install: install-bin install-service enable-linger
 	@printf '\n'
 	@printf 'NusaMation is installed.\n'
@@ -171,7 +172,15 @@ service-status:
 	@systemctl --user --no-pager status "$(SERVICE)"
 
 service-logs:
-	@journalctl --user -u "$(SERVICE)" -f
+	@if command -v journalctl >/dev/null 2>&1; then \
+		journalctl --user -u "$(SERVICE)" -f; \
+	elif [ -f "$(DATA_DIR)/logs/nusamation.log" ]; then \
+		printf 'journalctl not found; following %s/logs/nusamation.log\n' "$(DATA_DIR)"; \
+		tail -n 80 -f "$(DATA_DIR)/logs/nusamation.log"; \
+	else \
+		printf 'Neither journalctl nor %s/logs/nusamation.log is available.\n' "$(DATA_DIR)"; \
+		exit 1; \
+	fi
 
 uninstall:
 	@if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then \

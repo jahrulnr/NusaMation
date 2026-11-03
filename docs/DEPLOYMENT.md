@@ -38,7 +38,7 @@ Useful targets:
 
 ```bash
 make service-status
-make service-logs       # journalctl --user -u nusamation.service -f
+make service-logs       # follow the journal, or the data log without journalctl
 make service-restart
 make service-stop
 make service-start
