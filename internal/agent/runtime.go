@@ -53,17 +53,31 @@ type Runtime struct {
 	sessions map[string]*Session
 	byACP    map[string]*Session
 	pending  map[string][]pendingNotif
+	stderr   *acp.Ring
 }
 
 func (r *Runtime) Info() (string, int, time.Duration, []string) {
 	r.mu.Lock()
 	c := r.client
 	state := r.state
-	r.mu.Unlock()
-	if c == nil {
-		return state, 0, 0, nil
+	var logs []string
+	if r.stderr != nil {
+		logs = r.stderr.Lines()
 	}
-	return state, c.PID(), c.Uptime(), c.Stderr()
+	r.mu.Unlock()
+	if c == nil || !c.Alive() {
+		return state, 0, 0, logs
+	}
+	return state, c.PID(), c.Uptime(), logs
+}
+
+func (r *Runtime) appendStderr(line string) {
+	r.mu.Lock()
+	if r.stderr == nil {
+		r.stderr = acp.NewRing(400)
+	}
+	r.stderr.Add(line)
+	r.mu.Unlock()
 }
 
 func (r *Runtime) setState(state, lastErr string) {
@@ -104,12 +118,15 @@ func (r *Runtime) ensureClient(ctx context.Context) (*acp.Client, error) {
 		r.mu.Unlock()
 
 		r.setState("starting", "")
-		procCfg := acp.ProcessConfig{
-			Command: r.agent.Command,
-			Args:    r.agent.Args,
-			Env:     envMap(r.agent.Env),
-			Dir:     r.agent.Cwd,
-			Log:     r.log,
+		procCfg, err := acpProcessConfig(r.agent, r.log)
+		if err != nil {
+			r.mu.Lock()
+			r.starting = false
+			close(r.startCh)
+			r.startCh = nil
+			r.mu.Unlock()
+			r.failStart(err)
+			return nil, err
 		}
 		startCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 		client, err := acp.Start(startCtx, acp.ClientConfig{
@@ -121,10 +138,10 @@ func (r *Runtime) ensureClient(ctx context.Context) (*acp.Client, error) {
 		r.mu.Lock()
 		r.starting = false
 		if err != nil {
-			r.startErrSetLocked(err)
 			close(r.startCh)
 			r.startCh = nil
 			r.mu.Unlock()
+			r.failStart(err)
 			return nil, err
 		}
 		r.client = client
@@ -140,9 +157,17 @@ func (r *Runtime) ensureClient(ctx context.Context) (*acp.Client, error) {
 	}
 }
 
-func (r *Runtime) startErrSetLocked(err error) {
-	r.state = "error"
-	r.lastErr = trimErr(err)
+// failStart records a launch that never became a live ACP client. The runtime
+// modal reads these lines after the process is already gone.
+func (r *Runtime) failStart(err error) {
+	msg := trimErr(err)
+	r.mu.Lock()
+	empty := r.stderr == nil || len(r.stderr.Lines()) == 0
+	r.mu.Unlock()
+	if empty && msg != "" {
+		r.appendStderr(msg)
+	}
+	r.setState("error", msg)
 }
 
 func (r *Runtime) EnsureSession(ctx context.Context, req EnsureRequest) (*Session, error) {
@@ -776,7 +801,7 @@ func (h *runtimeHandler) OnNotification(method, sessionID string, update json.Ra
 }
 
 func (h *runtimeHandler) OnStderr(line string) {
-	// Kept in the runtime ring buffer; surfaced through the agent logs endpoint.
+	h.r.appendStderr(line)
 }
 
 func (h *runtimeHandler) OnExit(err error) {
@@ -851,7 +876,7 @@ func (h *runtimeHandler) readFile(raw json.RawMessage) (any, *acp.RPCError) {
 	if s == nil {
 		return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: "unknown session"}
 	}
-	path, err := securityPath(s.Roots(), req.Path)
+	path, err := resolveClientPath(s, req.Path, false)
 	if err != nil {
 		return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: err.Error()}
 	}
@@ -890,12 +915,9 @@ func (h *runtimeHandler) writeFile(raw json.RawMessage) (any, *acp.RPCError) {
 	if s == nil {
 		return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: "unknown session"}
 	}
-	path, err := securityPath(s.Roots(), req.Path)
+	path, err := resolveClientPath(s, req.Path, true)
 	if err != nil {
 		return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: err.Error()}
-	}
-	if sensitivePath(path) {
-		return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: "writing execution-control or secret files requires manual approval outside ACP"}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, &acp.RPCError{Code: acp.CodeInternalError, Message: err.Error()}
@@ -904,6 +926,59 @@ func (h *runtimeHandler) writeFile(raw json.RawMessage) (any, *acp.RPCError) {
 		return nil, &acp.RPCError{Code: acp.CodeInternalError, Message: err.Error()}
 	}
 	return map[string]any{}, nil
+}
+
+// Bypass Permissions auto-approves every tool call, so the client filesystem
+// must not add a second workspace-root rejection on top of that mode.
+func (s *Session) bypassesPermissions() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.modes != nil && isBypassMode(s.modes.CurrentModeID) {
+		return true
+	}
+	return isBypassMode(configModeID(s.configOptions))
+}
+
+func isBypassMode(id string) bool {
+	return strings.EqualFold(strings.TrimSpace(id), "bypass")
+}
+
+func configModeID(raw json.RawMessage) string {
+	var list []map[string]any
+	if json.Unmarshal(raw, &list) != nil {
+		return ""
+	}
+	for _, item := range list {
+		category, _ := item["category"].(string)
+		id, _ := item["id"].(string)
+		if !strings.EqualFold(category, "mode") && id != "mode" {
+			continue
+		}
+		if value, ok := item["currentValue"].(string); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+func resolveClientPath(s *Session, p string, write bool) (string, error) {
+	var abs string
+	var err error
+	if s.bypassesPermissions() {
+		if !filepath.IsAbs(p) {
+			return "", errors.New("path must be absolute")
+		}
+		abs = filepath.Clean(p)
+	} else {
+		abs, err = securityPath(s.Roots(), p)
+		if err != nil {
+			return "", err
+		}
+	}
+	if write && sensitivePath(abs) {
+		return "", errors.New("writing execution-control or secret files requires manual approval outside ACP")
+	}
+	return abs, nil
 }
 
 func securityPath(roots []string, p string) (string, error) {

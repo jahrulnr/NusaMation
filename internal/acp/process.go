@@ -101,8 +101,9 @@ type Process struct {
 	closed  bool
 	exitErr error
 
-	done     chan struct{}
-	exitOnce sync.Once
+	done       chan struct{}
+	stderrDone chan struct{}
+	exitOnce   sync.Once
 
 	notifCh   chan notifMsg
 	notifDone chan struct{}
@@ -123,14 +124,15 @@ func NewProcess(cfg ProcessConfig, handler Handler) *Process {
 		cfg.Log = slog.Default()
 	}
 	return &Process{
-		cfg:       cfg,
-		handler:   handler,
-		log:       cfg.Log.With("acp", "proc"),
-		pending:   make(map[string]*pendingCall),
-		done:      make(chan struct{}),
-		notifCh:   make(chan notifMsg, 2048),
-		notifDone: make(chan struct{}),
-		ring:      NewRing(400),
+		cfg:        cfg,
+		handler:    handler,
+		log:        cfg.Log.With("acp", "proc"),
+		pending:    make(map[string]*pendingCall),
+		done:       make(chan struct{}),
+		notifCh:    make(chan notifMsg, 2048),
+		notifDone:  make(chan struct{}),
+		stderrDone: make(chan struct{}),
+		ring:       NewRing(400),
 	}
 }
 
@@ -359,6 +361,7 @@ func (p *Process) notificationLoop() {
 }
 
 func (p *Process) readStderr() {
+	defer close(p.stderrDone)
 	scanner := bufio.NewScanner(p.stderr)
 	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
 	for scanner.Scan() {
@@ -373,6 +376,13 @@ func (p *Process) readStderr() {
 
 func (p *Process) wait() {
 	err := p.cmd.Wait()
+	// cmd.Wait returns as soon as the process exits. The stderr reader can still
+	// be copying the last lines, and that text is the only explanation for an
+	// agent that dies before initialize.
+	select {
+	case <-p.stderrDone:
+	case <-time.After(2 * time.Second):
+	}
 	p.exitOnce.Do(func() {
 		p.mu.Lock()
 		p.closed = true

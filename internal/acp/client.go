@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -39,6 +40,7 @@ func Start(ctx context.Context, cfg ClientConfig, handler Handler) (*Client, err
 	defer cancel()
 	res, err := c.Initialize(initCtx)
 	if err != nil {
+		err = withStderr(c.proc, err)
 		_ = c.proc.Close()
 		return nil, err
 	}
@@ -69,6 +71,23 @@ func (c *Client) Initialize(ctx context.Context) (InitializeResult, error) {
 		"mcpHttp", res.AgentCapabilities.MCPCapabilities.HTTP,
 		"mcpSse", res.AgentCapabilities.MCPCapabilities.SSE)
 	return res, nil
+}
+
+// withStderr appends the agent's own stderr to a failed start. Processes that
+// exit during initialize often explain why only there.
+func withStderr(p *Process, err error) error {
+	lines := p.StderrLog()
+	if len(lines) > 20 {
+		lines = lines[len(lines)-20:]
+	}
+	text := strings.TrimSpace(strings.Join(lines, "\n"))
+	if text == "" {
+		return err
+	}
+	if len(text) > 1500 {
+		text = text[len(text)-1500:]
+	}
+	return fmt.Errorf("%w: %s", err, text)
 }
 
 func implementationName(i *Implementation) string {

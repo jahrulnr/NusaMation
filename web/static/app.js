@@ -889,9 +889,11 @@
   function activityHTML(messages) {
     const id = messages[0].turnId + ":" + messages[0].id;
     const tools = messages.filter((m) => m.kind === "tool");
-    const running = messages.some((m) => m.status === "streaming" || m.status === "pending");
+    // Follow the turn, not the messages: message status goes idle between tool calls and made the label flicker.
+    const running = S.active?.turnId === messages[0].turnId && isBusyTurn();
     const failed = tools.some((m) => ["failed", "error"].includes(String(parseJSON(m.content, {})?.status || m.status)));
-    const open = S.activityExpanded.has(id) ? S.activityExpanded.get(id) : running;
+    // Collapsed by default. Only the user's toggle opens it, so appending tool calls never flips it.
+    const open = S.activityExpanded.get(id) === true;
     const turn = S.turns[messages[0].turnId];
     const allTurnTools = S.messages.filter((m) => m.turnId === messages[0].turnId && m.kind === "tool").length;
     const seconds = tools.length === allTurnTools && turn?.startedAt && turn?.endedAt && turn.endedAt >= turn.startedAt ? Math.round((turn.endedAt - turn.startedAt) / 1000) : null;

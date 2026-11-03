@@ -231,7 +231,7 @@ nusamation --version                    # print version
 nusamation agent list                   # configured agents
 nusamation agent detect [-add]          # popular ACP CLIs found on PATH (-add registers them)
 nusamation agent get <slug|id> [-json] [-show-secrets]
-nusamation agent add -name X -command codex -arg acp -cwd /work -policy auto_safe -env KEY=val
+nusamation agent add -name X -command codex-acp -cwd /work -policy auto_safe -env KEY=val
 nusamation agent set <slug|id> -policy ask -env KEY=val -env-rm OLD -arg acp
 nusamation agent remove <slug|id>
 
@@ -302,7 +302,7 @@ Any ACP CLI works. Example commands (the exact adapter package varies):
 |---|---|---|
 | Devin | `devin acp` | Auto-detected; log in first. |
 | Claude Agent | `claude-agent-acp` / `claude-code-acp` | Auto-detected; ACP adapter for Claude Code. |
-| Codex | `codex-acp` / `codex acp` | Auto-detected. |
+| Codex | `codex-acp` | Auto-detected. The Codex CLI has no ACP mode; `codex acp` is not used. |
 | Gemini CLI | `gemini --acp` | Auto-detected. |
 | GitHub Copilot | `copilot --acp` | Auto-detected. |
 | OpenCode | `opencode acp` | Auto-detected. |

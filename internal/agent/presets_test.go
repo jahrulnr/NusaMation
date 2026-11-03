@@ -50,7 +50,7 @@ func TestDetectFindsKnownCLIs(t *testing.T) {
 func TestDetectPrefersFirstCandidate(t *testing.T) {
 	stubBins(t, "claude-code-acp", "codex")
 	found := Detect()
-	if len(found) != 2 {
+	if len(found) != 1 {
 		t.Fatalf("Detect() = %#v", found)
 	}
 	bySlug := map[string]DetectedCLI{}
@@ -60,8 +60,8 @@ func TestDetectPrefersFirstCandidate(t *testing.T) {
 	if filepath.Base(bySlug["claude"].Command) != "claude-code-acp" {
 		t.Fatalf("claude = %#v", bySlug["claude"])
 	}
-	if got := bySlug["codex"].Args; len(got) != 1 || got[0] != "acp" {
-		t.Fatalf("codex args = %#v", got)
+	if _, ok := bySlug["codex"]; ok {
+		t.Fatal("plain codex CLI is not an ACP server and must not be seeded")
 	}
 }
 

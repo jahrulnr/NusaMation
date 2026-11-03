@@ -135,7 +135,7 @@ func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, root
 			limit = 16 << 20
 		}
 	}
-	cmd := exec.Command(req.Command, req.Args...)
+	cmd := terminalCommand(req.Command, req.Args)
 	cmd.Dir = cwd
 	cmd.Env = terminalEnv(req.Env)
 	if runtime.GOOS != "windows" {
@@ -204,6 +204,20 @@ func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, root
 		tm.log.Debug("terminal exited", "id", t.id, "command", t.command, "status", status)
 	}()
 	return acp.TerminalCreateResponse{TerminalID: t.id}, nil
+}
+
+// terminalCommand builds the process for terminal/create. ACP sends a program
+// and its args separately, which is what exec.Command expects. Some agents
+// (e.g. Devin) send a whole shell line as command with no args, so when no
+// args are given and the command does not resolve to a program, run it
+// through /bin/sh.
+func terminalCommand(command string, args []string) *exec.Cmd {
+	if len(args) == 0 {
+		if _, err := exec.LookPath(command); err != nil {
+			return exec.Command("/bin/sh", "-c", command)
+		}
+	}
+	return exec.Command(command, args...)
 }
 
 func terminalEnv(extra []acp.EnvVar) []string {

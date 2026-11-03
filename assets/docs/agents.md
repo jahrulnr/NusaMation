@@ -9,7 +9,7 @@ nusamation agent list                           # all registered agents
 nusamation agent detect                         # popular ACP CLIs found on PATH
 nusamation agent detect -add                    # …and register each one
 nusamation agent get <slug|id> [-json]          # details (env masked by default)
-nusamation agent add -name X -command codex -arg acp \
+nusamation agent add -name X -command codex-acp \
     [-slug x] [-cwd /work] [-policy auto_safe] [-env KEY=val] \
     [-model 'reasoning|medium'] [-enabled=false] [-auto-start]
 nusamation agent set <slug|id> [-command ..] [-arg ..] [-env K=V] \

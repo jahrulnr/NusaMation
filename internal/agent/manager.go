@@ -321,8 +321,12 @@ func (m *Manager) TerminalAuthCommand(ctx context.Context, agentID, methodID str
 	if selected == nil {
 		return nil, errors.New("terminal authentication method is not available")
 	}
-	args := append(append([]string(nil), ag.Args...), selected.Args...)
-	cmd := exec.CommandContext(ctx, ag.Command, args...)
+	command, args, extra, err := resolveACPLaunch(ag.Command, ag.Args)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, selected.Args...)
+	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir = ag.Cwd
 	env := map[string]string{}
 	for _, value := range os.Environ() {
@@ -330,6 +334,9 @@ func (m *Manager) TerminalAuthCommand(ctx context.Context, agentID, methodID str
 		if ok {
 			env[key] = v
 		}
+	}
+	for key, value := range extra {
+		env[key] = value
 	}
 	for key, value := range envMap(ag.Env) {
 		env[key] = value
@@ -394,12 +401,11 @@ func (m *Manager) Probe(ctx context.Context, agentID string) (ProbeResult, error
 	m.Sink().AgentState(agentID, "starting", "")
 	defer func() {}()
 
-	procCfg := acp.ProcessConfig{
-		Command: agent.Command,
-		Args:    agent.Args,
-		Env:     envMap(agent.Env),
-		Dir:     agent.Cwd,
-		Log:     m.log.With("agent", agent.Slug),
+	procCfg, err := acpProcessConfig(agent, m.log.With("agent", agent.Slug))
+	if err != nil {
+		_ = m.store.UpdateAgentStatus(ctx, agentID, "error", err.Error())
+		m.Sink().AgentState(agentID, "error", err.Error())
+		return ProbeResult{}, err
 	}
 	caps := acp.DefaultClientCapabilities()
 	caps.Elicitation = nil

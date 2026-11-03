@@ -42,7 +42,8 @@ var KnownCLIs = []KnownCLI{
 	{
 		Name: "Codex", Slug: "codex", Description: "OpenAI Codex via the ACP adapter",
 		Icon: "terminal", Color: "emerald",
-		Candidates: [][]string{{"codex-acp"}, {"codex", "acp"}},
+		// The Codex CLI itself is not an ACP server. `codex acp` is a TUI prompt.
+		Candidates: [][]string{{"codex-acp"}},
 	},
 	{
 		Name: "Gemini CLI", Slug: "gemini", Description: "Google Gemini CLI in ACP mode",

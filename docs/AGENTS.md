@@ -27,13 +27,13 @@ The adapter must implement ACP v1 and use newline-delimited JSON-RPC on stdio. N
 **Control center → Agents → Add agent**, or the CLI:
 
 ```bash
-nusamation agent add -name Codex -command codex -arg acp -cwd /work -policy auto_safe
+nusamation agent add -name Codex -command codex-acp -cwd /work -policy auto_safe
 nusamation agent detect [-add]   # popular ACP CLIs found on PATH
 nusamation agent set codex -policy ask -env KEY=val
 nusamation agent remove codex
 ```
 
-On first run (when no enabled agent exists) NusaMation scans `PATH` for the known ACP CLIs — `devin acp`, `claude-agent-acp`/`claude-code-acp`, `codex-acp`/`codex acp`, `gemini --acp`, `copilot --acp`, `opencode acp`, `auggie --acp`, `goose acp`, `kimi acp`, `cursor-agent acp`, `kilo acp`, `qwen --acp`, `vibe-acp`, `kiro-cli acp` — and seeds every one it finds.
+On first run (when no enabled agent exists) NusaMation scans `PATH` for the known ACP CLIs — `devin acp`, `claude-agent-acp`/`claude-code-acp`, `codex-acp`, `gemini --acp`, `copilot --acp`, `opencode acp`, `auggie --acp`, `goose acp`, `kimi acp`, `cursor-agent acp`, `kilo acp`, `qwen --acp`, `vibe-acp`, `kiro-cli acp` — and seeds every one it finds.
 
 | Field | Notes |
 |---|---|
@@ -66,7 +66,7 @@ If Devin is slow to start, run **Probe** once to pre-populate the UI, then send 
 
 ### Claude Code / Codex / Gemini
 
-The seed catalog covers the common invocations (`claude-agent-acp`, `codex acp`, `gemini --acp`, …). For other distributions, use the ACP adapter/version appropriate to your installation. The command must:
+The seed catalog covers the common invocations (`claude-agent-acp`, `codex-acp`, `gemini --acp`, …). The Codex CLI is not an ACP server: `codex acp` is an interactive prompt, so Codex is seeded only when `codex-acp` is on `PATH`. An existing agent saved as `codex` with argument `acp` is launched through that adapter, with `CODEX_PATH` set to the configured Codex binary. For other distributions, use the ACP adapter/version appropriate to your installation. The command must:
 
 - speak ACP over stdio;
 - accept `initialize` and `session/new`;
@@ -131,7 +131,7 @@ The agent process inherits the NusaMation process environment, with per-agent en
 
 The first run seeds `data/workspace/README.md` and `AGENTS.md`. This is the shared working directory for all agents unless a conversation has a different cwd. Client-side ACP filesystem requests check the session roots and sensitive paths. For terminal requests, NusaMation checks the working directory but does not sandbox the command; the agent's own tools and sandbox have their own access rules.
 
-Every start also syncs operational docs into `data/docs/` (embedded in the binary, source in `assets/docs/`): `README.md`, `agents.md`, `whatsapp.md`, `settings.md`, `api.md`, `troubleshooting.md`. They teach agents how to operate NusaMation itself — manage agent CLIs, configure WhatsApp, edit settings, call the API, and debug. The seeded `workspace/AGENTS.md` (appended to existing files when missing) points agents at that directory, the resolved `-data-dir`, the CLI path and the log location. Ops docs live outside the session workspace roots, so client-side `fs/read_text_file` requests for them are denied — agents should read them with their own file tools or a terminal (`cat`), which most ACP agents provide.
+Every start also syncs operational docs into `data/docs/` (embedded in the binary, source in `assets/docs/`): `README.md`, `agents.md`, `whatsapp.md`, `settings.md`, `api.md`, `troubleshooting.md`. They teach agents how to operate NusaMation itself — manage agent CLIs, configure WhatsApp, edit settings, call the API, and debug. The seeded `workspace/AGENTS.md` (appended to existing files when missing) points agents at that directory, the resolved `-data-dir`, the CLI path and the log location. Ops docs live outside the session workspace roots. Client-side `fs/read_text_file` and `fs/write_text_file` stay inside those roots, except when the session mode is Bypass Permissions (`bypass`): that mode already auto-approves every tool call, so the client does not add a second workspace rejection. In other modes a denied read should go through the agent's own file tool or a terminal (`cat`).
 
 The agent's own sandbox controls its direct filesystem and command access; the ACP client-side filesystem checks do not confine commands run in a terminal.
 

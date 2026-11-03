@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -62,5 +63,23 @@ func TestRequestScopedInputUsesOriginatingConversation(t *testing.T) {
 	p.handleRequest(rpcMessage{ID: json.RawMessage(`"question"`), Method: "elicitation/create", Params: json.RawMessage(`{"requestId":12,"mode":"form"}`)})
 	if got := <-h.got; got != "conversation-1" {
 		t.Fatalf("owner = %q", got)
+	}
+}
+
+type silentHandler struct{}
+
+func (silentHandler) OnNotification(string, string, json.RawMessage) {}
+func (silentHandler) OnRequest(context.Context, string, json.RawMessage) (any, *RPCError) {
+	return map[string]any{}, nil
+}
+func (silentHandler) OnStderr(string) {}
+func (silentHandler) OnExit(error)    {}
+
+func TestStartIncludesStderrWhenProcessExits(t *testing.T) {
+	_, err := Start(context.Background(), ClientConfig{
+		ProcessConfig: ProcessConfig{Command: "sh", Args: []string{"-c", "echo 'TERM is dumb' >&2; exit 1"}},
+	}, silentHandler{})
+	if err == nil || !strings.Contains(err.Error(), "TERM is dumb") {
+		t.Fatalf("err = %v", err)
 	}
 }

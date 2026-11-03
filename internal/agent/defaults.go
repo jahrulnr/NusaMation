@@ -65,8 +65,12 @@ func (m *Manager) PreviewDefaults(ctx context.Context, agentID string, selection
 	}
 	caps := acp.DefaultClientCapabilities()
 	caps.Elicitation = nil
+	procCfg, err := acpProcessConfig(ag, m.log.With("agent", ag.Slug))
+	if err != nil {
+		return nil, err
+	}
 	client, err := acp.Start(ctx, acp.ClientConfig{
-		ProcessConfig: acp.ProcessConfig{Command: ag.Command, Args: ag.Args, Env: envMap(ag.Env), Dir: ag.Cwd, Log: m.log.With("agent", ag.Slug)},
+		ProcessConfig: procCfg,
 		ClientInfo:    acp.Implementation{Name: "nusamation", Title: "NusaMation", Version: config.Version}, Capabilities: &caps,
 	}, probeHandler{})
 	if err != nil {
