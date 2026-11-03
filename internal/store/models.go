@@ -97,6 +97,16 @@ type Setting struct {
 	UpdatedAt int64  `json:"updatedAt"`
 }
 
+type ConfigSelection struct {
+	ID    string `json:"id"`
+	Value any    `json:"value"`
+}
+
+type AgentDefaults struct {
+	AgentID    string            `json:"agentId"`
+	Selections []ConfigSelection `json:"selections"`
+}
+
 type Routing struct {
 	ReplyToOrigin   bool `json:"replyToOrigin"`
 	MirrorFinal     bool `json:"mirrorFinal"`

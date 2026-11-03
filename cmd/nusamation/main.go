@@ -30,6 +30,9 @@ func main() {
 		case "reset-password":
 			fail("reset-password", resetPassword(args[1:]))
 			return
+		case "automation", "automations":
+			fail("automation", automationCmd(args[1:]))
+			return
 		case "agent", "agents":
 			fail("agent", agentCmd(args[1:]))
 			return
@@ -67,6 +70,7 @@ Usage:
   %s <command> [flags]       Manage NusaMation without the web UI
 
 Commands:
+  automation    Manage scheduled ACP jobs and run history
   agent         Manage ACP agent CLIs (list, detect, get, add, set, remove)
   config        Manage stored settings (list, get, add, set, remove)
   whatsapp      Manage WhatsApp channel settings (show, set)

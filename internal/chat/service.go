@@ -141,7 +141,8 @@ type SubmitInput struct {
 	ReplyToChannel bool                    `json:"replyToChannel,omitempty"`
 	ReplyChannel   string                  `json:"replyChannel,omitempty"`
 	// Delivery is "" or "queue" (default FIFO) or "after_tools".
-	Delivery string `json:"delivery,omitempty"`
+	Delivery        string `json:"delivery,omitempty"`
+	AutomationRunID string `json:"-"`
 }
 
 type messagePayload struct {
@@ -244,7 +245,12 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 		}
 	}
 
-	turn, err := s.store.CreateTurn(ctx, conv.ID, msg.ID, originChannel, originRef)
+	var turn store.Turn
+	if in.AutomationRunID != "" {
+		turn, err = s.store.CreateAutomationTurn(ctx, in.AutomationRunID, conv.ID, msg.ID, originChannel, originRef)
+	} else {
+		turn, err = s.store.CreateTurn(ctx, conv.ID, msg.ID, originChannel, originRef)
+	}
 	if err != nil {
 		return msg, turn, err
 	}
@@ -355,6 +361,21 @@ func (s *Service) runQueue(conversationID string) {
 				}
 				break
 			}
+			expired, err := s.store.AutomationTurnExpired(context.Background(), turn.ID, time.Now())
+			if err != nil {
+				s.log.Warn("failed to check automation expiry", "turn", turn.ID, "error", err)
+				break
+			}
+			if expired {
+				turn.Status, turn.StopReason, turn.Error = "cancelled", "expired", "Automation expired before the queued run could start."
+				turn.EndedAt = time.Now().UnixMilli()
+				if err := s.store.FinishTurn(context.Background(), turn.ID, turn.Status, turn.StopReason, turn.Error); err != nil {
+					s.log.Warn("failed to expire automation turn", "turn", turn.ID, "error", err)
+					break
+				}
+				s.emit("turn.updated", conversationID, turn)
+				continue
+			}
 			s.processTurn(turn)
 		}
 		s.mu.Lock()
@@ -399,8 +420,13 @@ func (s *Service) ActiveStatus(conversationID string) (turnID, status string, ok
 }
 
 func (s *Service) CreateConversation(ctx context.Context, agentID, title, cwd, channel, ref string) (store.Conversation, error) {
+	var defaults store.AgentDefaults
+	_ = s.store.GetJSONSetting(ctx, "agent.defaults", &defaults)
 	if agentID == "" {
-		ag, err := s.store.FirstEnabledAgent(ctx)
+		ag, err := s.store.GetAgent(ctx, defaults.AgentID)
+		if err != nil || !ag.Enabled {
+			ag, err = s.store.FirstEnabledAgent(ctx)
+		}
 		if err != nil {
 			return store.Conversation{}, ErrNoAgent
 		}
@@ -425,6 +451,17 @@ func (s *Service) CreateConversation(ctx context.Context, agentID, title, cwd, c
 	conv, err := s.store.CreateConversation(ctx, agentID, title, cwd, channel, ref, ag.DefaultModel)
 	if err != nil {
 		return conv, err
+	}
+	if agentID == defaults.AgentID && len(defaults.Selections) > 0 {
+		meta, _ := s.metaMap(conv)
+		meta["defaultConfig"] = defaults.Selections
+		if err := s.store.UpdateConversationMetadata(ctx, conv.ID, mustJSON(meta)); err != nil {
+			return conv, err
+		}
+		conv, err = s.store.GetConversation(ctx, conv.ID)
+		if err != nil {
+			return conv, err
+		}
 	}
 	s.emit("conversation.created", conv.ID, conv)
 	return conv, nil
@@ -510,6 +547,11 @@ func (s *Service) SwitchAgent(ctx context.Context, conversationID, agentID strin
 	meta, _ := s.metaMap(conv)
 	meta["handoff"] = true
 	delete(meta, "desiredConfig")
+	delete(meta, "defaultConfig")
+	var defaults store.AgentDefaults
+	if s.store.GetJSONSetting(ctx, "agent.defaults", &defaults) == nil && defaults.AgentID == agentID && len(defaults.Selections) > 0 {
+		meta["defaultConfig"] = defaults.Selections
+	}
 	meta["titleSource"] = "agent"
 	_ = s.store.UpdateConversationMetadata(ctx, conversationID, mustJSON(meta))
 	s.agents.ResetConversation(ctx, conversationID)

@@ -21,6 +21,11 @@ status.
 
 ```
 GET  /api/bootstrap                      # config, version, whatsapp settings
+GET|POST /api/automations
+GET|PUT|DELETE /api/automations/{id}      # GET includes run history
+PATCH /api/automations/{id}/enabled
+POST /api/settings/agent-defaults/preview
+PUT  /api/settings/agent-defaults
 GET|POST /api/conversations
 GET|PATCH|DELETE /api/conversations/{id}
 GET|POST /api/conversations/{id}/messages
@@ -42,5 +47,49 @@ GET  /api/events                          # WebSocket realtime stream
 GET  /api/health                          # unauthenticated
 ```
 
-Payload shapes are documented in the repo's `docs/API.md`; the list above is
-for orientation — call `GET /api/bootstrap` first for the server's own view.
+## Automation payloads
+
+`GET /api/automations` returns `automations` and the server's `timezone`.
+Create a job with `POST /api/automations`:
+
+```json
+{
+  "name": "Daily review",
+  "prompt": "Review the workspace",
+  "agentId": "<agent-id>",
+  "schedule": "cron",
+  "cron": "0 9 * * *",
+  "timezone": "Asia/Jakarta",
+  "sessionMode": "same",
+  "expiresAt": 0
+}
+```
+
+Use an enabled agent ID from `/api/agents`; an agent slug is accepted by the
+CLI but is not the API's `agentId`. `schedule` is `cron` or `once`; for `once`,
+provide `runAt` as Unix milliseconds instead of `cron`. `expiresAt` is Unix
+milliseconds or `0` for no expiry. `sessionMode` is `same` or `isolated`.
+Creation enables the job. The response contains `automation`.
+
+`GET /api/automations/{id}` returns `automation` and `runs`. For `PUT`, send
+the complete editable job, including `enabled`; include the `updatedAt` from
+the latest GET to detect concurrent edits. A stale update is rejected: reload
+before retrying. `PATCH /api/automations/{id}/enabled` takes
+`{"enabled":false}` or `{"enabled":true}`. `DELETE` removes the job and its
+run history, leaving chat transcripts intact. See [automations.md](automations.md)
+for scheduling and recovery behavior.
+
+## Default ACP payloads
+
+Both `POST /api/settings/agent-defaults/preview` and
+`PUT /api/settings/agent-defaults` take an agent ID and an ordered selection
+array, for example `{"agentId":"<agent-id>","selections":[]}`. Preview
+returns `defaults` and the current `configs` advertised by a temporary ACP
+session. Choose IDs and values from that response, append one selection, and
+preview again before selecting a dependent option. A selection has the shape
+`{"id":"<config-id>","value":"<advertised-value>"}`; boolean options use a
+JSON boolean value. PUT validates the full sequence again before saving.
+Invalid payloads return 400; ACP startup or validation failures return 502.
+
+The repo's `docs/API.md` contains additional endpoint details; call
+`GET /api/bootstrap` for the server's own view.

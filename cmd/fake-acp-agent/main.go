@@ -142,6 +142,7 @@ func (s *server) handle(msg message) {
 			Value    any    `json:"value"`
 		}
 		_ = json.Unmarshal(msg.Params, &req)
+		trace(fmt.Sprintf("config %s %v", req.ConfigID, req.Value))
 		s.mu.Lock()
 		s.values[req.ConfigID] = req.Value
 		s.mu.Unlock()
@@ -177,6 +178,17 @@ func (s *server) configOptions() []any {
 				map[string]any{"value": "fake-smart", "name": "Fake Smart"},
 			},
 		},
+	}
+	if os.Getenv("FAKE_ACP_DYNAMIC_CONFIG") == "1" {
+		effort := []any{map[string]any{"value": "low", "name": "Low"}}
+		if s.values["model"] == "fake-smart" {
+			effort = append(effort, map[string]any{"value": "high", "name": "High"})
+		}
+		current := s.values["effort"]
+		if current == nil {
+			current = "low"
+		}
+		options = append(options, map[string]any{"id": "effort", "name": "Effort", "category": "thought_level", "type": "select", "currentValue": current, "options": effort})
 	}
 	if s.legacy {
 		return options

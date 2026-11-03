@@ -61,6 +61,19 @@
     draft: "",
     whatsappSettings: null,
     routingDefaults: null,
+    agentDefaults: { agentId: "", selections: [] },
+    defaultDraft: null,
+    defaultConfigs: [],
+    defaultBusy: false,
+    defaultError: "",
+    defaultSeq: 0,
+    automations: [],
+    automationView: "list",
+    automationJob: null,
+    automationRuns: [],
+    automationLoading: false,
+    automationError: "",
+    automationServerZone: "",
     ws: null,
     wsState: "offline",
     reconnectAttempt: 0,
@@ -90,6 +103,26 @@
     lastNotice: "",
     channelsRefreshTimer: null,
   };
+
+  // Composer state belongs to a conversation; the empty key is the welcome draft.
+  const composers = new Map();
+  let composerKey = "";
+  function composerFor(key) {
+    if (!composers.has(key)) composers.set(key, { draft: "", attachments: [], sendDelivery: "queue", replyToChannel: false, sending: false });
+    return composers.get(key);
+  }
+  for (const field of ["draft", "attachments", "sendDelivery", "replyToChannel", "sending"]) {
+    Object.defineProperty(S, field, {
+      get: () => composerFor(composerKey)[field],
+      set: (value) => { composerFor(composerKey)[field] = value; },
+    });
+  }
+  function switchComposer(key) { composerKey = key || ""; }
+  function moveComposer(from, to) {
+    composers.set(to, composerFor(from));
+    composers.delete(from);
+    if (composerKey === from) switchComposer(to);
+  }
 
   /* ---------------- time / formatting ---------------- */
   function timeAgo(ms) {
@@ -393,7 +426,8 @@
     S.conversations = data.conversations || [];
     S.approvals = data.approvals || [];
     S.approvalsById = new Map(S.approvals.map((a) => [a.id, a]));
-    S.welcomeAgent = S.welcomeAgent || (S.agents.find((a) => a.enabled) || {}).id || "";
+    S.agentDefaults = data.agentDefaults || { agentId: "", selections: [] };
+    S.welcomeAgent = S.welcomeAgent || (S.agents.find((a) => a.id === S.agentDefaults.agentId && a.enabled) || {}).id || (S.agents.find((a) => a.enabled) || {}).id || "";
     S.channels.forEach((c) => { if (c.name === "whatsapp") S.whatsapp = c; });
     S.whatsappSettings = data.whatsapp || S.whatsappSettings || null;
     S.routingDefaults = data.routingDefaults || S.routingDefaults || null;
@@ -441,15 +475,14 @@
     const seq = ++S.loadSeq;
     S.loadingConversation = true;
     S.loadError = "";
-    S.draft = "";
-    S.sendDelivery = "queue";
-    S.attachments = [];
+    switchComposer(id);
     S.scrollPinned = true;
     S.current = S.conversations.find((c) => c.id === id) || S.current;
     renderSidebar();
     renderTopbar();
     if (S.current && S.current.id !== id) S.current = null;
     renderChat(true);
+    renderComposer();
     try {
       const data = await api(`/conversations/${encodeURIComponent(id)}`);
       if (seq !== S.loadSeq) return;
@@ -479,6 +512,8 @@
       if (e.status === 404) {
         S.conversations = S.conversations.filter((c) => c.id !== id);
         S.current = null;
+        composers.delete(id);
+        switchComposer("");
         S.messages = [];
         setRoute("");
         renderSidebar();
@@ -1116,6 +1151,10 @@
   function renderComposer() {
     const wrap = $("#composer-wrap");
     if (!wrap) return;
+    const popover = $(".composer-popover");
+    const oldAnchor = $("[data-popover-anchor]", wrap);
+    const anchorAction = oldAnchor?.dataset.action;
+    const anchorId = oldAnchor?.dataset.id;
     const menuOpen = !!$(".send-menu-popover");
     const menuFocus = document.activeElement?.dataset?.mode || "";
     if (menuOpen) closePopover();
@@ -1144,7 +1183,7 @@
           ${active ? `<button class="stop-btn" data-action="stop" aria-label="Stop" title="Stop">${icon("stop", "sm")} <span class="stop-label">Stop</span></button>` : ""}
           <div class="send-split">
             <button class="send-btn" id="send-btn" data-action="send" title="${sendTitle()}" aria-label="${sendTitle()}">${icon("send")}</button>
-            <button class="send-menu-btn" id="send-menu-btn" data-action="send-menu" aria-haspopup="menu" aria-expanded="false" aria-label="Send options" title="Send options"${S.sending ? " disabled" : ""}>${icon("chevron-down", "sm")}</button>
+            ${isBusyTurn() ? `<button class="send-menu-btn" id="send-menu-btn" data-action="send-menu" aria-haspopup="menu" aria-expanded="false" aria-label="Send options" title="Send options"${S.sending ? " disabled" : ""}>${icon("chevron-down", "sm")}</button>` : ""}
           </div>
         </div>
       </div>
@@ -1177,6 +1216,11 @@
     renderPendingAttachments();
     updateComposerState();
     if (menuOpen) reopenSendMenu(menuFocus);
+    else if (popover && oldAnchor) {
+      const replacement = $$('[data-action]', wrap).find((el) => el.dataset.action === anchorAction && el.dataset.id === anchorId);
+      if (replacement) popover._setAnchor(replacement);
+      else closePopover();
+    }
   }
 
   function composerConfigs() {
@@ -1255,6 +1299,7 @@
   }
 
   function openSendMenu(anchor) {
+    if (!isBusyTurn()) return;
     if ($(".send-menu-popover")) { closePopover(); return; }
     const choice = (mode, label, help) => `<button class="menu-item" role="menuitemradio" aria-checked="${S.sendDelivery === mode}" data-action="send-mode" data-mode="${mode}"><span class="popover-main"><b>${label}</b><small>${help}</small></span>${S.sendDelivery === mode ? icon("check", "sm") : ""}</button>`;
     openPopover(anchor, `<div class="popover-list send-menu" role="menu" aria-label="Send mode">${choice("queue", "Add to queue", "Runs after the current turn finishes")}${choice("after_tools", "Send after tools", "Finish current tools, cancel, then send")}</div>`, { width: 260, class: "composer-popover send-menu-popover" });
@@ -1334,15 +1379,17 @@
 
   async function uploadFiles(files) {
     if (!files || !files.length) return;
+    const owner = composerFor(composerKey);
+    const conversationID = S.current?.id;
     for (const file of Array.from(files).slice(0, 8)) {
       if (file.size > 25 << 20) { toast("File is too large", `${file.name} exceeds 25 MB.`, "error"); continue; }
       const fd = new FormData();
       fd.append("file", file);
-      if (S.current) fd.append("conversationId", S.current.id);
+      if (conversationID) fd.append("conversationId", conversationID);
       try {
         const d = await api("/uploads", { method: "POST", body: fd });
-        S.attachments.push({ upload: d.upload });
-        renderPendingAttachments();
+        owner.attachments.push({ upload: d.upload });
+        if (composerFor(composerKey) === owner) renderPendingAttachments();
       } catch (e) {
         toast("Upload failed", e.message, "error");
       }
@@ -1355,34 +1402,44 @@
     if (!ta) return;
     const text = ta.value.trim();
     if (!text && !S.attachments.length) return;
-    S.sending = true;
+    const owner = composerFor(composerKey);
+    const sourceKey = composerKey;
+    let conversation = S.current;
+    const delivery = isBusyTurn() ? owner.sendDelivery : "queue";
+    const attachments = owner.attachments.slice();
+    owner.sending = true;
     updateComposerState();
     try {
-      if (!S.current) {
+      if (!conversation) {
         const ag = agentById(S.welcomeAgent) || S.agents.find((a) => a.enabled);
         if (!ag) { openSettings("agents"); throw new Error("Add an agent before sending a message."); }
         const d = await api("/conversations", { method: "POST", body: { agentId: ag.id } });
-        S.current = d.conversation;
-        S.messages = [];
-        S.configs = [];
-        S.active = null;
+        conversation = d.conversation;
+        moveComposer(sourceKey, conversation.id);
         upsertConversation(d.conversation);
-        setRoute(d.conversation.id);
+        if (composerFor(composerKey) === owner) {
+          ++S.loadSeq;
+          S.loadingConversation = false;
+          S.current = conversation;
+          S.messages = [];
+          S.configs = [];
+          S.active = null;
+          setRoute(conversation.id);
+        }
       }
-      const links = (S.current.links || []).filter((l) => l.channel !== "web");
+      const links = (conversation.links || []).filter((l) => l.channel !== "web");
       const body = {
         text,
-        attachments: S.attachments.map((a) => ({ uploadId: (a.upload || a).id })),
-        replyToChannel: !!(S.replyToChannel && links.length),
+        attachments: attachments.map((a) => ({ uploadId: (a.upload || a).id })),
+        replyToChannel: !!(owner.replyToChannel && links.length),
         replyChannel: links.length ? links[0].channel : "",
-        delivery: isBusyTurn() ? S.sendDelivery : "queue",
+        delivery,
       };
-      const d = await api(`/conversations/${encodeURIComponent(S.current.id)}/messages`, { method: "POST", body });
-      S.sending = false;
-      ta.value = "";
-      S.draft = "";
-      ta.style.height = "auto";
-      S.attachments = [];
+      const d = await api(`/conversations/${encodeURIComponent(conversation.id)}/messages`, { method: "POST", body });
+      owner.sending = false;
+      if (owner.draft.trim() === text) owner.draft = "";
+      owner.attachments = owner.attachments.filter((a) => !attachments.includes(a));
+      if (composerFor(composerKey) !== owner || S.current?.id !== conversation.id) return;
       renderPendingAttachments();
       upsertTurn(d.turn);
       upsertMessage(normalizeMessage({ ...d.message }));
@@ -1393,8 +1450,8 @@
       renderComposer();
       focusComposer();
     } catch (e) {
-      S.sending = false;
-      updateComposerState();
+      owner.sending = false;
+      if (composerFor(composerKey) === owner) updateComposerState();
       toast("Could not send", e.message, "error");
     }
   }
@@ -1550,8 +1607,9 @@
       case "conversation.deleted": {
         const id = data.id || convId;
         S.conversations = S.conversations.filter((c) => c.id !== id);
+        composers.delete(id);
         if (S.current && S.current.id === id) {
-          S.current = null; S.messages = []; S.active = null; setRoute("");
+          S.current = null; switchComposer(""); S.messages = []; S.active = null; setRoute("");
           renderChat(); renderTopbar(); renderComposer();
         }
         renderSidebar();
@@ -1809,6 +1867,12 @@
     el.innerHTML = html;
     document.body.appendChild(el);
     anchor.setAttribute("data-popover-anchor", "1");
+    el._setAnchor = (next) => {
+      anchor.removeAttribute("data-popover-anchor");
+      anchor = next;
+      anchor.setAttribute("data-popover-anchor", "1");
+      el._reposition();
+    };
     el._reposition = () => {
       const r = anchor.getBoundingClientRect();
       const viewport = window.visualViewport;
@@ -1827,16 +1891,11 @@
       el.style.top = top + "px";
     };
     el._reposition();
-    setTimeout(() => {
-      const onDoc = (e) => {
-        if (!el.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) {
-          closePopover();
-          document.removeEventListener("click", onDoc, true);
-        }
-      };
-      document.addEventListener("click", onDoc, true);
-      el._cleanup = () => document.removeEventListener("click", onDoc, true);
-    }, 0);
+    const onDoc = (e) => {
+      if (!el.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) closePopover();
+    };
+    document.addEventListener("click", onDoc, true);
+    el._cleanup = () => document.removeEventListener("click", onDoc, true);
   }
 
   function menuItem(iconName, label, action, attrs = "", danger = false) {
@@ -1911,12 +1970,7 @@
 
   async function prepareComposer() {
     if (!S.current) {
-      const draft = S.draft;
-      const attachments = S.attachments;
-      await newConversation();
-      S.draft = draft;
-      S.attachments = attachments;
-      renderComposer();
+      await newConversation(S.welcomeAgent, true);
       return;
     }
     const id = S.current.id;
@@ -2122,7 +2176,7 @@
     try {
       await api(`/conversations/${encodeURIComponent(id)}`, { method: "PATCH", body: { archived: true } });
       S.conversations = S.conversations.filter((c) => c.id !== id);
-      if (S.current && S.current.id === id) { S.current = null; S.messages = []; setRoute(""); renderChat(); renderTopbar(); renderComposer(); }
+      if (S.current && S.current.id === id) { S.current = null; switchComposer(""); S.messages = []; setRoute(""); renderChat(); renderTopbar(); renderComposer(); }
       closePopover(); renderSidebar();
     } catch (e) { toast("Could not archive", e.message, "error"); }
   }
@@ -2132,7 +2186,8 @@
       try {
         await api(`/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
         S.conversations = S.conversations.filter((c) => c.id !== id);
-        if (S.current && S.current.id === id) { S.current = null; S.messages = []; setRoute(""); renderChat(); renderTopbar(); renderComposer(); }
+        composers.delete(id);
+        if (S.current && S.current.id === id) { S.current = null; switchComposer(""); S.messages = []; setRoute(""); renderChat(); renderTopbar(); renderComposer(); }
         renderSidebar(); closeModal(); toast("Conversation deleted", "", "success");
       } catch (e) { toast("Could not delete", e.message, "error"); }
     }, "Delete");
@@ -2330,6 +2385,8 @@
   function renderSettings() {
     const tabs = [
       ["agents", "sparkles", "Agents"],
+      ["defaults", "star", "Defaults"],
+      ["automations", "clock", "Automations"],
       ["mcp", "zap", "MCP servers"],
       ["channels", "message", "Channels"],
       ["routing", "link", "Routing"],
@@ -2337,19 +2394,175 @@
     ];
     let body = "";
     if (S.settingsTab === "agents") body = agentsSettings();
+    else if (S.settingsTab === "defaults") body = agentDefaultsSettings();
+    else if (S.settingsTab === "automations") body = automationsSettings();
     else if (S.settingsTab === "mcp") body = mcpSettings();
     else if (S.settingsTab === "channels") body = channelsSettings();
     else if (S.settingsTab === "routing") body = routingSettings();
     else body = accountSettings();
-    openModal(`${modalHead("Control center", "Agents, channels, routing and account")}<div class="settings-layout">
+    const content = `<div class="settings-layout">
       <nav class="settings-tabs">${tabs.map(([id, ic, label]) => `<button class="settings-tab ${S.settingsTab === id ? "active" : ""}" data-action="settings-tab" data-tab="${id}">${icon(ic)}<span>${label}</span></button>`).join("")}</nav>
       <div class="settings-content" id="settings-content">${body}</div>
-    </div>`, { size: "settings-modal" });
+    </div>`;
+    const layout = $("#modal-root .settings-modal .settings-layout");
+    if (layout) {
+      $$(".settings-tab", layout).forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === S.settingsTab));
+      $("#settings-content", layout).innerHTML = body;
+    } else openModal(`${modalHead("Control center", "Agents, channels, routing and account")}${content}`, { size: "settings-modal" });
     if (S.settingsTab === "channels") startQRTimer();
   }
 
   function settingsHead(title, desc, action = "") {
     return `<div class="section-head"><div><h3>${title}</h3><div class="settings-desc" style="margin:3px 0 0">${desc}</div></div>${action}</div>`;
+  }
+
+  function automationDate(ms, zone) {
+    if (!ms) return "";
+    try {
+      const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(ms)).map((p) => [p.type, p.value]));
+      return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+    } catch { return ""; }
+  }
+
+  function displayAutomationTime(ms, zone) {
+    try { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", timeZone: zone === "Local" ? S.automationServerZone : zone }).format(new Date(ms)); }
+    catch { return new Date(ms).toLocaleString(); }
+  }
+
+  function automationTimestamp(value, zone) {
+    if (!value) return 0;
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+    if (!match) throw new Error("Enter a valid date and time.");
+    const wanted = Date.UTC(...[Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5])]);
+    let result = wanted;
+    for (let i = 0; i < 3; i++) {
+      const actual = automationDate(result, zone);
+      if (!actual) throw new Error("Enter a valid IANA timezone, for example Asia/Jakarta.");
+      const p = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(actual);
+      result += wanted - Date.UTC(Number(p[1]), Number(p[2]) - 1, Number(p[3]), Number(p[4]), Number(p[5]));
+    }
+    if (automationDate(result, zone) !== value) throw new Error("This local time does not exist in the selected timezone.");
+    return result;
+  }
+
+  function automationsSettings() {
+    if (S.automationLoading) return `${settingsHead("Automations", "Scheduled ACP jobs.")}<div class="settings-desc"><span class="spinner"></span> Loading…</div>`;
+    if (S.automationError) return `${settingsHead("Automations", "Scheduled ACP jobs.")}<div role="alert">${esc(S.automationError)}</div><button class="btn btn-secondary" data-action="automations-list">Retry</button>`;
+    if (S.automationView === "form") return automationFormHTML();
+    if (S.automationView === "history") {
+      const job = S.automationJob;
+      return `${settingsHead(esc(job.name), "Run history", `<button class="btn btn-secondary btn-sm" data-action="automations-list">Back</button>`)}
+        <div class="settings-desc">${esc(job.prompt)}</div>
+        <div class="settings-section">${S.automationRuns.map((r) => `<div class="settings-row"><div><div class="label">${esc(r.status)} · ${esc(displayAutomationTime(r.startedAt, job.timezone))}</div><div class="desc">Scheduled ${esc(displayAutomationTime(r.scheduledAt, job.timezone))} (${esc(job.timezone)})${r.error ? " · " + esc(r.error) : ""}</div></div>${r.conversationId ? `<button class="btn btn-secondary btn-sm" data-action="automation-room" data-id="${esc(r.conversationId)}">Open chat</button>` : ""}</div>`).join("") || `<div class="empty-settings">No runs yet.</div>`}</div>`;
+    }
+    return `${settingsHead("Automations", "Run prompts on a schedule.", `<button class="btn btn-primary btn-sm" data-action="automation-add">${icon("plus", "sm")} Add automation</button>`)}
+      <div class="agent-list">${S.automations.map((a) => {
+        const state = !a.enabled ? "Paused" : a.expiresAt && a.expiresAt < Date.now() ? "Expired" : !a.nextRunAt ? "Dispatched" : "Active";
+        const next = a.nextRunAt && state === "Active" ? ` · Next ${displayAutomationTime(a.nextRunAt, a.timezone)}` : "";
+        return `<div class="agent-card"><div class="agent-card-main"><div class="agent-card-name">${esc(a.name)} <span class="agent-status">${state}</span></div><div class="agent-card-sub">${esc(agentName(agentById(a.agentId)))} · ${a.schedule === "cron" ? esc(a.cron) + " · " + esc(a.timezone) : "Once"}${esc(next)}</div><div class="agent-card-sub">${a.sessionMode === "same" ? "Dedicated chat" : "New chat each run"}</div></div><div class="agent-card-actions"><button class="btn btn-secondary btn-sm" data-action="automation-history" data-id="${esc(a.id)}">History</button><button class="btn btn-secondary btn-sm" data-action="automation-edit" data-id="${esc(a.id)}">Edit</button><button class="btn btn-secondary btn-sm" data-action="automation-toggle" data-id="${esc(a.id)}">${a.enabled ? "Pause" : "Resume"}</button><button class="icon-btn sm" data-action="automation-delete" data-id="${esc(a.id)}" title="Delete" aria-label="Delete automation">${icon("trash", "sm")}</button></div></div>`;
+      }).join("") || `<div class="empty-settings">No automations yet.</div>`}</div>`;
+  }
+
+  function automationFormHTML() {
+    const a = S.automationJob || {};
+    const zone = a.timezone && a.timezone !== "Local" ? a.timezone : (S.automationServerZone && S.automationServerZone !== "Local" ? S.automationServerZone : (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"));
+    const agent = a.agentId || S.agentDefaults.agentId || S.agents.find((x) => x.enabled)?.id || "";
+    return `${settingsHead(a.id ? "Edit automation" : "New automation", "Times use the selected timezone.", `<button class="btn btn-secondary btn-sm" data-action="automations-list">Cancel</button>`)}
+      <form data-form="automation" data-id="${esc(a.id || "")}"><div class="form-grid">
+        <div class="field full"><label>Name</label><input class="input" name="name" value="${esc(a.name || "")}" required></div>
+        <div class="field full"><label>Prompt</label><textarea class="textarea" name="prompt" rows="4" required>${esc(a.prompt || "")}</textarea></div>
+        <div class="field"><label>ACP agent</label><select class="select" name="agentId" required>${S.agents.filter((x) => x.enabled).map((x) => `<option value="${esc(x.id)}" ${x.id === agent ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></div>
+        <div class="field"><label>Session</label><select class="select" name="sessionMode"><option value="isolated" ${a.sessionMode !== "same" ? "selected" : ""}>New chat each run</option><option value="same" ${a.sessionMode === "same" ? "selected" : ""}>Reuse dedicated chat</option></select></div>
+        <div class="field"><label>Schedule</label><select class="select" name="schedule" data-change="automation-schedule"><option value="once" ${a.schedule !== "cron" ? "selected" : ""}>Run once</option><option value="cron" ${a.schedule === "cron" ? "selected" : ""}>Repeat (cron)</option></select></div>
+        <div class="field"><label>Timezone</label><input class="input" name="timezone" value="${esc(zone)}" required></div>
+        <div class="field full" data-automation-once ${a.schedule === "cron" ? "hidden" : ""}><label>Run at</label><input class="input" type="datetime-local" name="runAt" value="${esc(automationDate(a.runAt, zone))}"></div>
+        <div class="field full" data-automation-cron ${a.schedule === "cron" ? "" : "hidden"}><label>Schedule builder</label><select class="select" data-change="automation-preset"><option value="">Custom expression</option><option value="minutes">Every N minutes</option><option value="hours">Every N hours</option><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option></select>
+          <div class="automation-builder" hidden><label data-automation-interval>Interval <input class="input" type="number" min="1" max="59" value="5" data-automation-build="interval"></label><label data-automation-time>Time <input class="input" type="time" value="09:00" data-automation-build="time"></label><label data-automation-weekday>Day <select class="select" data-automation-build="weekday"><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label><label data-automation-monthday>Day of month <input class="input" type="number" min="1" max="31" value="1" data-automation-build="monthday"></label></div>
+          <label style="margin-top:10px">Cron expression</label><input class="input mono" name="cron" value="${esc(a.cron || "0 9 * * *")}" placeholder="0 9 * * *" data-input="automation-cron"><small class="muted">minute · hour · day of month · month · day of week</small></div>
+        <div class="field full"><label>Expires at <span class="muted">(optional)</span></label><input class="input" type="datetime-local" name="expiresAt" value="${esc(automationDate(a.expiresAt, zone))}"></div>
+      </div><div class="settings-desc" style="margin-top:12px">Missed schedules run once when the server comes back online. No run starts after expiry.</div><div class="form-actions automation-actions"><button class="btn btn-secondary" type="button" data-action="automations-list">Cancel</button><button class="btn btn-primary" type="submit">Save automation</button></div></form>`;
+  }
+
+  async function loadAutomations() {
+    S.automationView = "list"; S.automationLoading = true; S.automationError = ""; renderSettings();
+    try { const d = await api("/automations"); S.automations = d.automations || []; S.automationServerZone = d.timezone || ""; }
+    catch (e) { S.automationError = e.message; }
+    finally { S.automationLoading = false; if (S.modal?.type === "settings" && S.settingsTab === "automations") renderSettings(); }
+  }
+
+  function updateAutomationBuilder(form) {
+    const preset = $('[data-change="automation-preset"]', form).value;
+    const box = $(".automation-builder", form); box.hidden = !preset;
+    const visible = (selector, show) => { $(selector, box).hidden = !show; };
+    visible("[data-automation-interval]", ["minutes", "hours"].includes(preset));
+    visible("[data-automation-time]", ["daily", "weekly", "monthly"].includes(preset));
+    visible("[data-automation-weekday]", preset === "weekly"); visible("[data-automation-monthday]", preset === "monthly");
+    if (!preset) return;
+    const interval = $('[data-automation-build="interval"]', box); interval.max = preset === "hours" ? "23" : "59";
+    const n = Math.max(1, Math.min(Number(interval.max), Number(interval.value) || 1)); interval.value = String(n);
+    const [hour, minute] = ($('[data-automation-build="time"]', box).value || "09:00").split(":").map(Number);
+    const weekday = $('[data-automation-build="weekday"]', box).value;
+    const dayInput = $('[data-automation-build="monthday"]', box); const day = Math.max(1, Math.min(31, Number(dayInput.value) || 1)); dayInput.value = String(day);
+    const expressions = { minutes: `*/${n} * * * *`, hours: `0 */${n} * * *`, daily: `${minute} ${hour} * * *`, weekly: `${minute} ${hour} * * ${weekday}`, monthly: `${minute} ${hour} ${day} * *` };
+    $('[name="cron"]', form).value = expressions[preset];
+  }
+
+  async function saveAutomation(form) {
+    const fd = new FormData(form); const id = form.dataset.id; const zone = String(fd.get("timezone") || "").trim();
+    try {
+      const body = { name: String(fd.get("name") || ""), prompt: String(fd.get("prompt") || ""), agentId: String(fd.get("agentId") || ""), schedule: String(fd.get("schedule") || "once"), cron: String(fd.get("cron") || ""), runAt: 0, timezone: zone, sessionMode: String(fd.get("sessionMode") || "isolated"), expiresAt: automationTimestamp(String(fd.get("expiresAt") || ""), zone), enabled: id ? !!S.automationJob.enabled : true, updatedAt: id ? S.automationJob.updatedAt : 0 };
+      if (body.schedule === "once") body.runAt = automationTimestamp(String(fd.get("runAt") || ""), zone);
+      const btn = form.querySelector('[type="submit"]'); btn.disabled = true;
+      try { await api(id ? `/automations/${encodeURIComponent(id)}` : "/automations", { method: id ? "PUT" : "POST", body }); }
+      finally { btn.disabled = false; }
+      toast("Automation saved", "The scheduler will pick up the change.", "success");
+      if (S.modal?.type === "settings" && S.settingsTab === "automations") await loadAutomations();
+    } catch (e) { toast("Could not save automation", e.message, "error", 8000); }
+  }
+
+  function agentDefaultsSettings() {
+    const draft = S.defaultDraft || { agentId: "", selections: [] };
+    const selected = new Set(draft.selections.map((s) => s.id));
+    const opts = S.defaultConfigs.filter((o) => o && o.id && !selected.has(o.id) && ["select", "boolean"].includes(o.type));
+    const rows = opts.map((o) => {
+      const choices = o.type === "boolean" ? [{ value: "true", name: "On" }, { value: "false", name: "Off" }] : configChoices(o);
+      return `<div class="field"><label>${esc(o.name || o.id)}</label><select class="select" data-change="default-choice" data-id="${esc(o.id)}" data-type="${esc(o.type)}" ${S.defaultBusy ? "disabled" : ""}><option value="">Use agent default</option>${choices.map((c) => `<option value="${esc(c.value)}">${esc(c.groupName ? c.groupName + " · " + (c.name || c.value) : (c.name || c.value))}</option>`).join("")}</select></div>`;
+    }).join("");
+    return `${settingsHead("Default ACP", "Used for new chats, including new WhatsApp conversations. Choose options in order; each choice refreshes the available options.")}
+      <div class="field"><label>Agent</label><select class="select" data-change="default-agent" ${S.defaultBusy ? "disabled" : ""}><option value="">Choose an agent</option>${S.agents.filter((a) => a.enabled).map((a) => `<option value="${esc(a.id)}" ${draft.agentId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></div>
+      ${S.defaultBusy ? `<div class="settings-desc"><span class="spinner"></span> Loading agent options…</div>` : ""}
+      ${S.defaultError ? `<div class="settings-desc" role="alert">${esc(S.defaultError)} <button class="btn btn-secondary btn-sm" data-action="default-retry">Retry</button></div>` : ""}
+      ${draft.selections.length ? `<div class="settings-section"><div class="settings-title">Selected in order</div>${draft.selections.map((s) => { const opt = S.defaultConfigs.find((o) => o.id === s.id); const label = opt && configChoices(opt).find((c) => String(c.value) === String(s.value))?.name; return `<div class="settings-row"><span>${esc(s.name || opt?.name || s.id)}: ${esc(s.label ?? label ?? s.value)}</span></div>`; }).join("")}<button class="btn btn-secondary btn-sm" data-action="default-undo" ${S.defaultBusy ? "disabled" : ""}>Undo last choice</button></div>` : ""}
+      ${draft.agentId && !S.defaultError ? `<div class="form-grid" style="margin-top:16px">${rows || (!S.defaultBusy ? `<div class="settings-desc">No more configurable options.</div>` : "")}</div>` : ""}
+      <div class="form-actions"><button class="btn btn-primary" data-action="save-agent-defaults" ${!draft.agentId || S.defaultBusy || S.defaultError ? "disabled" : ""}>Save defaults</button></div>`;
+  }
+
+  async function previewAgentDefaults() {
+    const draft = S.defaultDraft;
+    const seq = ++S.defaultSeq;
+    S.defaultError = "";
+    S.defaultConfigs = [];
+    if (!draft.agentId) { renderSettings(); return; }
+    S.defaultBusy = true; renderSettings();
+    try {
+      const d = await api("/settings/agent-defaults/preview", { method: "POST", body: { agentId: draft.agentId, selections: draft.selections.map(({ id, value }) => ({ id, value })) } });
+      if (seq !== S.defaultSeq) return;
+      S.defaultConfigs = d.configs || [];
+    } catch (e) { if (seq === S.defaultSeq) S.defaultError = e.message; }
+    finally { if (seq === S.defaultSeq) { S.defaultBusy = false; if (S.settingsTab === "defaults") renderSettings(); } }
+  }
+
+  async function saveAgentDefaults() {
+    if (S.defaultBusy || !S.defaultDraft?.agentId) return;
+    S.defaultBusy = true; renderSettings();
+    try {
+      const d = await api("/settings/agent-defaults", { method: "PUT", body: { agentId: S.defaultDraft.agentId, selections: S.defaultDraft.selections.map(({ id, value }) => ({ id, value })) } });
+      S.agentDefaults = d.defaults;
+      S.welcomeAgent = d.defaults.agentId;
+      if (!S.current) { S.currentAgent = agentById(d.defaults.agentId); renderTopbar(); renderChat(); renderComposer(); }
+      toast("Defaults saved", "New conversations will use these settings.", "success");
+    } catch (e) { S.defaultError = e.message; }
+    finally { S.defaultBusy = false; if (S.settingsTab === "defaults") renderSettings(); }
   }
 
   function agentsSettings() {
@@ -2395,7 +2608,6 @@
           <div class="field"><label>Icon</label><select class="select" name="icon">${["sparkles", "zap", "brain", "terminal", "globe", "star"].map((i) => `<option value="${i}" ${a.icon === i ? "selected" : ""}>${i}</option>`).join("")}</select></div>
           <div class="field"><label>Color</label><select class="select" name="color">${Object.keys(AGENT_COLORS).map((c) => `<option value="${c}" ${a.color === c ? "selected" : ""}>${c}</option>`).join("")}</select></div>
           <div class="field"><label>Approval policy</label><select class="select" name="approvalPolicy">${["ask", "auto_safe", "auto_all"].map((p) => `<option value="${p}" ${a.approvalPolicy === p ? "selected" : ""}>${p.replace("_", " ")}</option>`).join("")}</select></div>
-          <div class="field"><label>Default model <span class="muted">(optional)</span></label><input class="input" name="defaultModel" value="${esc(a.defaultModel || "")}" placeholder="leave blank for agent default"></div>
           <div class="field full"><label class="checkbox"><input type="checkbox" name="enabled" ${a.enabled !== false ? "checked" : ""}> Enabled</label></div>
         </div>
         <div class="settings-section"><div class="settings-title" style="display:flex;align-items:center;gap:8px">Environment secrets <span class="badge-soft gray">AES-GCM at rest</span><span class="grow"></span><button class="btn btn-ghost btn-xs" type="button" data-action="add-env" data-prefix="agent">+ Add variable</button></div>
@@ -2646,20 +2858,24 @@
     }
   }
   /* ---------------- actions ---------------- */
-  async function newConversation(agentId = "") {
-    const ag = agentById(agentId) || (!S.current ? agentById(S.welcomeAgent) : null) || currentAgent() || S.agents.find((a) => a.enabled);
+  async function newConversation(agentId = "", transferDraft = false) {
+    const defaultAgent = agentById(S.agentDefaults.agentId);
+    const ag = agentById(agentId) || (defaultAgent?.enabled ? defaultAgent : null) || (!S.current ? agentById(S.welcomeAgent) : null) || currentAgent() || S.agents.find((a) => a.enabled);
     if (!ag) { openSettings("agents"); return; }
+    const sourceKey = composerKey;
     try {
       const d = await api("/conversations", { method: "POST", body: { agentId: ag.id } });
+      if (transferDraft) moveComposer(sourceKey, d.conversation.id);
+      upsertConversation(d.conversation);
+      if (composerKey !== (transferDraft ? d.conversation.id : sourceKey)) return;
+      else switchComposer(d.conversation.id);
+      ++S.loadSeq;
+      S.loadingConversation = false;
       S.current = d.conversation;
-      S.sendDelivery = "queue";
       S.turns = {};
       S.messages = [];
       S.active = null;
       S.configs = parseConfigs(d.conversation.configOptions);
-      S.draft = "";
-      S.attachments = [];
-      upsertConversation(d.conversation);
       setRoute(d.conversation.id);
       renderSidebar(); renderTopbar(); renderChat(); renderComposer();
       closeMobileSidebar();
@@ -2705,7 +2921,7 @@
       icon: String(fd.get("icon") || "sparkles"),
       color: String(fd.get("color") || "amber"),
       approvalPolicy: String(fd.get("approvalPolicy") || "ask"),
-      defaultModel: String(fd.get("defaultModel") || "").trim(),
+      defaultModel: S.agentForm?.agent?.defaultModel || "",
       enabled: !!fd.get("enabled"),
       env,
     };
@@ -2867,12 +3083,16 @@
     e.preventDefault();
     if (form.dataset.form === "login") doLogin(form);
     else if (form.dataset.form === "agent") saveAgent(form);
+    else if (form.dataset.form === "automation") saveAutomation(form);
     else if (form.dataset.form === "mcp") saveMCP(form);
     else if (form.dataset.form === "password") savePassword(form);
     else if (form.dataset.form === "elicitation") submitElicitation(form);
   });
 
   document.addEventListener("input", (e) => {
+    if (e.target.matches('[data-input="automation-cron"]')) {
+      const form = e.target.closest("form"); $('[data-change="automation-preset"]', form).value = ""; $(".automation-builder", form).hidden = true;
+    }
     if (e.target.matches("[data-input=conv-search]")) {
       S.query = e.target.value;
       filterSidebar();
@@ -2880,10 +3100,26 @@
   });
 
   document.addEventListener("change", (e) => {
+    if (e.target.matches("[data-automation-build]")) { updateAutomationBuilder(e.target.closest("form")); return; }
     const sel = e.target.closest("[data-change]");
     if (!sel) return;
     if (sel.dataset.change === "set-config") setConfig(sel.dataset.id, sel.value);
     if (sel.dataset.change === "wa-group") saveWaSettings({ groupPolicy: sel.value });
+    if (sel.dataset.change === "automation-schedule") {
+      const form = sel.closest("form");
+      $("[data-automation-once]", form).hidden = sel.value !== "once";
+      $("[data-automation-cron]", form).hidden = sel.value !== "cron";
+    }
+    if (sel.dataset.change === "automation-preset") updateAutomationBuilder(sel.closest("form"));
+    if (sel.dataset.change === "default-agent") {
+      S.defaultDraft = { agentId: sel.value, selections: [] };
+      previewAgentDefaults();
+    }
+    if (sel.dataset.change === "default-choice" && sel.value) {
+      const opt = S.defaultConfigs.find((o) => o.id === sel.dataset.id);
+      S.defaultDraft.selections.push({ id: sel.dataset.id, value: sel.dataset.type === "boolean" ? sel.value === "true" : sel.value, name: opt?.name, label: sel.selectedOptions[0]?.textContent });
+      previewAgentDefaults();
+    }
   });
 
   document.addEventListener("click", async (e) => {
@@ -2912,7 +3148,38 @@
       case "close-sidebar": closeMobileSidebar(); break;
       case "open-settings": openSettings(target.dataset.tab || ""); break;
       case "open-account": openSettings("account"); break;
-      case "settings-tab": S.settingsTab = target.dataset.tab; S.agentForm = null; S.mcpForm = null; renderSettings(); break;
+      case "settings-tab":
+        S.settingsTab = target.dataset.tab; S.agentForm = null; S.mcpForm = null;
+        if (S.settingsTab === "automations") loadAutomations();
+        else if (S.settingsTab === "defaults") {
+          S.defaultDraft = { agentId: S.agentDefaults.agentId || "", selections: (S.agentDefaults.selections || []).map((s) => ({ ...s })) };
+          previewAgentDefaults();
+        } else renderSettings();
+        break;
+      case "default-undo": S.defaultDraft.selections.pop(); previewAgentDefaults(); break;
+      case "default-retry": previewAgentDefaults(); break;
+      case "save-agent-defaults": await saveAgentDefaults(); break;
+      case "automations-list": await loadAutomations(); break;
+      case "automation-add": S.automationJob = null; S.automationView = "form"; renderSettings(); break;
+      case "automation-edit": S.automationJob = S.automations.find((a) => a.id === id); S.automationView = "form"; renderSettings(); break;
+      case "automation-history": {
+        S.automationLoading = true; renderSettings();
+        try { const d = await api(`/automations/${encodeURIComponent(id)}`); S.automationJob = d.automation; S.automationRuns = d.runs || []; S.automationView = "history"; }
+        catch (err) { S.automationError = err.message; }
+        finally { S.automationLoading = false; if (S.modal?.type === "settings" && S.settingsTab === "automations") renderSettings(); }
+        break;
+      }
+      case "automation-room": closeModal(); await selectConversation(id); break;
+      case "automation-toggle": {
+        const job = S.automations.find((a) => a.id === id);
+        try { await api(`/automations/${encodeURIComponent(id)}/enabled`, { method: "PATCH", body: { enabled: !job.enabled } }); await loadAutomations(); }
+        catch (err) { toast("Could not update automation", err.message, "error"); }
+        break;
+      }
+      case "automation-delete": confirmModal("Delete automation?", "Its chat transcripts remain available.", async () => {
+        try { await api(`/automations/${encodeURIComponent(id)}`, { method: "DELETE" }); openSettings("automations"); await loadAutomations(); }
+        catch (err) { toast("Could not delete automation", err.message, "error"); }
+      }, "Delete"); break;
       case "open-approvals": renderApprovalsModal(); break;
       case "close-modal": closeModal(); break;
       case "confirm-action": {
@@ -3167,13 +3434,14 @@
   window.addEventListener("popstate", () => {
     const m = location.pathname.match(/^\/c\/([^/]+)/);
     if (m) selectConversation(decodeURIComponent(m[1]), false);
-    else { S.current = null; S.messages = []; S.sendDelivery = "queue"; S.turns = {}; renderTopbar(); renderChat(); renderComposer(); }
+    else { ++S.loadSeq; S.loadingConversation = false; S.current = null; switchComposer(""); S.messages = []; S.turns = {}; renderTopbar(); renderChat(); renderComposer(); }
   });
 
   async function doLogout() {
     try { await api("/auth/logout", { method: "POST" }); } catch {}
     closeModal(); closeWS();
     S.csrf = ""; S.current = null; S.messages = []; S.conversations = []; S.approvals = []; S.approvalsById.clear();
+    composers.clear(); switchComposer("");
     S.sendDelivery = "queue"; S.turns = {};
     renderLogin();
   }

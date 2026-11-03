@@ -409,6 +409,7 @@ a:hover { text-decoration: underline; }
 .send-split { display: inline-flex; align-items: stretch; flex-shrink: 0; height: 33px; border-radius: 999px; background: var(--accent); color: #17130b; transition: .15s; }
 .send-split:hover { background: var(--accent-hot); }
 .send-btn { width: 33px; height: 33px; border-radius: 999px 0 0 999px; background: transparent; color: inherit; display: grid; place-items: center; transition: .15s; }
+.send-btn:only-child { border-radius: 999px; }
 .send-btn:disabled { opacity: .35; pointer-events: none; }
 .send-btn .icon { width: 17px; height: 17px; stroke-width: 2; }
 .send-menu-btn { width: 24px; height: 33px; border-radius: 0 999px 999px 0; border-left: 1px solid rgba(23,19,11,.18); display: grid; place-items: center; color: inherit; }
@@ -450,14 +451,20 @@ a:hover { text-decoration: underline; }
 .modal-body { overflow-y: auto; min-height: 0; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); flex: none; }
 .modal-close { margin-left: auto; }
-.settings-layout { display: grid; grid-template-columns: 196px minmax(0, 1fr); min-height: 480px; }
-.settings-tabs { border-right: 1px solid var(--border); padding: 12px 9px; display: flex; flex-direction: column; gap: 2px; background: #0c0e11; }
+.settings-layout { display: grid; grid-template-columns: 196px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-height: 480px; }
+.settings-modal .settings-layout { flex: 1; min-height: 0; }
+.settings-tabs { border-right: 1px solid var(--border); padding: 12px 9px; display: flex; flex-direction: column; gap: 2px; background: #0c0e11; min-height: 0; overflow-y: auto; }
+.settings-content [hidden] { display: none !important; }
+.automation-builder { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+.automation-builder label { display: flex; flex-direction: column; gap: 5px; min-width: 110px; }
+.automation-actions { position: sticky; bottom: -1px; padding: 10px 0; background: #0f1115; z-index: 1; }
+form[data-form="automation"] :is(input, textarea, select) { scroll-margin-top: 1.5rem; scroll-margin-bottom: 4rem; }
 .settings-tab { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 8px; color: var(--muted); font-size: 12.5px; text-align: left; }
 .settings-tab:hover { background: rgba(255,255,255,.04); color: var(--text-soft); }
 .settings-tab.active { background: var(--panel-2); color: var(--text); }
 .settings-tab .icon { width: 15px; height: 15px; }
 .settings-tab.active .icon { color: var(--accent); }
-.settings-content { padding: 20px 22px; overflow-y: auto; min-height: 0; }
+.settings-content { padding: 20px 22px; overflow-y: auto; min-height: 0; scroll-padding-bottom: 68px; }
 .settings-section { margin-bottom: 28px; }
 .settings-section:last-child { margin-bottom: 0; }
 .settings-title { font-size: 13px; font-weight: 650; margin: 0 0 4px; }
@@ -583,7 +590,7 @@ a:hover { text-decoration: underline; }
   .settings-modal .settings-layout { flex: 1; min-height: 0; }
   .settings-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
   .settings-tabs {
-    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    display: grid; grid-template-columns: repeat(7, minmax(4.5rem, 1fr)); overflow-x: auto;
     align-items: stretch; align-self: start; gap: 2px;
     border-right: 0; border-bottom: 1px solid var(--border); padding: 7px 6px;
   }
@@ -727,6 +734,12 @@ textarea, input, select { caret-color: var(--accent); }
   .markdown pre code { padding-right: 56px; }
 }
 @media (max-height: 500px) {
+  .modal-overlay:has(.settings-modal) { padding: 4px; }
+  .modal.settings-modal { max-height: calc(var(--app-h, 100dvh) - 8px); }
+  .settings-modal .modal-head { padding: 6px 12px; }
+  .settings-modal .modal-sub { display: none; }
+  .settings-modal .settings-content { padding: 8px 12px; }
+  .automation-actions { padding: 4px 0; }
   :root { --topbar-h: 48px; }
   .composer-foot { display: none; }
   .composer-wrap { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }

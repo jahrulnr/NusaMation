@@ -158,6 +158,12 @@ It streams a thought, a plan, a tool call, a **permission request**, a tool resu
   - `notifyApprovals` — ping the origin chat when a decision is needed.
 - Web always gets the complete stream; external channels get a markdown-aware final digest.
 
+### Automations
+
+In **Control center → Automations**, schedule an ACP prompt once or with a five-field cron expression. The schedule builder can generate common minute, hour, daily, weekly and monthly expressions; the expression remains editable. Choose an agent, timezone, optional expiry, and whether each run gets a new chat or all runs reuse a dedicated chat. Run history links back to the corresponding conversation and shows the turn status.
+
+The server must be running to execute jobs. After downtime, each overdue job runs once when the server returns, then resumes its normal schedule; jobs past their expiry do not run. A repeated job queues turns when its dedicated chat is still busy, and a queued automation turn is cancelled if it reaches the head of the queue after expiry. An execution interrupted between its scheduler claim and linking the turn is recorded as interrupted and is not automatically retried; inspect its linked chat before retrying.
+
 ### Reliability
 
 - Per-conversation turn queue; one active agent session at a time.
@@ -229,6 +235,17 @@ nusamation agent add -name X -command codex -arg acp -cwd /work -policy auto_saf
 nusamation agent set <slug|id> -policy ask -env KEY=val -env-rm OLD -arg acp
 nusamation agent remove <slug|id>
 
+# Scheduled ACP jobs
+nusamation automation add -name 'Daily review' -prompt 'Review the workspace' \
+    -agent codex -cron '0 9 * * *' -tz Asia/Jakarta -session same
+nusamation automation add -name 'One-off' -prompt 'Inspect the logs' \
+    -agent codex -at '2026-12-01T09:00' -tz Asia/Jakarta -session isolated
+nusamation automation list [-json]
+nusamation automation get <id> [-json]
+nusamation automation set <id> -prompt 'Updated prompt' -expires '2026-12-31T18:00'
+nusamation automation pause <id>        # resume, remove, history also supported
+nusamation automation history <id> [-json]
+
 # Stored settings (key/value)
 nusamation config list [-json]
 nusamation config get channel.whatsapp.settings
@@ -244,7 +261,7 @@ nusamation whatsapp set -enabled -group-policy mention \
     -allow-add +628123456789 -allow-remove 999 -stream-edits=false
 ```
 
-Mutations take effect on the next NusaMation start; a running instance keeps its cached settings.
+Agent and stored-setting mutations may require a restart. Automation changes are picked up by the running scheduler without a restart.
 
 Data directory:
 

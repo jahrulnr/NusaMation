@@ -183,6 +183,11 @@ func (s *Service) sessionRequest(conv store.Conversation, ag store.Agent) agent.
 		}
 	}
 	meta, _ := s.metaMap(conv)
+	var defaultConfig []store.ConfigSelection
+	if raw, ok := meta["defaultConfig"]; ok {
+		b, _ := json.Marshal(raw)
+		_ = json.Unmarshal(b, &defaultConfig)
+	}
 	desired := map[string]any{}
 	if raw, ok := meta["desiredConfig"].(map[string]any); ok {
 		for k, v := range raw {
@@ -204,6 +209,7 @@ func (s *Service) sessionRequest(conv store.Conversation, ag store.Agent) agent.
 		ACPSessionID:   conv.ACPSessionID,
 		DesiredModel:   model,
 		DesiredConfig:  desired,
+		DefaultConfig:  defaultConfig,
 		CachedConfig:   cached,
 	}
 	if dirs, ok := meta["additionalDirectories"].([]any); ok {

@@ -40,6 +40,21 @@ nusamation whatsapp set -stream-edits          # progressive reply edits
   while the agent works; **StreamEdits** progressively edits the ack message
   into the final answer instead of sending a new message.
 
+## Multiple ACP agents
+
+In a WhatsApp chat, send `/agent` to list enabled agents and their slugs, then
+`/agent <slug>` to switch the linked conversation. Switching starts a fresh ACP
+session and supplies a transcript recap with the next message; it is rejected
+while a turn is active. `/new <slug>` creates a new conversation for that agent
+and moves this WhatsApp chat's link to it, requesting cancellation of the
+current turn if there is one; the old transcript stays on the web.
+`/new` without a slug keeps the currently linked agent. A previously unlinked
+chat uses the configured default ACP, or the first enabled agent if no valid
+default is set. Different WhatsApp chats can use different agents, but each
+chat links to one active NusaMation conversation at a time. Group messages must
+also satisfy the configured group policy.
+
+
 ## Applying changes
 
 A running server caches settings. Either restart the server, or reconnect just

@@ -20,6 +20,7 @@ import (
 	"github.com/jahrulnr/nusamation/assets"
 	"github.com/jahrulnr/nusamation/internal/agent"
 	"github.com/jahrulnr/nusamation/internal/auth"
+	"github.com/jahrulnr/nusamation/internal/automation"
 	"github.com/jahrulnr/nusamation/internal/channels"
 	webchannel "github.com/jahrulnr/nusamation/internal/channels/web"
 	"github.com/jahrulnr/nusamation/internal/channels/whatsapp"
@@ -146,6 +147,12 @@ func (a *App) Serve(ctx context.Context) error {
 		}
 	}()
 	a.log.Info("NusaMation is ready", "url", url, "addr", ln.Addr().String(), "data", a.cfg.DataDir, "version", config.Version)
+	schedulerCtx, stopScheduler := context.WithCancel(ctx)
+	schedulerDone := make(chan struct{})
+	go func() {
+		defer close(schedulerDone)
+		(&automation.Scheduler{Store: a.store, Chat: a.chat, Log: a.log}).Run(schedulerCtx)
+	}()
 	a.channels.StartAll(ctx)
 	if a.cfg.OpenBrowser {
 		go openBrowser(url)
@@ -155,8 +162,12 @@ func (a *App) Serve(ctx context.Context) error {
 	case err := <-errc:
 		a.log.Error("http server failed", "error", err)
 		_ = srv.Close()
+		stopScheduler()
+		<-schedulerDone
 		return err
 	}
+	stopScheduler()
+	<-schedulerDone
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)

@@ -91,6 +91,7 @@ type EnsureRequest struct {
 	AdditionalDirs []string
 	DesiredModel   string
 	DesiredConfig  map[string]any
+	DefaultConfig  []store.ConfigSelection
 	CachedConfig   json.RawMessage
 	ForceNew       bool
 }
@@ -189,6 +190,9 @@ func (m *Manager) EnsureSession(ctx context.Context, req EnsureRequest) (*Sessio
 	r := m.ensureRuntime(agent)
 	sess, err := r.EnsureSession(ctx, req)
 	if err != nil {
+		if sess != nil && sess.isLoaded() {
+			r.DropSession(context.Background(), sess)
+		}
 		return sess, err
 	}
 	conv, err := m.store.GetConversation(ctx, req.ConversationID)

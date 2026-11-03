@@ -22,6 +22,27 @@ Flags may appear before or after positional args. Every command accepts
 `-data-dir` (default `~/.nusamation`). `list`, `get`, `add`, `set` and `detect`
 support `-json` for machine-readable output.
 
+## Default ACP and session options
+
+Open **Control center → Defaults**, select an enabled agent, then choose any
+published session options such as model, mode or thought level. Choices are
+applied in order to a temporary ACP session; after each choice the UI refreshes
+the available options, which may depend on earlier choices. Saving replays and
+validates the sequence against the agent again. Unselected options use the
+agent's own defaults. Use **Undo last choice** to change an earlier selection.
+
+The default agent is used for new web conversations and new, unlinked WhatsApp
+chats. A new conversation created with a different explicit agent uses that
+agent instead. When the selected agent matches the configured default, the
+chosen options are copied into the new conversation; changing application
+defaults later does not rewrite existing conversations. Conversation-level
+choices can override them. Switching an existing conversation to the default
+agent also applies the configured defaults to the new ACP session.
+
+The legacy `agent add/set -model` flag remains available for an individual
+agent. Prefer **Defaults** for capability-checked, ordered model and other
+session options. The HTTP preview and save endpoints are listed in [api.md](api.md).
+
 ## Semantics
 
 - `-env KEY=val` merges (repeatable); `-env-rm KEY` deletes. Secrets stay

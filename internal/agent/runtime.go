@@ -289,13 +289,47 @@ func (r *Runtime) loadOrCreate(ctx context.Context, s *Session, req EnsureReques
 
 func (r *Runtime) applyDesiredConfig(ctx context.Context, client *acp.Client, s *Session, req EnsureRequest) error {
 	configs := s.Config()
-	if req.DesiredModel != "" {
-		id, current, choices := sessionConfigs(configs, "model")
-		if id != "" && !anyEqual(current, req.DesiredModel) && contains(choices, req.DesiredModel) {
-			if err := r.applyConfig(ctx, client, s, id, req.DesiredModel); err != nil {
-				return fmt.Errorf("select model %q: %w", req.DesiredModel, err)
+	modelID, currentModel, models := sessionConfigs(configs, "model")
+	modelDefault := false
+	for _, choice := range req.DefaultConfig {
+		if modelID != "" && modelID == choice.ID {
+			modelDefault = true
+		}
+	}
+	if !modelDefault && modelID != "" {
+		model := req.DesiredModel
+		if override, ok := req.DesiredConfig[modelID].(string); ok {
+			model = override
+		}
+		if model != "" && !anyEqual(currentModel, model) && contains(models, model) {
+			if err := r.applyConfig(ctx, client, s, modelID, model); err != nil {
+				return fmt.Errorf("select model %q: %w", model, err)
 			}
 			configs = s.Config()
+		}
+	}
+	for _, choice := range req.DefaultConfig {
+		value := choice.Value
+		if override, ok := req.DesiredConfig[choice.ID]; ok {
+			value = override
+		}
+		if !configAccepts(configs, choice.ID, value) {
+			return fmt.Errorf("default option %q or its value is no longer available", choice.ID)
+		}
+		if !anyEqual(findConfigCurrent(configs, choice.ID), value) {
+			if err := r.applyConfig(ctx, client, s, choice.ID, value); err != nil {
+				return fmt.Errorf("select %s: %w", choice.ID, err)
+			}
+			configs = s.Config()
+		}
+	}
+	for _, choice := range req.DefaultConfig {
+		value := choice.Value
+		if override, ok := req.DesiredConfig[choice.ID]; ok {
+			value = override
+		}
+		if !configAccepts(configs, choice.ID, value) || !anyEqual(findConfigCurrent(configs, choice.ID), value) {
+			return fmt.Errorf("default option %q changed or became unavailable after a later setting", choice.ID)
 		}
 	}
 	for id, value := range req.DesiredConfig {
@@ -303,7 +337,7 @@ func (r *Runtime) applyDesiredConfig(ctx context.Context, client *acp.Client, s 
 			continue
 		}
 		cur := findConfigCurrent(configs, id)
-		if cur == nil || anyEqual(cur, value) {
+		if cur == nil || anyEqual(cur, value) || !configAccepts(configs, id, value) {
 			continue
 		}
 		if err := r.applyConfig(ctx, client, s, id, value); err != nil {

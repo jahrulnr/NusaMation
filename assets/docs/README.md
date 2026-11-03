@@ -2,7 +2,7 @@
 
 Operational documentation for agents and humans running or reconfiguring a live
 NusaMation instance. These are not development docs — they cover operating the
-installed app: agents, WhatsApp, settings, the HTTP API, and debugging.
+installed app: agents, automations, WhatsApp, settings, the HTTP API, and debugging.
 
 NusaMation is a self-hosted control center: it spawns ACP-compatible agent CLIs
 (like you, if you are an ACP agent) and connects them to a web control center
@@ -16,7 +16,7 @@ resolved paths for this install.
 
 | Path | Purpose |
 |---|---|
-| `nusamation.db` | SQLite: agents, conversations, approvals, settings |
+| `nusamation.db` | SQLite: agents, conversations, approvals, automation jobs and run history, settings |
 | `whatsapp.db` | whatsmeow device/session store |
 | `secret.key` | AES-GCM key protecting agent/MCP env secrets |
 | `workspace/` | Shared agent working directory (default session cwd) |
@@ -29,6 +29,7 @@ resolved paths for this install.
 | If you need to… | Read |
 |---|---|
 | Add/configure/remove agent CLIs, auth, policies, models | [agents.md](agents.md) |
+| Schedule prompts, inspect runs, pause or edit automations | [automations.md](automations.md) |
 | Pair WhatsApp, set allowlist/group policy/behavior | [whatsapp.md](whatsapp.md) |
 | Read or change any stored setting key | [settings.md](settings.md) |
 | Drive NusaMation over HTTP instead of the CLI | [api.md](api.md) |
@@ -38,9 +39,10 @@ resolved paths for this install.
 
 1. Change state through `nusamation` CLI commands or the API — never write to
    `nusamation.db` directly (secrets are encrypted; the CLI handles it).
-2. Settings/agent mutations apply on the next server start; a running instance
-   caches them. Restart the server — or, for WhatsApp, reconnect the channel —
-   after changing them.
+2. Agent and some settings mutations may require a server restart; WhatsApp
+   settings can be applied by reconnecting the channel. Automation CLI changes
+   are read by the running scheduler without a restart.
 3. Never print, copy, or commit `secret.key` or sealed env var values.
-4. Files under `docs/` are owned by the app: they are rewritten on startup when
-   the binary ships a newer version. Do not edit them.
+4. Files under `docs/` are owned by the app: on startup they are synchronized
+   to the documentation embedded in that binary, including when an older binary
+   is started. Do not edit them.

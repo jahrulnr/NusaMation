@@ -25,6 +25,8 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	routing := store.DefaultRouting()
 	_ = s.store.GetJSONSetting(ctx, "routing.defaults", &routing)
 	installed, _ := s.store.GetSetting(ctx, "app.installed_at")
+	var agentDefaults store.AgentDefaults
+	_ = s.store.GetJSONSetting(ctx, "agent.defaults", &agentDefaults)
 
 	resp := map[string]any{
 		"app": map[string]any{
@@ -38,6 +40,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		"conversations":   convs,
 		"approvals":       approvals,
 		"routingDefaults": routing,
+		"agentDefaults":   agentDefaults,
 		"stats": map[string]any{
 			"conversations": total, "active": active, "pendingApprovals": pending,
 			"approvedApprovals": approved, "deniedApprovals": denied,

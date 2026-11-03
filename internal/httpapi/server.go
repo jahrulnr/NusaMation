@@ -84,6 +84,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/password", s.protected(s.handlePassword))
 	mux.HandleFunc("GET /api/auth/me", s.protected(s.handleMe))
 
+	mux.HandleFunc("GET /api/automations", s.protected(s.handleAutomations))
+	mux.HandleFunc("POST /api/automations", s.protected(s.handleAutomations))
+	mux.HandleFunc("GET /api/automations/{id}", s.protected(s.handleAutomation))
+	mux.HandleFunc("PUT /api/automations/{id}", s.protected(s.handleAutomation))
+	mux.HandleFunc("DELETE /api/automations/{id}", s.protected(s.handleAutomation))
+	mux.HandleFunc("PATCH /api/automations/{id}/enabled", s.protected(s.handleAutomationEnabled))
 	mux.HandleFunc("GET /api/bootstrap", s.protected(s.handleBootstrap))
 	mux.HandleFunc("GET /api/events", s.protected(s.handleEvents))
 
@@ -139,6 +145,8 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/settings", s.protected(s.handleGetSettings))
 	mux.HandleFunc("PUT /api/settings", s.protected(s.handleUpdateSettings))
+	mux.HandleFunc("POST /api/settings/agent-defaults/preview", s.protected(s.handlePreviewAgentDefaults))
+	mux.HandleFunc("PUT /api/settings/agent-defaults", s.protected(s.handleSaveAgentDefaults))
 	mux.HandleFunc("GET /api/stats", s.protected(s.handleStats))
 
 	static := http.FileServer(http.FS(s.static))
