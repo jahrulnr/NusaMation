@@ -514,10 +514,13 @@ func (r *Runtime) Prompt(ctx context.Context, s *Session, blocks []acp.ContentBl
 	return result, err
 }
 
-func (r *Runtime) Cancel(ctx context.Context, s *Session) error {
-	client, err := r.ensureClient(ctx)
-	if err != nil {
-		return err
+// Cancel notifies a live agent process only; it never starts one.
+func (r *Runtime) Cancel(_ context.Context, s *Session) error {
+	r.mu.Lock()
+	client := r.client
+	r.mu.Unlock()
+	if client == nil || !client.Alive() {
+		return errors.New("agent is not running")
 	}
 	return client.Cancel(s.ACPID())
 }

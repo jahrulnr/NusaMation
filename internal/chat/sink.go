@@ -358,6 +358,7 @@ func (s *Service) applyToolUpdate(a *activeTurn, u acp.SessionUpdate) {
 	content := t.json()
 	title := t.display()
 	status := toolMessageStatus(t.Status)
+	a.signal()
 	a.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -752,6 +753,7 @@ func (s *Service) finishTurn(a *activeTurn, status, stopReason string, runErr er
 	a.finished = true
 	cancelRequested := a.cancelRequested
 	close(a.flushStop)
+	close(a.finishedCh)
 	a.mu.Unlock()
 
 	if cancelRequested && status == "error" {

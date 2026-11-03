@@ -120,9 +120,19 @@ func (s *Store) MarkInterruptedTurns(ctx context.Context) (int64, error) {
 }
 
 func (s *Store) ListQueuedTurns(ctx context.Context) ([]Turn, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,user_message_id,status,stop_reason,error,
+	return s.queuedTurns(ctx, `SELECT id,conversation_id,user_message_id,status,stop_reason,error,
 		origin_channel,origin_ref,queue_position,started_at,ended_at,created_at FROM turns
 		WHERE status='queued' ORDER BY created_at ASC`)
+}
+
+func (s *Store) ListQueuedTurnsForConversation(ctx context.Context, conversationID string) ([]Turn, error) {
+	return s.queuedTurns(ctx, `SELECT id,conversation_id,user_message_id,status,stop_reason,error,
+		origin_channel,origin_ref,queue_position,started_at,ended_at,created_at FROM turns
+		WHERE conversation_id=? AND status='queued' ORDER BY created_at ASC`, conversationID)
+}
+
+func (s *Store) queuedTurns(ctx context.Context, query string, args ...any) ([]Turn, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

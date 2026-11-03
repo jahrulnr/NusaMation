@@ -108,6 +108,12 @@ It streams a thought, a plan, a tool call, a **permission request**, a tool resu
 
 ## Screens
 
+<div style="text-align: center;">
+
+| Mobile |
+|---|
+| ![mobile](docs/screenshots/mobile.png) |
+
 | Conversation | Tools & raw output |
 |---|---|
 | ![conversation](docs/screenshots/conversation.png) | ![tools](docs/screenshots/tools.png) |
@@ -116,9 +122,7 @@ It streams a thought, a plan, a tool call, a **permission request**, a tool resu
 |---|---|
 | ![approval](docs/screenshots/approval.png) | ![whatsapp](docs/screenshots/whatsapp.png) |
 
-| Mobile |
-|---|
-| ![mobile](docs/screenshots/mobile.png) |
+</div>
 
 ## Features
 
@@ -166,23 +170,28 @@ It streams a thought, a plan, a tool call, a **permission request**, a tool resu
 
 ## Architecture
 
-```text
-┌───────────────────────── NusaMation ─────────────────────────┐
-│                                                              │
-│  Web UI (embedded) ── HTTP/WS ──► HTTP API + Event Hub       │
-│                                        │                     │
-│  WhatsApp ◄── whatsmeow ──► Channel Manager ── Inbound ──┐    │
-│                                        │                 ▼    │
-│                                        └────────► Chat Orchestrator
-│                                                          │    │
-│                                              Agent Manager    │
-│                                                          │    │
-│                                        ACP over stdio    │    │
-│                                                          ▼    │
-│                                              Agent CLI (Devin, etc.)
-│                                                               │
-│  SQLite (app)     SQLite (WhatsApp)     workspace/     uploads/
-└───────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph NM["NusaMation"]
+        UI["Web UI (embedded)"]
+        API["HTTP API + Event Hub"]
+        WA["WhatsApp"]
+        CM["Channel Manager"]
+        CO["Chat Orchestrator"]
+        AM["Agent Manager"]
+        CLI["Agent CLI (Devin, etc.)"]
+        APPDB[("SQLite (app)")]
+        WADB[("SQLite (WhatsApp)")]
+        WS["workspace/"]
+        UP["uploads/"]
+    end
+
+    UI -- "HTTP/WS" --> API
+    WA <-->|"whatsmeow"| CM
+    API --> CO
+    CM -- "Inbound" --> CO
+    CO --> AM
+    AM -- "ACP over stdio" --> CLI
 ```
 
 Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the turn lifecycle, approval flow, session recovery and event model. Deployment notes (systemd, Caddy/Nginx, backups) are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).

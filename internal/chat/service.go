@@ -39,9 +39,13 @@ type Service struct {
 	mu            sync.Mutex
 	active        map[string]*activeTurn
 	running       map[string]bool
+	kick          map[string]bool
 	waiters       map[string]chan approvalDecision
 	elicitations  map[string]*elicitationWaiter
 	terminalTurns map[string]*activeTurn
+
+	cancelNoticeAfter time.Duration
+	turnTimeout       time.Duration
 }
 
 type Options struct {
@@ -62,18 +66,21 @@ func New(opts Options) *Service {
 		opts.Events = events.Nop{}
 	}
 	return &Service{
-		store:         opts.Store,
-		agents:        opts.Agents,
-		channels:      opts.Channels,
-		bus:           opts.Events,
-		log:           opts.Log.With("component", "chat"),
-		uploadDir:     opts.UploadDir,
-		workspace:     opts.Workspace,
-		active:        map[string]*activeTurn{},
-		running:       map[string]bool{},
-		waiters:       map[string]chan approvalDecision{},
-		elicitations:  map[string]*elicitationWaiter{},
-		terminalTurns: map[string]*activeTurn{},
+		store:             opts.Store,
+		agents:            opts.Agents,
+		channels:          opts.Channels,
+		bus:               opts.Events,
+		log:               opts.Log.With("component", "chat"),
+		uploadDir:         opts.UploadDir,
+		workspace:         opts.Workspace,
+		active:            map[string]*activeTurn{},
+		running:           map[string]bool{},
+		kick:              map[string]bool{},
+		waiters:           map[string]chan approvalDecision{},
+		elicitations:      map[string]*elicitationWaiter{},
+		terminalTurns:     map[string]*activeTurn{},
+		cancelNoticeAfter: defaultCancelNoticeAfter,
+		turnTimeout:       defaultTurnTimeout,
 	}
 }
 
@@ -133,6 +140,8 @@ type SubmitInput struct {
 	OriginRef      string                  `json:"originRef,omitempty"`
 	ReplyToChannel bool                    `json:"replyToChannel,omitempty"`
 	ReplyChannel   string                  `json:"replyChannel,omitempty"`
+	// Delivery is "" or "queue" (default FIFO) or "after_tools".
+	Delivery string `json:"delivery,omitempty"`
 }
 
 type messagePayload struct {
@@ -141,6 +150,11 @@ type messagePayload struct {
 }
 
 func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, store.Turn, error) {
+	switch in.Delivery {
+	case "", deliveryQueue, deliveryAfterTools:
+	default:
+		return store.Message{}, store.Turn{}, ErrInvalidDelivery
+	}
 	text := strings.TrimSpace(in.Text)
 	if text == "" && len(in.Attachments) == 0 {
 		return store.Message{}, store.Turn{}, ErrInvalidPrompt
@@ -161,6 +175,10 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 	}
 	if !ag.Enabled {
 		return store.Message{}, store.Turn{}, fmt.Errorf("agent %q is disabled", ag.Name)
+	}
+	var target *activeTurn
+	if in.Delivery == deliveryAfterTools {
+		target = s.activeFor(conv.ID)
 	}
 
 	channel := strings.TrimSpace(in.Channel)
@@ -190,6 +208,9 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 			})
 		}
 		meta["attachments"] = list
+	}
+	if in.Delivery == deliveryAfterTools {
+		meta["delivery"] = deliveryAfterTools
 	}
 	metaJSON, _ := json.Marshal(meta)
 	msg := store.Message{
@@ -226,6 +247,9 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 	turn, err := s.store.CreateTurn(ctx, conv.ID, msg.ID, originChannel, originRef)
 	if err != nil {
 		return msg, turn, err
+	}
+	if target != nil {
+		s.armAfterTools(ctx, conv.ID, &msg, turn, target)
 	}
 	s.emit("message.created", conv.ID, s.hydrateMessage(ctx, msg))
 	s.emit("turn.updated", conv.ID, turn)
@@ -283,6 +307,11 @@ func (s *Service) Cancel(ctx context.Context, conversationID string) error {
 		a.mu.Unlock()
 		return ErrNoActiveTurn
 	}
+	if a.afterTools {
+		a.mu.Unlock()
+		s.requestGracefulCancel(a)
+		return nil
+	}
 	a.cancelRequested = true
 	session := a.session
 	turn := a.turn
@@ -302,28 +331,40 @@ func (s *Service) Cancel(ctx context.Context, conversationID string) error {
 	return nil
 }
 
+// runQueue drains a conversation's queue. Every call sets kick, and the owner
+// only releases once no kick arrived after its last empty check, so a turn
+// persisted during that check is never stranded.
 func (s *Service) runQueue(conversationID string) {
 	s.mu.Lock()
+	s.kick[conversationID] = true
 	if s.running[conversationID] {
 		s.mu.Unlock()
 		return
 	}
 	s.running[conversationID] = true
 	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.running, conversationID)
-		s.mu.Unlock()
-	}()
 	for {
-		turn, err := s.store.NextQueuedTurn(context.Background(), conversationID)
-		if err != nil {
-			if !store.IsNotFound(err) {
-				s.log.Warn("failed to read queued turn", "conversation", conversationID, "error", err)
+		s.mu.Lock()
+		s.kick[conversationID] = false
+		s.mu.Unlock()
+		for {
+			turn, err := s.store.NextQueuedTurn(context.Background(), conversationID)
+			if err != nil {
+				if !store.IsNotFound(err) {
+					s.log.Warn("failed to read queued turn", "conversation", conversationID, "error", err)
+				}
+				break
 			}
+			s.processTurn(turn)
+		}
+		s.mu.Lock()
+		if !s.kick[conversationID] {
+			delete(s.running, conversationID)
+			delete(s.kick, conversationID)
+			s.mu.Unlock()
 			return
 		}
-		s.processTurn(turn)
+		s.mu.Unlock()
 	}
 }
 

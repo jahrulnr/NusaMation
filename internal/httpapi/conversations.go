@@ -121,6 +121,15 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 			turns[msg.TurnID] = turn
 		}
 	}
+	// Queued turns have no messages yet, so include them for per-message queue status.
+	queued, err := s.store.ListQueuedTurnsForConversation(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "turns", err.Error())
+		return
+	}
+	for _, turn := range queued {
+		turns[turn.ID] = turn
+	}
 	approvals, _ := s.store.ListApprovalsForConversation(r.Context(), id, 100)
 	views := s.hydrateMessages(r, msgs)
 	configs, _ := s.chat.ConversationConfig(r.Context(), id)
@@ -214,6 +223,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		Attachments    []store.AttachmentInput `json:"attachments"`
 		ReplyToChannel bool                    `json:"replyToChannel"`
 		ReplyChannel   string                  `json:"replyChannel"`
+		Delivery       string                  `json:"delivery"`
 	}
 	if err := readJSON(w, r, &in, 1<<20); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid message payload.")
@@ -222,6 +232,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	msg, turn, err := s.chat.Submit(r.Context(), chat.SubmitInput{
 		ConversationID: r.PathValue("id"), Text: in.Text, Attachments: in.Attachments,
 		Channel: "web", ReplyToChannel: in.ReplyToChannel, ReplyChannel: in.ReplyChannel,
+		Delivery: in.Delivery,
 	})
 	if err != nil {
 		status := http.StatusBadRequest

@@ -77,6 +77,7 @@
     qrTimer: null,
     renderTimer: null,
     sending: false,
+    sendDelivery: "queue",
     scrollPinned: true,
     booted: false,
     loadingConversation: false,
@@ -441,6 +442,7 @@
     S.loadingConversation = true;
     S.loadError = "";
     S.draft = "";
+    S.sendDelivery = "queue";
     S.attachments = [];
     S.scrollPinned = true;
     S.current = S.conversations.find((c) => c.id === id) || S.current;
@@ -812,6 +814,7 @@
         ${messageHead(m)}
         <div class="user-bubble markdown">${renderMarkdown(m.text)}</div>
         ${attachmentsHTML(m.attachments)}
+        ${queueStatusLabel(m) ? `<div class="queue-status">${esc(queueStatusLabel(m))}</div>` : ""}
       </div>
     </div>`;
   }
@@ -1113,6 +1116,9 @@
   function renderComposer() {
     const wrap = $("#composer-wrap");
     if (!wrap) return;
+    const menuOpen = !!$(".send-menu-popover");
+    const menuFocus = document.activeElement?.dataset?.mode || "";
+    if (menuOpen) closePopover();
     const oldTa = $("#prompt");
     const wasFocused = !!oldTa && oldTa === document.activeElement;
     const selStart = oldTa ? oldTa.selectionStart : 0;
@@ -1135,8 +1141,11 @@
           ${S.elicitations.some((e) => e.conversationId === conv?.id) ? `<button class="composer-choice" data-action="show-agent-request">Respond</button>` : ""}
           ${links.length ? `<button class="reply-toggle ${S.replyToChannel ? "on" : ""}" data-action="reply-toggle" title="Also send the final answer to this chat">${icon("message", "sm")} ${S.replyToChannel ? "Reply to " + esc(links[0].channel) : "Reply to chat"}</button>` : ""}
           <span class="grow"></span>
-          ${active ? `<button class="stop-btn" data-action="stop">${icon("stop", "sm")} Stop</button>` : ""}
-          <button class="send-btn" id="send-btn" data-action="send" title="Send">${icon("send")}</button>
+          ${active ? `<button class="stop-btn" data-action="stop" aria-label="Stop" title="Stop">${icon("stop", "sm")} <span class="stop-label">Stop</span></button>` : ""}
+          <div class="send-split">
+            <button class="send-btn" id="send-btn" data-action="send" title="${sendTitle()}" aria-label="${sendTitle()}">${icon("send")}</button>
+            <button class="send-menu-btn" id="send-menu-btn" data-action="send-menu" aria-haspopup="menu" aria-expanded="false" aria-label="Send options" title="Send options"${S.sending ? " disabled" : ""}>${icon("chevron-down", "sm")}</button>
+          </div>
         </div>
       </div>
       <div class="composer-foot"><span>${icon("shield", "sm")} Approvals stay in your hands</span><span>${icon("brain", "sm")} Full thoughts on web</span></div>
@@ -1167,6 +1176,7 @@
     };
     renderPendingAttachments();
     updateComposerState();
+    if (menuOpen) reopenSendMenu(menuFocus);
   }
 
   function composerConfigs() {
@@ -1216,8 +1226,82 @@
     const has = ta.value.trim().length > 0 || S.attachments.length > 0;
     btn.disabled = !has || S.sending;
     btn.innerHTML = S.sending ? `<span class="spinner"></span>` : icon("send");
+    btn.title = sendTitle();
+    btn.setAttribute("aria-label", sendTitle());
+    const menuBtn = $("#send-menu-btn");
+    if (menuBtn) menuBtn.disabled = S.sending;
     const agent = currentAgent();
     ta.placeholder = isMobile() ? "Message…" : `Message ${agentName(agent)}…`;
+  }
+
+  const TURN_RANK = { queued: 0, running: 1, waiting_approval: 1, cancelling: 1 };
+  // A stale queued snapshot never replaces a started or finished turn; later
+  // terminal states replace earlier ones.
+  function upsertTurn(turn) {
+    if (!turn || !turn.id) return;
+    const rank = (s) => (s in TURN_RANK ? TURN_RANK[s] : 2);
+    const known = S.turns[turn.id];
+    if (known && rank(turn.status) < rank(known.status)) return;
+    S.turns[turn.id] = turn;
+  }
+
+  function isBusyTurn() {
+    return !!S.active && !!S.active.running && ["running", "waiting_approval"].includes(S.active.status);
+  }
+
+  function sendTitle() {
+    if (!isBusyTurn()) return "Send";
+    return S.sendDelivery === "after_tools" ? "Send after tools" : "Add to queue";
+  }
+
+  function openSendMenu(anchor) {
+    if ($(".send-menu-popover")) { closePopover(); return; }
+    const choice = (mode, label, help) => `<button class="menu-item" role="menuitemradio" aria-checked="${S.sendDelivery === mode}" data-action="send-mode" data-mode="${mode}"><span class="popover-main"><b>${label}</b><small>${help}</small></span>${S.sendDelivery === mode ? icon("check", "sm") : ""}</button>`;
+    openPopover(anchor, `<div class="popover-list send-menu" role="menu" aria-label="Send mode">${choice("queue", "Add to queue", "Runs after the current turn finishes")}${choice("after_tools", "Send after tools", "Finish current tools, cancel, then send")}</div>`, { width: 260, class: "composer-popover send-menu-popover" });
+    anchor.setAttribute("aria-expanded", "true");
+    const el = $(".send-menu-popover");
+    el.addEventListener("keydown", (e) => sendMenuKeys(e, anchor, el));
+    el.querySelector('[aria-checked="true"]')?.focus();
+  }
+
+  function reopenSendMenu(focusMode) {
+    const anchor = $("#send-menu-btn");
+    if (!anchor) return;
+    openSendMenu(anchor);
+    if (focusMode) $(`.send-menu-popover [data-mode="${focusMode}"]`)?.focus();
+    else anchor.focus();
+  }
+
+  function sendMenuKeys(e, anchor, el) {
+    const items = $$("[role=menuitemradio]", el);
+    const i = items.indexOf(document.activeElement);
+    const go = (n) => { e.preventDefault(); items[n]?.focus(); };
+    if (e.key === "ArrowDown") go((i + 1) % items.length);
+    else if (e.key === "ArrowUp") go((i - 1 + items.length) % items.length);
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(items.length - 1);
+    else if (e.key === "Escape") { e.preventDefault(); closePopover(); anchor.focus(); }
+  }
+
+  function setSendMode(mode) {
+    S.sendDelivery = mode;
+    closePopover();
+    updateComposerState();
+    $("#send-menu-btn")?.focus();
+  }
+
+  function queuedTurnFor(m) {
+    return Object.values(S.turns || {}).find((t) => t.userMessageId === m.id);
+  }
+
+  function queueStatusLabel(m) {
+    const turn = queuedTurnFor(m);
+    if (!turn || turn.status !== "queued") return "";
+    const target = (m.metadata || {}).interruptTurnId;
+    if (target && S.active && S.active.turnId === target) {
+      return S.active.status === "cancelling" ? "Waiting for agent to stop" : "Waiting for tools";
+    }
+    return "Queued";
   }
 
   function renderPendingAttachments() {
@@ -1291,6 +1375,7 @@
         attachments: S.attachments.map((a) => ({ uploadId: (a.upload || a).id })),
         replyToChannel: !!(S.replyToChannel && links.length),
         replyChannel: links.length ? links[0].channel : "",
+        delivery: isBusyTurn() ? S.sendDelivery : "queue",
       };
       const d = await api(`/conversations/${encodeURIComponent(S.current.id)}/messages`, { method: "POST", body });
       S.sending = false;
@@ -1299,6 +1384,7 @@
       ta.style.height = "auto";
       S.attachments = [];
       renderPendingAttachments();
+      upsertTurn(d.turn);
       upsertMessage(normalizeMessage({ ...d.message }));
       if (!S.active || !S.active.running) S.active = { status: "queued", running: false, turnId: d.turn.id };
       S.scrollPinned = true;
@@ -1547,6 +1633,10 @@
         if (S.current && convId === S.current.id) { S.current.usage = data.usage; }
         break;
       }
+      case "turn.updated": {
+        if (S.current && convId === S.current.id) { upsertTurn(data.turn || data); scheduleChatRender(); }
+        break;
+      }
       case "turn.started": {
         const turn = data.turn || data;
         if (S.current && convId === S.current.id) {
@@ -1566,7 +1656,7 @@
         S.active.status = data.status;
         S.active.running = data.status !== "queued";
         if (data.status === "waiting_approval") S.active.running = true;
-        renderTopbar(); renderComposer();
+        renderTopbar(); renderComposer(); scheduleChatRender();
         break;
       }
       case "turn.completed": {
@@ -1694,6 +1784,7 @@
       e.remove();
     });
     document.querySelectorAll("[data-popover-anchor]").forEach((e) => e.removeAttribute("data-popover-anchor"));
+    document.querySelectorAll('[aria-haspopup][aria-expanded="true"]').forEach((e) => e.setAttribute("aria-expanded", "false"));
   }
 
   function toolPreFor(target) {
@@ -2561,6 +2652,8 @@
     try {
       const d = await api("/conversations", { method: "POST", body: { agentId: ag.id } });
       S.current = d.conversation;
+      S.sendDelivery = "queue";
+      S.turns = {};
       S.messages = [];
       S.active = null;
       S.configs = parseConfigs(d.conversation.configOptions);
@@ -2876,6 +2969,8 @@
         break;
       }
       case "send": await sendMessage(); break;
+      case "send-menu": openSendMenu(target); break;
+      case "send-mode": setSendMode(target.dataset.mode); break;
       case "stop": await stopTurn(); break;
       case "retry": await retryTurn(); break;
       case "retry-boot": startApp(); break;
@@ -3072,13 +3167,14 @@
   window.addEventListener("popstate", () => {
     const m = location.pathname.match(/^\/c\/([^/]+)/);
     if (m) selectConversation(decodeURIComponent(m[1]), false);
-    else { S.current = null; S.messages = []; renderTopbar(); renderChat(); renderComposer(); }
+    else { S.current = null; S.messages = []; S.sendDelivery = "queue"; S.turns = {}; renderTopbar(); renderChat(); renderComposer(); }
   });
 
   async function doLogout() {
     try { await api("/auth/logout", { method: "POST" }); } catch {}
     closeModal(); closeWS();
     S.csrf = ""; S.current = null; S.messages = []; S.conversations = []; S.approvals = []; S.approvalsById.clear();
+    S.sendDelivery = "queue"; S.turns = {};
     renderLogin();
   }
 

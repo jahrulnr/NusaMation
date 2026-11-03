@@ -71,6 +71,19 @@ func RequestOwner(ctx context.Context) string {
 	return owner
 }
 
+type requestSentKey struct{}
+
+// WithRequestSent registers fn to run synchronously right after a request made
+// with ctx has been written to the agent. fn must be cheap and non-blocking.
+func WithRequestSent(ctx context.Context, fn func()) context.Context {
+	return context.WithValue(ctx, requestSentKey{}, fn)
+}
+
+func requestSent(ctx context.Context) func() {
+	fn, _ := ctx.Value(requestSentKey{}).(func())
+	return fn
+}
+
 type Process struct {
 	cfg     ProcessConfig
 	handler Handler
@@ -394,6 +407,9 @@ func (p *Process) Call(ctx context.Context, method string, params any, out any) 
 	if p.isClosed() {
 		return ErrProcessExited
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	p.mu.Lock()
 	p.nextID++
 	id := p.nextID
@@ -407,6 +423,9 @@ func (p *Process) Call(ctx context.Context, method string, params any, out any) 
 	if err := p.writeJSON(payload); err != nil {
 		p.removePending(key)
 		return err
+	}
+	if sent := requestSent(ctx); sent != nil {
+		sent()
 	}
 
 	select {

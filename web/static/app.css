@@ -406,10 +406,18 @@ a:hover { text-decoration: underline; }
 .reply-toggle:hover { color: var(--text-soft); background: rgba(255,255,255,.04); }
 .reply-toggle.on { color: var(--mint); background: var(--mint-dim); border-color: rgba(118,215,196,.18); }
 .reply-toggle .icon { width: 12px; height: 12px; }
-.send-btn { width: 33px; height: 33px; border-radius: 9px; background: var(--accent); color: #17130b; display: grid; place-items: center; transition: .15s; }
-.send-btn:hover { background: var(--accent-hot); }
+.send-split { display: inline-flex; align-items: stretch; flex-shrink: 0; height: 33px; border-radius: 999px; background: var(--accent); color: #17130b; transition: .15s; }
+.send-split:hover { background: var(--accent-hot); }
+.send-btn { width: 33px; height: 33px; border-radius: 999px 0 0 999px; background: transparent; color: inherit; display: grid; place-items: center; transition: .15s; }
 .send-btn:disabled { opacity: .35; pointer-events: none; }
 .send-btn .icon { width: 17px; height: 17px; stroke-width: 2; }
+.send-menu-btn { width: 24px; height: 33px; border-radius: 0 999px 999px 0; border-left: 1px solid rgba(23,19,11,.18); display: grid; place-items: center; color: inherit; }
+.send-menu-btn:disabled { opacity: .35; pointer-events: none; }
+.send-menu-btn[aria-expanded="true"] { background: rgba(23,19,11,.14); }
+.send-menu-btn .icon { width: 14px; height: 14px; stroke-width: 2; }
+.send-btn:focus-visible, .send-menu-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.queue-status { margin-top: 4px; font-size: 11px; color: var(--muted); text-align: right; }
+.send-menu .popover-main small { display: block; }
 .stop-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; background: var(--danger-dim); color: var(--danger); font-size: 11px; font-weight: 600; border: 1px solid rgba(255,118,118,.2); }
 .composer-foot { display: flex; justify-content: center; gap: 14px; color: var(--muted-2); font-size: 10px; margin-top: 7px; }
 .composer-foot span { display: inline-flex; align-items: center; gap: 4px; }
@@ -560,7 +568,7 @@ a:hover { text-decoration: underline; }
   .composer-mobile-settings { display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 7px; color: var(--muted); font-size: 18px; }
   .composer-mobile-settings:hover, .composer-mobile-settings:focus-visible { background: var(--panel-2); color: var(--text); }
   .composer-bar { gap: 3px; }
-  .composer-bar > .icon-btn, .composer-bar > .send-btn, .composer-bar > .stop-btn { flex-shrink: 0; }
+  .composer-bar > .icon-btn, .composer-bar > .send-split, .composer-bar > .stop-btn { flex-shrink: 0; }
   .composer .agent-choice { flex: 0 1 auto; min-width: 0; max-width: min(38vw, 130px); }
   .composer-attachments { max-height: min(80px, 18vh); overflow: auto; }
   .composer .reply-toggle { min-width: 0; max-width: 90px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -709,7 +717,10 @@ textarea, input, select { caret-color: var(--accent); }
   .topbar .icon-btn, .sidebar-top .icon-btn, .conv-meta > .icon-btn, .composer-bar > .icon-btn { width: 40px; height: 40px; }
   .topbar .pill-btn, .composer-choice, .composer .reply-toggle, .stop-btn { min-height: 40px; }
   .topbar .agent-pill { min-width: 40px; justify-content: center; }
-  .send-btn, .composer-mobile-settings { width: 44px; height: 44px; }
+  .send-split { height: 44px; }
+  .send-split .send-btn { width: 44px; height: 44px; }
+  .send-menu-btn { width: 32px; height: 44px; }
+  .composer-mobile-settings { width: 44px; height: 44px; }
 }
 @media (hover: none), (pointer: coarse) {
   .code-copy { opacity: 1; width: 40px; height: 40px; }
@@ -723,10 +734,14 @@ textarea, input, select { caret-color: var(--accent); }
   .composer-attachments { grid-column: 1 / -1; }
   .composer textarea { grid-column: 3; grid-row: 2; min-height: 44px; padding: 11px 10px; line-height: 22px; }
   .composer-bar { display: contents; }
-  .composer-bar > .icon-btn, .composer-bar > .composer-mobile-settings, .composer-bar > .stop-btn, .composer-bar > .send-btn { grid-row: 2; }
+  .composer-bar > .icon-btn, .composer-bar > .composer-mobile-settings, .composer-bar > .stop-btn, .composer-bar > .send-split { grid-row: 2; }
   .composer-bar > .icon-btn { grid-column: 1; }
   .composer-bar > .composer-mobile-settings { display: inline-grid; place-items: center; grid-column: 2; width: 44px; height: 44px; border-radius: 9px; color: var(--muted); font-size: 18px; }
   .composer-bar > .stop-btn { grid-column: 4; }
-  .composer-bar > .send-btn { grid-column: 5; }
+  .composer-bar > .send-split { grid-column: 5; }
   .composer-bar > .agent-choice, .composer-bar > .composer-configs, .composer-bar > .composer-mobile-summary, .composer-bar > .composer-choice, .composer-bar > .reply-toggle, .composer-bar > .grow { display: none; }
+}
+@media (max-width: 360px) and (max-height: 500px) {
+  .composer textarea { grid-column: 1 / -1; grid-row: 2; }
+  .composer-bar > .icon-btn, .composer-bar > .composer-mobile-settings, .composer-bar > .stop-btn, .composer-bar > .send-split { grid-row: 3; }
 }

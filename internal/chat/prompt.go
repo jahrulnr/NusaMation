@@ -19,7 +19,10 @@ import (
 )
 
 func (s *Service) processTurn(turn store.Turn) {
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
+	s.mu.Lock()
+	timeout := s.turnTimeout
+	s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	conv, err := s.store.GetConversation(ctx, turn.ConversationID)
@@ -37,20 +40,9 @@ func (s *Service) processTurn(turn store.Turn) {
 		s.failOrphanTurn(turn, err)
 		return
 	}
-	a := &activeTurn{
-		conversationID: conv.ID,
-		turn:           turn,
-		conv:           conv,
-		agent:          ag,
-		user:           user,
-		ctx:            ctx,
-		cancel:         cancel,
-		flushStop:      make(chan struct{}),
-		tools:          map[string]*toolState{},
-		approvals:      map[string]bool{},
-		startedAt:      time.Now(),
-	}
+	a := newActiveTurn(conv, turn, ag, user, ctx, cancel)
 	s.setActive(a)
+	go s.watchTurn(a)
 
 	_ = s.store.StartTurn(ctx, turn.ID)
 	turn.Status = "running"
@@ -66,6 +58,7 @@ func (s *Service) processTurn(turn store.Turn) {
 	s.startDelivery(a)
 
 	status, stopReason, runErr := s.runPrompt(a)
+	a.endPrompt()
 	s.finishTurn(a, status, stopReason, runErr)
 }
 
@@ -100,7 +93,7 @@ func (s *Service) runPrompt(a *activeTurn) (status, stopReason string, runErr er
 
 	session, err := s.agents.EnsureSession(a.ctx, req)
 	if err != nil {
-		if a.cancelRequested {
+		if a.isCancelRequested() {
 			return "cancelled", "cancelled", nil
 		}
 		if authErr := new(agent.AuthRequiredError); errors.As(err, &authErr) {
@@ -133,9 +126,15 @@ func (s *Service) runPrompt(a *activeTurn) (status, stopReason string, runErr er
 	if len(blocks) == 0 {
 		return "error", "", errors.New("nothing to send to the agent")
 	}
-	result, err := s.agents.Prompt(a.ctx, session, blocks)
+	if !a.beginPrompt() {
+		return "cancelled", "cancelled", nil
+	}
+	result, err := s.agents.Prompt(acp.WithRequestSent(a.ctx, a.markPromptSent), session, blocks)
 	if err != nil {
-		if a.cancelRequested {
+		if a.ctx.Err() == context.DeadlineExceeded && isClosed(a.promptSent) {
+			s.dropTimedOutSession(a)
+		}
+		if a.isCancelRequested() {
 			return "cancelled", "cancelled", nil
 		}
 		if authErr := new(agent.AuthRequiredError); errors.As(err, &authErr) {
@@ -147,7 +146,7 @@ func (s *Service) runPrompt(a *activeTurn) (status, stopReason string, runErr er
 		s.recordPromptUsage(a, result.Usage)
 	}
 	stop := result.StopReason
-	if a.cancelRequested || stop == "cancelled" {
+	if a.isCancelRequested() || stop == "cancelled" {
 		return "cancelled", "cancelled", nil
 	}
 	if stop == "" {

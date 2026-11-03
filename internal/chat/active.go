@@ -112,6 +112,7 @@ type activeTurn struct {
 	approvals       map[string]bool
 	recapApplied    bool
 	cancelRequested bool
+	afterTools      bool
 	finished        bool
 	finalStatus     string
 	finalError      string
@@ -119,6 +120,132 @@ type activeTurn struct {
 	finalDelivery   bool
 	startedAt       time.Time
 	lastFlush       time.Time
+
+	// wake nudges the turn's coordinator; cancelSignal closes once a graceful
+	// cancel is requested; finishedCh closes when the turn finishes.
+	wake         chan struct{}
+	cancelSignal chan struct{}
+	finishedCh   chan struct{}
+
+	// promptMu orders session/cancel against prompt completion. promptSent
+	// closes once the session/prompt request is written; promptDone closes once
+	// Prompt has returned or was never started.
+	promptMu       sync.Mutex
+	promptStarting bool
+	promptSent     chan struct{}
+	promptDone     chan struct{}
+	promptSentOnce sync.Once
+	promptDoneOnce sync.Once
+}
+
+func newActiveTurn(conv store.Conversation, turn store.Turn, ag store.Agent, user store.Message, ctx context.Context, cancel context.CancelFunc) *activeTurn {
+	return &activeTurn{
+		conversationID: conv.ID,
+		turn:           turn,
+		conv:           conv,
+		agent:          ag,
+		user:           user,
+		ctx:            ctx,
+		cancel:         cancel,
+		flushStop:      make(chan struct{}),
+		tools:          map[string]*toolState{},
+		approvals:      map[string]bool{},
+		startedAt:      time.Now(),
+		wake:           make(chan struct{}, 1),
+		cancelSignal:   make(chan struct{}),
+		finishedCh:     make(chan struct{}),
+		promptSent:     make(chan struct{}),
+		promptDone:     make(chan struct{}),
+	}
+}
+
+// signal wakes the coordinator without blocking; a pending wake already covers
+// this change. A nil channel (test-built turns) is a no-op.
+func (a *activeTurn) signal() {
+	select {
+	case a.wake <- struct{}{}:
+	default:
+	}
+}
+
+func closeOnce(once *sync.Once, ch chan struct{}) {
+	if ch == nil {
+		return
+	}
+	once.Do(func() { close(ch) })
+}
+
+func isClosed(ch chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+// armAfterTools marks the turn as the target of a queued after_tools input.
+// It fails once the turn is finished or a cancel is already underway.
+func (a *activeTurn) armAfterTools() (turnID string, ok bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.finished || a.cancelRequested {
+		return "", false
+	}
+	a.afterTools = true
+	a.signal()
+	return a.turn.ID, true
+}
+
+// afterToolsBoundaryReached reports whether an armed turn may be cancelled:
+// the prompt was sent, no approval is pending, and every known tool is in a
+// terminal state. Unknown or missing statuses are not terminal.
+func (a *activeTurn) afterToolsBoundaryReached() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.afterTools || a.cancelRequested || a.finished || len(a.approvals) > 0 {
+		return false
+	}
+	if !isClosed(a.promptSent) {
+		return false
+	}
+	for _, t := range a.tools {
+		if t.Status != "completed" && t.Status != "failed" {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *activeTurn) isCancelRequested() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.cancelRequested
+}
+
+// beginPrompt reports whether Prompt may be dispatched. It returns false once a
+// cancel was requested so that no prompt is sent after cancellation.
+func (a *activeTurn) beginPrompt() bool {
+	a.promptMu.Lock()
+	defer a.promptMu.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cancelRequested {
+		return false
+	}
+	a.promptStarting = true
+	return true
+}
+
+func (a *activeTurn) endPrompt() {
+	a.promptMu.Lock()
+	defer a.promptMu.Unlock()
+	closeOnce(&a.promptDoneOnce, a.promptDone)
+}
+
+func (a *activeTurn) markPromptSent() {
+	closeOnce(&a.promptSentOnce, a.promptSent)
+	a.signal()
 }
 
 func (a *activeTurn) appendAssistant(delta string) (text string, first bool) {

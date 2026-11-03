@@ -65,9 +65,34 @@ func main() {
 			}
 			continue
 		}
-		if msg.Method != "" {
+		// Prompt and cancel state changes happen here, in stdin order, so a
+		// cancel always targets the prompt written before it.
+		switch msg.Method {
+		case "session/prompt":
+			go s.handlePrompt(msg, s.newPromptCancel())
+		case "session/cancel":
+			s.closeCancel()
+		default:
 			go s.handle(msg)
 		}
+	}
+}
+
+func (s *server) newPromptCancel() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cancel = make(chan struct{})
+	return s.cancel
+}
+
+func (s *server) closeCancel() {
+	trace("cancel")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.cancel:
+	default:
+		close(s.cancel)
 	}
 }
 
@@ -93,6 +118,7 @@ func (s *server) handle(msg message) {
 			"agentInfo":   map[string]any{"name": "fake-acp", "title": "Fake ACP Agent", "version": "0.1.0"},
 		})
 	case "session/new":
+		trace("session_new")
 		s.mu.Lock()
 		s.cancel = make(chan struct{})
 		s.values["mode"] = "ask"
@@ -136,24 +162,7 @@ func (s *server) handle(msg message) {
 		s.respond(msg.ID, map[string]any{"sessions": []any{map[string]any{"sessionId": "fake-session", "title": "Fake session"}}})
 	case "session/delete":
 		s.respond(msg.ID, map[string]any{})
-	case "session/cancel":
-		s.mu.Lock()
-		select {
-		case <-s.cancel:
-		default:
-			close(s.cancel)
-		}
-		s.mu.Unlock()
-	case "session/prompt":
-		var p struct {
-			SessionID string `json:"sessionId"`
-			Prompt    []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"prompt"`
-		}
-		_ = json.Unmarshal(msg.Params, &p)
-		go s.prompt(msg.ID, p.SessionID, p.Prompt)
+
 	}
 }
 
@@ -183,13 +192,23 @@ func (s *server) configOptions() []any {
 	return append([]any{mode}, options...)
 }
 
+func (s *server) handlePrompt(msg message, cancel chan struct{}) {
+	var p struct {
+		SessionID string `json:"sessionId"`
+		Prompt    []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"prompt"`
+	}
+	_ = json.Unmarshal(msg.Params, &p)
+	trace(fmt.Sprintf("prompt_start %s %s", msg.ID, promptText(p.Prompt)))
+	s.prompt(msg.ID, p.SessionID, p.Prompt, cancel)
+}
+
 func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
-}) {
-	s.mu.Lock()
-	cancel := s.cancel
-	s.mu.Unlock()
+}, cancel chan struct{}) {
 	text := ""
 	for _, p := range prompt {
 		if p.Text != "" {
@@ -202,6 +221,26 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 	}
 	if strings.Contains(text, "mode-switch-test") {
 		s.modeSwitchDemo(id, sessionID)
+		return
+	}
+	toolDelay := 400 * time.Millisecond
+	if strings.Contains(text, "slow") {
+		toolDelay = 4 * time.Second
+	}
+	if strings.Contains(text, "after-tools-two-tools") {
+		s.toolsDemo(id, cancel, false, toolDelay)
+		return
+	}
+	if strings.Contains(text, "after-tools-ignore-cancel") {
+		s.toolsDemo(id, cancel, true, toolDelay)
+		return
+	}
+	if strings.Contains(text, "after-tools-no-tools") {
+		s.noToolsDemo(id, cancel)
+		return
+	}
+	if strings.Contains(text, "after-tools-permission") {
+		s.permissionDemo(id, sessionID, cancel)
 		return
 	}
 	s.update(map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{
@@ -264,6 +303,99 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 	s.respond(id, map[string]any{"stopReason": "end_turn", "usage": map[string]any{
 		"totalTokens": 1280, "inputTokens": 1180, "outputTokens": 100,
 	}})
+}
+
+// toolsDemo announces tools and completes them one at a time. With
+// ignoreCancel it never honours session/cancel and answers after a delay.
+func (s *server) toolsDemo(id json.RawMessage, cancel chan struct{}, ignoreCancel bool, delay time.Duration) {
+	tools := []string{"tool-a", "tool-b"}
+	if ignoreCancel {
+		tools = tools[:1]
+	}
+	for _, tid := range tools {
+		s.update(map[string]any{
+			"sessionUpdate": "tool_call", "toolCallId": tid, "title": "Step " + tid,
+			"name": tid, "kind": "read", "status": "pending", "rawInput": map[string]any{},
+		})
+	}
+	for _, tid := range tools {
+		time.Sleep(delay)
+		s.update(map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": tid, "status": "completed"})
+		trace("tool_done " + tid)
+	}
+	if ignoreCancel {
+		time.Sleep(800 * time.Millisecond)
+		s.respond(id, map[string]any{"stopReason": "end_turn"})
+		return
+	}
+	for i := 0; i < 300; i++ {
+		select {
+		case <-cancel:
+			s.respond(id, map[string]any{"stopReason": "cancelled"})
+			return
+		case <-time.After(35 * time.Millisecond):
+		}
+		s.chunk("lorem ")
+	}
+	s.respond(id, map[string]any{"stopReason": "end_turn"})
+}
+
+// noToolsDemo streams text until cancelled, then answers only after a delay
+// and sends one more chunk, which must be attributed to this turn.
+func (s *server) noToolsDemo(id json.RawMessage, cancel chan struct{}) {
+	s.chunk("early ")
+	select {
+	case <-cancel:
+	case <-time.After(10 * time.Second):
+	}
+	time.Sleep(400 * time.Millisecond)
+	s.chunk("late-chunk ")
+	s.respond(id, map[string]any{"stopReason": "cancelled"})
+}
+
+// permissionDemo waits on a permission request for one tool and answers with
+// the stop reason implied by whether the turn was cancelled.
+func (s *server) permissionDemo(id json.RawMessage, sessionID string, cancel chan struct{}) {
+	s.update(map[string]any{
+		"sessionUpdate": "tool_call", "toolCallId": "tool-a", "title": "Step tool-a",
+		"name": "tool-a", "kind": "edit", "status": "pending", "rawInput": map[string]any{},
+	})
+	s.askPermission(sessionID, fakeTool{id: "tool-a", title: "Step tool-a", name: "tool-a", kind: "edit"})
+	select {
+	case <-cancel:
+		s.respond(id, map[string]any{"stopReason": "cancelled"})
+	default:
+		s.respond(id, map[string]any{"stopReason": "end_turn"})
+	}
+}
+
+// trace appends one line to $FAKE_ACP_TRACE so tests can assert RPC order.
+func trace(line string) {
+	path := os.Getenv("FAKE_ACP_TRACE")
+	if path == "" {
+		return
+	}
+	traceMu.Lock()
+	defer traceMu.Unlock()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintln(f, line)
+}
+
+var traceMu sync.Mutex
+
+func promptText(prompt []struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}) string {
+	var b strings.Builder
+	for _, p := range prompt {
+		b.WriteString(p.Text)
+	}
+	return strings.ReplaceAll(b.String(), "\n", " ")
 }
 
 // terminalDemo exercises the ACP terminal lifecycle for integration tests.
@@ -415,6 +547,7 @@ func (s *server) notify(method string, params any) {
 }
 
 func (s *server) respond(id json.RawMessage, result any) {
+	trace("respond " + string(id))
 	s.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": result})
 }
 

@@ -105,37 +105,38 @@ Vanilla JS control center. Vendored `marked`, `DOMPurify` and `highlight.js`; no
 
 ## Turn lifecycle
 
-```text
-POST /messages
-  │ create user message + queued turn
-  ▼
-runQueue(conversation)
-  │ one worker per conversation
-  ▼
-processTurn
-  │ mark running, notify web
-  │ ensure ACP session (load/resume/new)
-  │ optional transcript recap on handoff/recovery
-  ▼
-agent prompt
-  │
-  ├─ agent_thought_chunk ──► thought row + WS delta
-  ├─ agent_message_chunk ──► text row + WS delta
-  ├─ tool_call/update ─────► tool message + WS event
-  ├─ plan ─────────────────► conversation.plan + WS event
-  ├─ usage ────────────────► conversation.usage + WS event
-  └─ session/request_permission
-        │
-        ├─ auto policy/rule ─► selected (audit approval row)
-        └─ pending ─────────► approval row + WS card + channel ping
-                               │ wait for web/channel answer
-                               ▼
-                         permission response
-  ▼
-prompt result (end_turn / cancelled / refusal / max_*)
-  │ finalize streams, turn, conversation status
-  ▼
-final digest to origin channel + optional mirror
+```mermaid
+flowchart TD
+    POST["POST /messages<br/>create user message + queued turn"]
+    QUEUE["runQueue(conversation)<br/>one worker per conversation"]
+    TURN["processTurn<br/>mark running, notify web<br/>ensure ACP session (load/resume/new)<br/>optional transcript recap on handoff/recovery"]
+    PROMPT["agent prompt"]
+    THOUGHT["thought row + WS delta"]
+    TEXT["text row + WS delta"]
+    TOOL["tool message + WS event"]
+    PLAN["conversation.plan + WS event"]
+    USAGE["conversation.usage + WS event"]
+    PERM{"session/request_permission"}
+    AUTO["selected (audit approval row)"]
+    WAIT["approval row + WS card + channel ping<br/>wait for web/channel answer"]
+    RESP["permission response"]
+    RESULT["prompt result (end_turn / cancelled / refusal / max_*)<br/>finalize streams, turn, conversation status"]
+    DIGEST["final digest to origin channel + optional mirror"]
+
+    POST --> QUEUE --> TURN --> PROMPT
+    PROMPT -- "agent_thought_chunk" --> THOUGHT
+    PROMPT -- "agent_message_chunk" --> TEXT
+    PROMPT -- "tool_call/update" --> TOOL
+    PROMPT -- "plan" --> PLAN
+    PROMPT -- "usage" --> USAGE
+    PROMPT --> PERM
+    PERM -- "auto policy/rule" --> AUTO
+    PERM -- "pending" --> WAIT
+    WAIT --> RESP
+    AUTO --> PROMPT
+    RESP --> PROMPT
+    PROMPT --> RESULT
+    RESULT --> DIGEST
 ```
 
 The web receives the full stream regardless of where the turn originated. External channels only receive the final digest (and approval notifications if enabled).

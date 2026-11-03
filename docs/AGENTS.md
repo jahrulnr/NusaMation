@@ -4,16 +4,20 @@
 
 NusaMation is the **client**; your agent CLI is the **agent**. The client starts the command, speaks ACP over stdio and owns the conversation state around it.
 
-```text
-NusaMation ── initialize ──► agent
-           ◄─ agentInfo, capabilities, authMethods
-           ── session/new {cwd, mcpServers} ──►
-           ◄─ sessionId, modes, configOptions
-           ── session/prompt {prompt blocks} ──►
-           ◄─ session/update (thoughts, text, tools, plan, usage)
-           ◄─ session/request_permission
-           ── permission response ──►
-           ◄─ prompt result {stopReason}
+```mermaid
+sequenceDiagram
+    participant N as NusaMation
+    participant A as agent
+
+    N->>A: initialize
+    A-->>N: agentInfo, capabilities, authMethods
+    N->>A: session/new {cwd, mcpServers}
+    A-->>N: sessionId, modes, configOptions
+    N->>A: session/prompt {prompt blocks}
+    A-->>N: session/update (thoughts, text, tools, plan, usage)
+    A-->>N: session/request_permission
+    N->>A: permission response
+    A-->>N: prompt result {stopReason}
 ```
 
 The adapter must implement ACP v1 and use newline-delimited JSON-RPC on stdio. NusaMation advertises filesystem, terminal and permission handling capabilities.
@@ -93,6 +97,15 @@ Changing the mode during a turn is supported. The approval card shows a mode sel
 - Switching agents keeps the conversation history and creates a handoff recap for the new agent.
 - `/new` on a channel starts a fresh conversation and moves the chat link.
 - On server restart, interrupted turns are marked and queued turns resume. A failed side-effecting turn is **not** replayed automatically; use Retry.
+
+## Queued input and cancel-and-resend
+
+Sending while a turn runs queues the input. The composer's send menu offers two delivery modes:
+
+- **Add to queue** (default): the input runs after the current turn finishes.
+- **Send after tools**: cancel-and-resend, not native steering. Once the running turn's reported tools are all `completed` or `failed` (or right away if it reported none), NusaMation sends `session/cancel`. It then waits for the agent's answer to the cancelled prompt before the queued input starts, so no two prompts overlap. Late updates from the old prompt still belong to the old turn.
+
+Limits: tool states are best-effort reports, so the agent may start a new tool before the cancel lands. A pending approval is not skipped: the cancel waits until the user resolves it. If the agent does not answer within 15 seconds, the conversation shows one notice and the queue keeps waiting. NusaMation does not call any native steering method.
 
 ## MCP servers
 

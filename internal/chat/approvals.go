@@ -28,7 +28,7 @@ func (s *Service) Permission(ctx context.Context, sess *agent.Session, req acp.P
 	if a == nil {
 		return cancelledPermission, nil
 	}
-	if len(req.Options) == 0 {
+	if len(req.Options) == 0 || isClosed(a.cancelSignal) {
 		return cancelledPermission, nil
 	}
 
@@ -84,6 +84,7 @@ func (s *Service) Permission(ctx context.Context, sess *agent.Session, req acp.P
 	a.mu.Lock()
 	a.turn.Status = "waiting_approval"
 	a.approvals[ap.ID] = true
+	a.signal()
 	a.mu.Unlock()
 	s.emit("turn.status", a.conversationID, map[string]any{
 		"turnId": a.turn.ID, "status": "waiting_approval", "approvalId": ap.ID,
@@ -98,6 +99,8 @@ func (s *Service) Permission(ctx context.Context, sess *agent.Session, req acp.P
 	case decision = <-ch:
 	case <-a.ctx.Done():
 		decision = approvalDecision{Cancelled: true}
+	case <-a.cancelSignal:
+		decision = approvalDecision{Cancelled: true}
 	case <-ctx.Done():
 		decision = approvalDecision{Cancelled: true}
 	}
@@ -108,6 +111,7 @@ func (s *Service) Permission(ctx context.Context, sess *agent.Session, req acp.P
 	s.mu.Unlock()
 	a.mu.Lock()
 	delete(a.approvals, ap.ID)
+	a.signal()
 	a.mu.Unlock()
 
 	if decision.Cancelled || decision.OptionID == "" {
