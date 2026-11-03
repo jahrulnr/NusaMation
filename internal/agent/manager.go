@@ -56,6 +56,8 @@ type Session struct {
 	cwd            string
 	roots          []string
 	configOptions  json.RawMessage
+	modes          *acp.SessionModeState
+	legacyMode     bool
 	loaded         bool
 	recovered      bool
 	createdAt      time.Time

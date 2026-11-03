@@ -259,10 +259,16 @@ func (r *Runtime) loadOrCreate(ctx context.Context, s *Session, req EnsureReques
 	s.acpID = state.SessionID
 	s.cwd = req.Cwd
 	s.roots = append([]string{req.Cwd}, req.AdditionalDirs...)
-	if len(state.ConfigOptions) > 0 {
-		s.configOptions = append(json.RawMessage(nil), state.ConfigOptions...)
-	} else if len(s.configOptions) == 0 && len(req.CachedConfig) > 0 {
-		s.configOptions = append(json.RawMessage(nil), req.CachedConfig...)
+	if state.Modes != nil {
+		s.modes = state.Modes
+	}
+	switch {
+	case len(state.ConfigOptions) > 0:
+		s.setConfigsLocked(state.ConfigOptions)
+	case len(s.configOptions) == 0 && len(req.CachedConfig) > 0:
+		s.setConfigsLocked(req.CachedConfig)
+	default:
+		s.setConfigsLocked(s.configOptions)
 	}
 	s.loaded = true
 	s.recovered = recovered
@@ -321,19 +327,151 @@ func contains(list []string, v string) bool {
 func (r *Runtime) applyConfig(ctx context.Context, client *acp.Client, s *Session, id string, value any) error {
 	cfgCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	res, err := client.SetConfig(cfgCtx, s.ACPID(), id, value)
+	configs, err := r.setSessionConfig(cfgCtx, client, s, id, value)
 	if err != nil {
 		return err
 	}
+	r.mgr.Sink().SessionConfigUpdated(s, configs)
+	_ = r.mgr.store.UpdateAgentConfigCache(context.Background(), r.agent.ID, configs)
+	return nil
+}
+
+func (r *Runtime) setSessionConfig(ctx context.Context, client *acp.Client, s *Session, configID string, value any) (json.RawMessage, error) {
+	s.mu.Lock()
+	legacy := s.legacyMode && configID == legacyModeID
+	s.mu.Unlock()
+	if legacy {
+		modeID, ok := value.(string)
+		if !ok || modeID == "" {
+			return nil, fmt.Errorf("mode must be one of the agent's modes")
+		}
+		if err := client.SetMode(ctx, s.ACPID(), modeID); err != nil {
+			return nil, err
+		}
+		s.applyAgentMode(modeID)
+		return s.Config(), nil
+	}
+	res, err := client.SetConfig(ctx, s.ACPID(), configID, value)
+	if err != nil {
+		return nil, err
+	}
 	if len(res.ConfigOptions) > 0 {
 		s.mu.Lock()
-		s.configOptions = append(json.RawMessage(nil), res.ConfigOptions...)
-		configs := append(json.RawMessage(nil), s.configOptions...)
+		s.setConfigsLocked(res.ConfigOptions)
 		s.mu.Unlock()
-		r.mgr.Sink().SessionConfigUpdated(s, configs)
-		_ = r.mgr.store.UpdateAgentConfigCache(context.Background(), r.agent.ID, configs)
 	}
-	return nil
+	return s.Config(), nil
+}
+
+const legacyModeID = "mode"
+
+func mergeLegacyModes(raw json.RawMessage, modes *acp.SessionModeState) (json.RawMessage, bool) {
+	var list []map[string]any
+	if len(raw) > 0 && json.Unmarshal(raw, &list) != nil {
+		return raw, false
+	}
+	kept := make([]map[string]any, 0, len(list)+1)
+	var prior map[string]any
+	hasMode, hasID := false, false
+	for _, item := range list {
+		if isLegacyModeItem(item) {
+			prior = item
+			continue
+		}
+		if id, _ := item["id"].(string); id == legacyModeID {
+			hasID = true
+		}
+		if cat, _ := item["category"].(string); strings.EqualFold(cat, "mode") {
+			hasMode = true
+		}
+		kept = append(kept, item)
+	}
+	var legacy map[string]any
+	switch {
+	case hasMode || hasID:
+	case modes != nil && len(modes.AvailableModes) > 0:
+		legacy = legacyModeOption(modes)
+	case prior != nil:
+		legacy = prior
+	}
+	if legacy != nil {
+		kept = append([]map[string]any{legacy}, kept...)
+	}
+	if len(kept) == 0 {
+		if len(list) == 0 {
+			return raw, false
+		}
+		return nil, false
+	}
+	out, err := json.Marshal(kept)
+	if err != nil {
+		return raw, false
+	}
+	return out, legacy != nil
+}
+
+func legacyModeOption(modes *acp.SessionModeState) map[string]any {
+	choices := make([]map[string]any, 0, len(modes.AvailableModes))
+	for _, m := range modes.AvailableModes {
+		choice := map[string]any{"value": m.ID, "name": m.Name}
+		if m.Description != "" {
+			choice["description"] = m.Description
+		}
+		choices = append(choices, choice)
+	}
+	return map[string]any{
+		"id": legacyModeID, "name": "Mode", "category": "mode", "type": "select",
+		"currentValue": modes.CurrentModeID, "options": choices,
+		"_meta": map[string]any{"nusamation": map[string]any{"legacyModes": true}},
+	}
+}
+
+func isLegacyModeItem(item map[string]any) bool {
+	meta, _ := item["_meta"].(map[string]any)
+	ns, _ := meta["nusamation"].(map[string]any)
+	return ns["legacyModes"] == true
+}
+
+func setModeValue(raw json.RawMessage, modeID string) (json.RawMessage, bool) {
+	var list []map[string]any
+	if json.Unmarshal(raw, &list) != nil {
+		return raw, false
+	}
+	found := false
+	for _, item := range list {
+		if cat, _ := item["category"].(string); strings.EqualFold(cat, "mode") {
+			item["currentValue"] = modeID
+			found = true
+		}
+	}
+	if !found {
+		return raw, false
+	}
+	out, err := json.Marshal(list)
+	if err != nil {
+		return raw, false
+	}
+	return out, true
+}
+
+func (s *Session) setConfigsLocked(raw json.RawMessage) {
+	s.configOptions, s.legacyMode = mergeLegacyModes(raw, s.modes)
+}
+
+func (s *Session) applyAgentMode(modeID string) bool {
+	if modeID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.modes != nil {
+		s.modes.CurrentModeID = modeID
+	}
+	updated, ok := setModeValue(s.configOptions, modeID)
+	if ok {
+		s.configOptions = updated
+	}
+	return ok
 }
 
 func (r *Runtime) registerACP(s *Session, acpID string) {
@@ -390,17 +528,9 @@ func (r *Runtime) SetConfig(ctx context.Context, s *Session, configID string, va
 	if err != nil {
 		return nil, err
 	}
-	res, err := client.SetConfig(ctx, s.ACPID(), configID, value)
+	configs, err := r.setSessionConfig(ctx, client, s, configID, value)
 	if err != nil {
 		return nil, err
-	}
-	configs := res.ConfigOptions
-	if len(configs) == 0 {
-		configs = s.Config()
-	} else {
-		s.mu.Lock()
-		s.configOptions = append(json.RawMessage(nil), configs...)
-		s.mu.Unlock()
 	}
 	r.mgr.Sink().SessionConfigUpdated(s, configs)
 	_ = r.mgr.store.UpdateAgentConfigCache(context.Background(), r.agent.ID, configs)
@@ -537,7 +667,7 @@ func (r *Runtime) dispatchNotification(s *Session, method string, raw json.RawMe
 	case "config_option_update":
 		if len(u.ConfigOptions) > 0 {
 			s.mu.Lock()
-			s.configOptions = append(json.RawMessage(nil), u.ConfigOptions...)
+			s.setConfigsLocked(u.ConfigOptions)
 			configs := append(json.RawMessage(nil), s.configOptions...)
 			s.mu.Unlock()
 			r.mgr.Sink().SessionConfigUpdated(s, configs)
@@ -546,6 +676,13 @@ func (r *Runtime) dispatchNotification(s *Session, method string, raw json.RawMe
 		return
 	case "current_mode_update":
 		// Mode is also reflected in config options on modern agents.
+		if s.applyAgentMode(u.CurrentModeID) {
+			s.mu.Lock()
+			configs := append(json.RawMessage(nil), s.configOptions...)
+			s.mu.Unlock()
+			r.mgr.Sink().SessionConfigUpdated(s, configs)
+			_ = r.mgr.store.UpdateAgentConfigCache(context.Background(), r.agent.ID, configs)
+		}
 	}
 	r.mgr.Sink().SessionUpdate(s, u, raw)
 }

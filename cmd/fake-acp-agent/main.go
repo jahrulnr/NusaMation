@@ -29,6 +29,7 @@ type server struct {
 	pending map[string]chan json.RawMessage
 	cancel  chan struct{}
 	values  map[string]any
+	legacy  bool
 }
 
 func main() {
@@ -37,6 +38,7 @@ func main() {
 		pending: map[string]chan json.RawMessage{},
 		cancel:  make(chan struct{}),
 		values:  map[string]any{"mode": "ask", "model": "fake-fast"},
+		legacy:  os.Getenv("FAKE_ACP_MODES") == "legacy",
 	}
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 64*1024), 32*1024*1024)
@@ -93,6 +95,7 @@ func (s *server) handle(msg message) {
 	case "session/new":
 		s.mu.Lock()
 		s.cancel = make(chan struct{})
+		s.values["mode"] = "ask"
 		s.mu.Unlock()
 		s.notify("session/update", map[string]any{
 			"sessionId": "fake-session",
@@ -104,9 +107,9 @@ func (s *server) handle(msg message) {
 				map[string]any{"name": "compact", "description": "Compact the fake context"},
 			}},
 		})
-		s.respond(msg.ID, map[string]any{"sessionId": "fake-session", "configOptions": s.configOptions()})
+		s.respond(msg.ID, s.sessionResult())
 	case "session/load", "session/resume":
-		s.respond(msg.ID, map[string]any{"sessionId": "fake-session", "configOptions": s.configOptions()})
+		s.respond(msg.ID, s.sessionResult())
 	case "session/set_config_option":
 		var req struct {
 			ConfigID string `json:"configId"`
@@ -118,7 +121,15 @@ func (s *server) handle(msg message) {
 		s.mu.Unlock()
 		s.respond(msg.ID, map[string]any{"configOptions": s.configOptions()})
 	case "session/set_mode":
+		var req struct {
+			ModeID string `json:"modeId"`
+		}
+		_ = json.Unmarshal(msg.Params, &req)
+		s.mu.Lock()
+		s.values["mode"] = req.ModeID
+		s.mu.Unlock()
 		s.respond(msg.ID, map[string]any{})
+		s.update(map[string]any{"sessionUpdate": "current_mode_update", "currentModeId": req.ModeID})
 	case "session/close":
 		s.respond(msg.ID, map[string]any{})
 	case "session/list":
@@ -149,14 +160,7 @@ func (s *server) handle(msg message) {
 func (s *server) configOptions() []any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return []any{
-		map[string]any{
-			"id": "mode", "name": "Session Mode", "category": "mode", "type": "select",
-			"currentValue": s.values["mode"], "options": []any{
-				map[string]any{"value": "ask", "name": "Ask"},
-				map[string]any{"value": "accept-edits", "name": "Code"},
-			},
-		},
+	options := []any{
 		map[string]any{
 			"id": "model", "name": "Model", "category": "model", "type": "select",
 			"currentValue": s.values["model"], "options": []any{
@@ -165,6 +169,18 @@ func (s *server) configOptions() []any {
 			},
 		},
 	}
+	if s.legacy {
+		return options
+	}
+	mode := map[string]any{
+		"id": "mode", "name": "Session Mode", "category": "mode", "type": "select",
+		"currentValue": s.values["mode"], "options": []any{
+			map[string]any{"value": "ask", "name": "Ask"},
+			map[string]any{"value": "accept-edits", "name": "Code"},
+			map[string]any{"value": "bypass", "name": "Bypass permissions"},
+		},
+	}
+	return append([]any{mode}, options...)
 }
 
 func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
@@ -182,6 +198,10 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 	}
 	if strings.Contains(text, "timeline-terminal-test") || strings.Contains(text, "timeline-background-test") {
 		s.terminalDemo(id, sessionID, strings.Contains(text, "timeline-background-test"))
+		return
+	}
+	if strings.Contains(text, "mode-switch-test") {
+		s.modeSwitchDemo(id, sessionID)
 		return
 	}
 	s.update(map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{
@@ -204,7 +224,7 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 		return
 	case <-time.After(120 * time.Millisecond):
 	}
-	option := s.askPermission(sessionID)
+	option := s.askPermission(sessionID, fakeTool{id: "fake-tool-1", title: "Read workspace files", name: "read", kind: "read"})
 	if option == "" {
 		s.update(map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "fake-tool-1", "status": "failed", "rawOutput": map[string]any{"error": "permission denied"}})
 		s.chunk("I did not get permission to inspect the workspace, so I stopped there.")
@@ -274,6 +294,55 @@ func (s *server) terminalDemo(id json.RawMessage, sessionID string, background b
 	s.respond(id, map[string]any{"stopReason": "end_turn"})
 }
 
+type fakeTool struct {
+	id, title, name, kind string
+}
+
+func (s *server) sessionResult() map[string]any {
+	result := map[string]any{"sessionId": "fake-session", "configOptions": s.configOptions()}
+	if s.legacy {
+		s.mu.Lock()
+		current, _ := s.values["mode"].(string)
+		s.mu.Unlock()
+		result["modes"] = map[string]any{"currentModeId": current, "availableModes": []any{
+			map[string]any{"id": "ask", "name": "Ask", "description": "Request permission before making any changes"},
+			map[string]any{"id": "accept-edits", "name": "Code", "description": "Write and modify code with full tool access"},
+			map[string]any{"id": "bypass", "name": "Bypass permissions", "description": "Runs tools without asking"},
+		}}
+	}
+	return result
+}
+
+func (s *server) currentMode() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	mode, _ := s.values["mode"].(string)
+	return mode
+}
+
+func (s *server) modeSwitchDemo(id json.RawMessage, sessionID string) {
+	s.update(map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{"type": "text", "text": "Two tool calls ahead; checking permission for each."}})
+	for _, tool := range []fakeTool{
+		{id: "fake-tool-1", title: "Read workspace files", name: "read", kind: "read"},
+		{id: "fake-tool-2", title: "Write notes", name: "write_notes", kind: "edit"},
+	} {
+		s.update(map[string]any{
+			"sessionUpdate": "tool_call", "toolCallId": tool.id, "title": tool.title,
+			"name": tool.name, "kind": tool.kind, "status": "pending",
+			"rawInput": map[string]any{"path": "workspace"},
+		})
+		if s.currentMode() != "bypass" && s.askPermission(sessionID, tool) == "" {
+			s.update(map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": tool.id, "status": "failed", "rawOutput": map[string]any{"error": "permission denied"}})
+			s.chunk("Permission was denied, so I stopped.")
+			s.respond(id, map[string]any{"stopReason": "end_turn"})
+			return
+		}
+		s.update(map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": tool.id, "status": "completed", "rawOutput": map[string]any{"mode": s.currentMode()}})
+	}
+	s.chunk("Both tools finished.")
+	s.respond(id, map[string]any{"stopReason": "end_turn"})
+}
+
 func (s *server) callClient(method string, params any) json.RawMessage {
 	s.mu.Lock()
 	s.nextID++
@@ -290,7 +359,7 @@ func (s *server) callClient(method string, params any) json.RawMessage {
 	}
 }
 
-func (s *server) askPermission(sessionID string) string {
+func (s *server) askPermission(sessionID string, tool fakeTool) string {
 	s.mu.Lock()
 	s.nextID++
 	reqID := s.nextID
@@ -302,8 +371,8 @@ func (s *server) askPermission(sessionID string) string {
 		"params": map[string]any{
 			"sessionId": sessionID,
 			"toolCall": map[string]any{
-				"toolCallId": "fake-tool-1", "title": "Read workspace files",
-				"name": "read", "kind": "read", "status": "pending",
+				"toolCallId": tool.id, "title": tool.title,
+				"name": tool.name, "kind": tool.kind, "status": "pending",
 				"rawInput": map[string]any{"path": "workspace"},
 			},
 			"options": []any{

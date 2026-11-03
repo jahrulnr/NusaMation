@@ -1031,6 +1031,19 @@
     return `<div class="msg assistant"><div class="msg-avatar">${agentOrb(agent, "agent-orb")}</div><div class="msg-body"><div class="typing"><span></span><span></span><span></span></div></div></div>`;
   }
 
+  function approvalModeRow() {
+    const opt = S.configs.find((o) => o && o.id && o.type === "select" && String(o.category || "").toLowerCase() === "mode");
+    const choices = opt ? configChoices(opt) : [];
+    if (!choices.length) return "";
+    return `<label class="approval-mode"><span>${esc(opt.name || "Mode")}</span><select class="select config-select" data-change="set-config" data-id="${esc(opt.id)}">${choices.map((c) => `<option value="${esc(c.value)}" ${String(c.value) === String(opt.currentValue) ? "selected" : ""}>${esc(c.name || c.value)}</option>`).join("")}</select></label>`;
+  }
+
+  function refreshApprovalModal() {
+    const a = S.approvalsById.get(S.modal.id);
+    const body = $("#modal-root .modal-body");
+    if (a && body && a.status === "pending") body.innerHTML = approvalCard(a);
+  }
+
   function approvalCard(a) {
     const risk = String(a.risk || "medium").toLowerCase();
     const opts = a.options || [];
@@ -1048,6 +1061,7 @@
         <div class="approval-sub">${esc(details.toolName || a.toolCallId || a.kind || "tool call")} · the agent is waiting for your decision</div></div>
       </div>
       <div class="approval-details">${esc(truncate(detailText, 1800))}</div>
+      ${a.conversationId === S.current?.id ? approvalModeRow() : ""}
       <div class="approval-actions">
         ${ordered.map((o) => {
           const k = String(o.kind || "").toLowerCase();
@@ -1517,6 +1531,8 @@
         if (data.model) S.current.model = data.model;
         renderTopbar(); renderComposer();
         if (S.modal?.type === "settings" && S.settingsTab === "channels") { /* noop */ }
+        if (S.modal?.type === "approval") refreshApprovalModal();
+        if (currentApprovals().length) scheduleChatRender();
         break;
       }
       case "commands.updated": {

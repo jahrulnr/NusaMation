@@ -84,6 +84,8 @@ Add with command `/absolute/path/to/fake-acp`, any existing workspace, policy `a
 
 Important: an agent's own permission mode is separate. If an agent is configured to bypass permission requests (for example a “bypass” mode), NusaMation never sees a request to approve. Set the agent's mode to a safe mode if you need app-level approvals.
 
+Changing the mode during a turn is supported. The approval card shows a mode selector for the open conversation. For agents that publish a `mode` config option, the selection is sent with `session/set_config_option`. For agents that only advertise `modes` in the session response, NusaMation exposes them as a synthesized `mode` option and sends `session/set_mode`. The new mode applies to the next permission check. A request that is already pending still needs an answer.
+
 ## Sessions and handoff
 
 - NusaMation prefers `session/load` when advertised, then `session/resume`, then a new session.
