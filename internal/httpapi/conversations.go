@@ -1,15 +1,52 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/jahrulnr/nusamation/internal/agent"
 	"github.com/jahrulnr/nusamation/internal/chat"
 	"github.com/jahrulnr/nusamation/internal/store"
 )
+
+func (s *Server) handlePrepareConversation(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+	if err := s.chat.PrepareSession(ctx, r.PathValue("id")); err != nil {
+		var authErr *agent.AuthRequiredError
+		if errors.As(err, &authErr) {
+			writeJSON(w, http.StatusForbidden, map[string]any{"code": "agent_auth_required", "error": err.Error(), "authMethods": authErr.Methods})
+			return
+		}
+		writeError(w, http.StatusBadGateway, "prepare_failed", err.Error())
+		return
+	}
+	conv, err := s.store.GetConversation(ctx, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	configs, _ := s.chat.ConversationConfig(ctx, conv.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"conversation": conv, "configs": configs})
+}
+
+func (s *Server) handleElicitationResponse(w http.ResponseWriter, r *http.Request) {
+	var response chat.ElicitationResponse
+	if err := readJSON(w, r, &response, 256<<10); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid response.")
+		return
+	}
+	if err := s.chat.ResolveElicitation(r.PathValue("id"), r.PathValue("elicitationId"), response); err != nil {
+		writeError(w, http.StatusConflict, "elicitation_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
 
 type messageView struct {
 	store.Message
@@ -72,6 +109,18 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	msgs, _ := s.store.ListMessages(r.Context(), id, 0, 0, 150)
+	turns := make(map[string]store.Turn)
+	for _, msg := range msgs {
+		if msg.TurnID == "" {
+			continue
+		}
+		if _, ok := turns[msg.TurnID]; ok {
+			continue
+		}
+		if turn, err := s.store.GetTurn(r.Context(), msg.TurnID); err == nil {
+			turns[msg.TurnID] = turn
+		}
+	}
 	approvals, _ := s.store.ListApprovalsForConversation(r.Context(), id, 100)
 	views := s.hydrateMessages(r, msgs)
 	configs, _ := s.chat.ConversationConfig(r.Context(), id)
@@ -80,7 +129,9 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"conversation": conv,
 		"messages":     views,
+		"turns":        turns,
 		"approvals":    approvals,
+		"elicitations": s.chat.PendingElicitations(id),
 		"configs":      configs,
 		"active":       map[string]any{"running": active, "turnId": activeTurnID, "status": activeStatus},
 		"agent":        ag.Public(),

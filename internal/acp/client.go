@@ -11,7 +11,8 @@ import (
 
 type ClientConfig struct {
 	ProcessConfig
-	ClientInfo Implementation
+	ClientInfo   Implementation
+	Capabilities *ClientCapabilities
 }
 
 type Client struct {
@@ -46,9 +47,13 @@ func Start(ctx context.Context, cfg ClientConfig, handler Handler) (*Client, err
 }
 
 func (c *Client) Initialize(ctx context.Context) (InitializeResult, error) {
+	caps := DefaultClientCapabilities()
+	if c.cfg.Capabilities != nil {
+		caps = *c.cfg.Capabilities
+	}
 	params := map[string]any{
 		"protocolVersion":    ProtocolVersion,
-		"clientCapabilities": DefaultClientCapabilities(),
+		"clientCapabilities": caps,
 		"clientInfo":         c.cfg.ClientInfo,
 	}
 	var res InitializeResult

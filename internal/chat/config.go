@@ -15,6 +15,8 @@ type ConfigChoice struct {
 	Name        string          `json:"name,omitempty"`
 	Description string          `json:"description,omitempty"`
 	Meta        json.RawMessage `json:"_meta,omitempty"`
+	Group       string          `json:"group,omitempty"`
+	Options     []ConfigChoice  `json:"options,omitempty"`
 }
 
 type ConfigOption struct {
@@ -92,6 +94,11 @@ func configValueAllowed(opt ConfigOption, value any) error {
 			if c.Value == want {
 				return nil
 			}
+			for _, nested := range c.Options {
+				if nested.Value == want {
+					return nil
+				}
+			}
 		}
 		return fmt.Errorf("%q is not a valid value for %s", want, opt.Name)
 	case "boolean":
@@ -136,7 +143,7 @@ func (s *Service) SetConfig(ctx context.Context, conversationID, configID string
 		return conv, err
 	}
 	configs := conv.ConfigOptions
-	if len(configs) == 0 {
+	if len(ParseConfigOptions(configs)) == 0 {
 		configs = ag.ConfigOptions
 	}
 	opts := ParseConfigOptions(configs)
@@ -161,11 +168,7 @@ func (s *Service) SetConfig(ctx context.Context, conversationID, configID string
 			_ = s.store.SetConversationConfig(ctx, conv.ID, model, updatedConfigs)
 			applied = true
 		} else {
-			s.log.Warn("could not apply config to live session; saving for next turn", "error", err)
-			s.emit("notice", conversationID, map[string]any{
-				"severity": "warning", "title": "Saved for the next turn",
-				"description": "The running session did not accept the change: " + err.Error(),
-			})
+			return conv, fmt.Errorf("the agent did not accept this setting: %w", err)
 		}
 	}
 
@@ -221,7 +224,7 @@ func (s *Service) ConversationConfig(ctx context.Context, conversationID string)
 		return nil, err
 	}
 	raw := conv.ConfigOptions
-	if len(raw) == 0 {
+	if len(ParseConfigOptions(raw)) == 0 {
 		if ag, err := s.store.GetAgent(ctx, conv.AgentID); err == nil {
 			raw = ag.ConfigOptions
 		}

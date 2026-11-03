@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -22,8 +23,10 @@ type Sink interface {
 	AgentState(agentID, status, lastError string)
 	SessionCreated(s *Session, configOptions json.RawMessage, recovered bool)
 	SessionUpdate(s *Session, update acp.SessionUpdate, raw json.RawMessage)
+	TerminalUpdate(s *Session, update TerminalUpdate)
 	SessionConfigUpdated(s *Session, configOptions json.RawMessage)
 	Permission(ctx context.Context, s *Session, req acp.PermissionRequest) (acp.PermissionResponse, error)
+	Elicit(ctx context.Context, s *Session, request json.RawMessage) (any, error)
 	AgentLog(agentID, line string)
 	AgentExit(agentID string, err error)
 	SessionLost(s *Session, err error)
@@ -34,9 +37,13 @@ type NopSink struct{}
 func (NopSink) AgentState(string, string, string)                          {}
 func (NopSink) SessionCreated(*Session, json.RawMessage, bool)             {}
 func (NopSink) SessionUpdate(*Session, acp.SessionUpdate, json.RawMessage) {}
+func (NopSink) TerminalUpdate(*Session, TerminalUpdate)                    {}
 func (NopSink) SessionConfigUpdated(*Session, json.RawMessage)             {}
 func (NopSink) Permission(context.Context, *Session, acp.PermissionRequest) (acp.PermissionResponse, error) {
 	return acp.PermissionResponse{Outcome: acp.PermissionOutcome{Outcome: "cancelled"}}, nil
+}
+func (NopSink) Elicit(context.Context, *Session, json.RawMessage) (any, error) {
+	return map[string]any{"action": "cancel"}, nil
 }
 func (NopSink) AgentLog(string, string)     {}
 func (NopSink) AgentExit(string, error)     {}
@@ -141,6 +148,11 @@ func (m *Manager) InvalidateAgent(agentID string) {
 	m.mu.Lock()
 	r := m.runtimes[agentID]
 	delete(m.runtimes, agentID)
+	for id, session := range m.byConv {
+		if session.AgentID() == agentID {
+			delete(m.byConv, id)
+		}
+	}
 	m.mu.Unlock()
 	if r != nil {
 		r.Stop("agent configuration changed")
@@ -173,7 +185,22 @@ func (m *Manager) EnsureSession(ctx context.Context, req EnsureRequest) (*Sessio
 		}
 	}
 	r := m.ensureRuntime(agent)
-	return r.EnsureSession(ctx, req)
+	sess, err := r.EnsureSession(ctx, req)
+	if err != nil {
+		return sess, err
+	}
+	conv, err := m.store.GetConversation(ctx, req.ConversationID)
+	if err != nil || conv.AgentID != req.AgentID {
+		r.DropSession(context.Background(), sess)
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("agent changed while starting the session")
+	}
+	m.mu.Lock()
+	m.byConv[req.ConversationID] = sess
+	m.mu.Unlock()
+	return sess, nil
 }
 
 // Session returns the live ACP session for a conversation, if one is loaded.
@@ -265,6 +292,52 @@ func (m *Manager) Authenticate(ctx context.Context, agentID, methodID string) er
 	return r.Authenticate(ctx, methodID)
 }
 
+// TerminalAuthCommand reproduces the configured agent launch and applies the
+// terminal authentication method advertised by that agent.
+func (m *Manager) TerminalAuthCommand(ctx context.Context, agentID, methodID string) (*exec.Cmd, error) {
+	ag, err := m.store.GetAgent(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	r := m.ensureRuntime(ag)
+	client, err := r.ensureClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var selected *acp.AuthMethod
+	for _, method := range client.AuthMethods() {
+		if method.ID == methodID && method.Type == "terminal" {
+			m := method
+			selected = &m
+			break
+		}
+	}
+	if selected == nil {
+		return nil, errors.New("terminal authentication method is not available")
+	}
+	args := append(append([]string(nil), ag.Args...), selected.Args...)
+	cmd := exec.CommandContext(ctx, ag.Command, args...)
+	cmd.Dir = ag.Cwd
+	env := map[string]string{}
+	for _, value := range os.Environ() {
+		key, v, ok := strings.Cut(value, "=")
+		if ok {
+			env[key] = v
+		}
+	}
+	for key, value := range envMap(ag.Env) {
+		env[key] = value
+	}
+	for key, value := range selected.Env {
+		env[key] = value
+	}
+	env["TERM"] = "xterm-256color"
+	for key, value := range env {
+		cmd.Env = append(cmd.Env, key+"="+value)
+	}
+	return cmd, nil
+}
+
 func (m *Manager) Logout(ctx context.Context, agentID string) error {
 	r := m.runtimeFor(agentID)
 	if r == nil {
@@ -322,9 +395,12 @@ func (m *Manager) Probe(ctx context.Context, agentID string) (ProbeResult, error
 		Dir:     agent.Cwd,
 		Log:     m.log.With("agent", agent.Slug),
 	}
+	caps := acp.DefaultClientCapabilities()
+	caps.Elicitation = nil
 	client, err := acp.Start(ctx, acp.ClientConfig{
 		ProcessConfig: procCfg,
 		ClientInfo:    acp.Implementation{Name: "nusamation", Title: "NusaMation", Version: config.Version},
+		Capabilities:  &caps,
 	}, probeHandler{})
 	if err != nil {
 		_ = m.store.UpdateAgentStatus(ctx, agentID, "error", err.Error())
@@ -344,7 +420,7 @@ func (m *Manager) Probe(ctx context.Context, agentID string) (ProbeResult, error
 	if client.SupportsClose() {
 		_ = client.CloseSession(context.Background(), sess.SessionID)
 	}
-	caps, _ := json.Marshal(client.Capabilities().AgentCapabilities)
+	agentCaps, _ := json.Marshal(client.Capabilities().AgentCapabilities)
 	auths, _ := json.Marshal(client.AuthMethods())
 	configs := sess.ConfigOptions
 	if len(configs) == 0 {
@@ -353,14 +429,14 @@ func (m *Manager) Probe(ctx context.Context, agentID string) (ProbeResult, error
 	models := store.ExtractModels(configs)
 	res := ProbeResult{
 		AgentInfo:     client.AgentInfo(),
-		Capabilities:  caps,
+		Capabilities:  agentCaps,
 		AuthMethods:   auths,
 		ConfigOptions: configs,
 		Models:        models,
 		Protocol:      client.Capabilities().ProtocolVersion,
 		DurationMS:    time.Since(start).Milliseconds(),
 	}
-	if err := m.store.UpdateAgentProbe(ctx, agentID, "ready", "", models, configs, caps, auths); err != nil {
+	if err := m.store.UpdateAgentProbe(ctx, agentID, "ready", "", models, configs, agentCaps, auths); err != nil {
 		return res, err
 	}
 	m.Sink().AgentState(agentID, "ready", "")

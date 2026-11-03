@@ -48,7 +48,7 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 |---|---|---|
 | `GET` | `/conversations?q=&agentId=&channel=&archived=&limit=&offset=` | list |
 | `POST` | `/conversations` | `{agentId?, title?, cwd?}` |
-| `GET` | `/conversations/{id}` | conversation + latest messages + approvals + configs + active turn + agent |
+| `GET` | `/conversations/{id}` | conversation + latest messages + their turn timing + approvals + configs + active turn + agent |
 | `PATCH` | `/conversations/{id}` | `{title?, pinned?, archived?, routing?, agentId?}` |
 | `DELETE` | `/conversations/{id}` | cancels a live turn, then deletes |
 | `DELETE` | `/conversations` | `{confirm:"DELETE"}` erases all conversations |
@@ -56,7 +56,9 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | `POST` | `/conversations/{id}/messages` | `{text, attachments:[{uploadId}], replyToChannel?, replyChannel?}` → `{message, turn}` |
 | `POST` | `/conversations/{id}/cancel` | cancels running or first queued turn |
 | `POST` | `/conversations/{id}/retry` | re-queues the last user message |
+| `POST` | `/conversations/{id}/prepare` | starts or resumes the ACP session and returns live configuration options |
 | `POST` | `/conversations/{id}/config` | `{configId, value}` or `{model}` |
+| `POST` | `/conversations/{id}/elicitations/{requestId}` | `{action:"accept"|"decline"|"cancel", content?}` answers a pending agent input request |
 | `POST` | `/conversations/{id}/agent` | `{agentId}`; starts a handoff recap |
 | `POST` | `/conversations/{id}/routing` | full `Routing` object |
 | `GET` | `/conversations/{id}/export` | JSON download |
@@ -86,6 +88,7 @@ Approval option kinds: `allow_once`, `allow_always`, `reject_once`, `reject_alwa
 | `DELETE` | `/agents/{id}` | refuses while conversations exist |
 | `POST` | `/agents/{id}/probe` | starts temporary ACP session |
 | `POST` | `/agents/{id}/authenticate` | `{methodId}` |
+| WebSocket | `/agents/{id}/auth-terminal?methodId=` | interactive terminal for the agent's advertised terminal login method |
 | `POST` | `/agents/{id}/logout` | |
 | `GET` | `/agents/{id}/logs` | runtime status, PID, uptime, stderr ring |
 

@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ func (s *Service) SessionCreated(sess *agent.Session, configs json.RawMessage, r
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	conv, err := s.store.GetConversation(ctx, sess.ConversationID())
-	if err != nil {
+	if err != nil || conv.AgentID != sess.AgentID() {
 		return
 	}
 	if sess.ACPID() != "" {
@@ -59,16 +60,27 @@ func (s *Service) SessionUpdate(sess *agent.Session, u acp.SessionUpdate, raw js
 		if text == "" {
 			return
 		}
+		s.rotateStream(a, "thought")
 		s.appendAgentText(a, u.MessageID, text)
 	case "agent_thought_chunk":
 		text := acp.DecodeTextContent(u.Content)
 		if text == "" {
 			return
 		}
+		s.rotateStream(a, "assistant")
 		s.appendAgentThought(a, text)
 	case "user_message_chunk":
 		// The web UI already has the user's message.
 	case "tool_call", "tool_call_update":
+		if u.SessionUpdate == "tool_call" {
+			a.mu.Lock()
+			_, exists := a.tools[u.ToolCallID]
+			a.mu.Unlock()
+			if !exists && u.ToolCallID != "" {
+				s.rotateStream(a, "thought")
+				s.rotateStream(a, "assistant")
+			}
+		}
 		s.applyToolUpdate(a, u)
 	case "plan":
 		s.applyPlan(a, u.Entries)
@@ -118,7 +130,7 @@ func (s *Service) SessionConfigUpdated(sess *agent.Session, configs json.RawMess
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	conv, err := s.store.GetConversation(ctx, sess.ConversationID())
-	if err != nil {
+	if err != nil || conv.AgentID != sess.AgentID() {
 		return
 	}
 	s.persistConfigs(ctx, conv, configs)
@@ -165,20 +177,9 @@ func (s *Service) appendAgentText(a *activeTurn, acpMessageID, delta string) {
 	if acpMessageID != "" {
 		a.mu.Lock()
 		rotate := a.assistantID != "" && a.assistantACPID != "" && a.assistantACPID != acpMessageID
-		oldID := a.assistantID
-		oldText := a.assistant.String()
-		if rotate {
-			a.assistant.Reset()
-			a.assistantID = ""
-			a.assistantACPID = ""
-			a.assistantDirty = false
-		}
 		a.mu.Unlock()
 		if rotate {
-			s.finalizeMessage(oldID, oldText, "complete")
-			a.mu.Lock()
-			a.assistantDone = false
-			a.mu.Unlock()
+			s.rotateStream(a, "assistant")
 		}
 	}
 	s.ensureStream(a, "assistant", acpMessageID)
@@ -193,6 +194,30 @@ func (s *Service) appendAgentText(a *activeTurn, acpMessageID, delta string) {
 		"conversationId": a.conversationID, "messageId": msgID, "kind": "text", "delta": delta,
 	})
 	_ = first
+}
+
+// Start a new message whenever the event type changes so the stored sequence
+// reflects the order in which the agent spoke and called tools.
+func (s *Service) rotateStream(a *activeTurn, kind string) {
+	a.streamMu.Lock()
+	defer a.streamMu.Unlock()
+	a.mu.Lock()
+	var id, text string
+	if kind == "thought" {
+		id, text = a.thoughtID, a.thought.String()
+		a.thoughtID = ""
+		a.thought.Reset()
+		a.thoughtDirty = false
+	} else {
+		id, text = a.assistantID, a.assistant.String()
+		a.assistantID, a.assistantACPID = "", ""
+		a.assistant.Reset()
+		a.assistantDirty = false
+	}
+	a.mu.Unlock()
+	if id != "" {
+		s.finalizeMessage(id, text, "complete")
+	}
 }
 
 func (s *Service) appendAgentThought(a *activeTurn, delta string) {
@@ -274,10 +299,12 @@ func (s *Service) applyToolUpdate(a *activeTurn, u acp.SessionUpdate) {
 	if u.ToolCallID == "" {
 		return
 	}
+	a.toolMu.Lock()
+	defer a.toolMu.Unlock()
 	a.mu.Lock()
 	t := a.tools[u.ToolCallID]
 	if t == nil {
-		t = &toolState{Status: "pending"}
+		t = &toolState{Status: "pending", ToolCallID: u.ToolCallID}
 		a.tools[u.ToolCallID] = t
 		a.toolCount++
 	}
@@ -294,19 +321,38 @@ func (s *Service) applyToolUpdate(a *activeTurn, u acp.SessionUpdate) {
 		t.Status = u.Status
 	}
 	if len(u.Content) > 0 {
-		t.Content = capJSON(u.Content, 512<<10)
+		t.Content = u.Content
+		var blocks []struct {
+			Type       string `json:"type"`
+			TerminalID string `json:"terminalId"`
+		}
+		if json.Unmarshal(u.Content, &blocks) == nil {
+			for _, block := range blocks {
+				if block.Type != "terminal" || block.TerminalID == "" {
+					continue
+				}
+				if t.Terminals == nil {
+					t.Terminals = make(map[string]agent.TerminalUpdate)
+				}
+				if state, ok := a.terminals[block.TerminalID]; ok {
+					t.Terminals[block.TerminalID] = state
+				} else if _, ok := t.Terminals[block.TerminalID]; !ok {
+					t.Terminals[block.TerminalID] = agent.TerminalUpdate{ID: block.TerminalID}
+				}
+			}
+		}
 	}
 	if len(u.Locations) > 0 {
-		t.Locations = capJSON(u.Locations, 128<<10)
+		t.Locations = u.Locations
 	}
-	if len(u.RawInput) > 0 {
-		t.RawInput = capJSON(u.RawInput, 128<<10)
+	if len(u.RawInput) > 0 && string(u.RawInput) != "null" {
+		t.RawInput = u.RawInput
 	}
-	if len(u.RawOutput) > 0 {
-		t.RawOutput = capJSON(u.RawOutput, 256<<10)
+	if len(u.RawOutput) > 0 && string(u.RawOutput) != "null" {
+		t.RawOutput = u.RawOutput
 	}
 	if len(u.Meta) > 0 {
-		t.Meta = capJSON(u.Meta, 64<<10)
+		t.Meta = u.Meta
 	}
 	msgID := t.MessageID
 	content := t.json()
@@ -337,6 +383,62 @@ func (s *Service) applyToolUpdate(a *activeTurn, u acp.SessionUpdate) {
 	_ = s.store.UpdateMessage(ctx, msgID, &title, content, &status, nil)
 	if msg, err := s.store.GetMessage(ctx, msgID); err == nil {
 		s.emit("tool.updated", a.conversationID, msg)
+	}
+}
+
+// A terminal may emit before its tool-call reference or finish after its turn.
+// Keep its full client-side stream separate from ACP's bounded output response.
+func (s *Service) TerminalUpdate(sess *agent.Session, update agent.TerminalUpdate) {
+	s.mu.Lock()
+	a := s.terminalTurns[update.ID]
+	if a == nil {
+		a = s.active[sess.ConversationID()]
+		if a != nil {
+			s.terminalTurns[update.ID] = a
+		}
+	}
+	if update.ExitStatus != nil {
+		delete(s.terminalTurns, update.ID)
+	}
+	s.mu.Unlock()
+	if a == nil {
+		return
+	}
+	s.applyTerminalUpdate(a, update)
+}
+
+func (s *Service) applyTerminalUpdate(a *activeTurn, update agent.TerminalUpdate) {
+	a.toolMu.Lock()
+	defer a.toolMu.Unlock()
+	a.mu.Lock()
+	if a.terminals == nil {
+		a.terminals = make(map[string]agent.TerminalUpdate)
+	}
+	if previous, ok := a.terminals[update.ID]; ok && previous.Version > update.Version {
+		a.mu.Unlock()
+		return
+	}
+	a.terminals[update.ID] = update
+	var changed []*toolState
+	for _, t := range a.tools {
+		if _, ok := t.Terminals[update.ID]; ok {
+			t.Terminals[update.ID] = update
+			if t.MessageID != "" {
+				changed = append(changed, t)
+			}
+		}
+	}
+	a.mu.Unlock()
+	for _, t := range changed {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		content := t.json()
+		err := s.store.UpdateMessage(ctx, t.MessageID, nil, content, nil, nil)
+		if err == nil {
+			if msg, err := s.store.GetMessage(ctx, t.MessageID); err == nil {
+				s.emit("tool.updated", a.conversationID, msg)
+			}
+		}
+		cancel()
 	}
 }
 
@@ -467,6 +569,7 @@ func (s *Service) finalizeMessage(id, text, status string) {
 }
 
 func (s *Service) flushStreams(a *activeTurn, final bool, status string) {
+	a.streamMu.Lock()
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 
@@ -505,13 +608,14 @@ func (s *Service) flushStreams(a *activeTurn, final bool, status string) {
 	if final && thoughtID == "" {
 		// Nothing to persist.
 	}
+	a.streamMu.Unlock()
 	s.updateDelivery(a, final)
 }
 
 func (s *Service) updateDelivery(a *activeTurn, final bool) {
 	a.mu.Lock()
 	d := a.delivery
-	text := a.assistant.String()
+	text := a.assistantAll.String()
 	last := a.deliveryAt
 	a.mu.Unlock()
 	if d == nil {
@@ -664,7 +768,7 @@ func (s *Service) finishTurn(a *activeTurn, status, stopReason string, runErr er
 	s.cancelPendingApprovalsForTurn(a.turn.ID, "Turn finished.")
 
 	a.mu.Lock()
-	hasOutput := a.assistant.Len() > 0 || a.toolCount > 0
+	hasOutput := a.assistantAll.Len() > 0 || a.toolCount > 0
 	a.finalStatus = status
 	a.finalError = errMsg
 	a.mu.Unlock()
@@ -692,8 +796,13 @@ func (s *Service) finishTurn(a *activeTurn, status, stopReason string, runErr er
 
 	turn, _ := s.store.GetTurn(ctx, a.turn.ID)
 	conv, _ := s.store.GetConversation(ctx, a.conversationID)
+	var authMethods []acp.AuthMethod
+	var authErr *agent.AuthRequiredError
+	if errors.As(runErr, &authErr) {
+		authMethods = authErr.Methods
+	}
 	s.emit("turn.completed", a.conversationID, map[string]any{
-		"turn": turn, "status": status, "stopReason": stopReason, "error": errMsg,
+		"turn": turn, "status": status, "stopReason": stopReason, "error": errMsg, "authMethods": authMethods,
 	})
 	if conv.ID != "" {
 		s.emit("conversation.updated", a.conversationID, conv)

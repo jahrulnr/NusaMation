@@ -364,9 +364,10 @@ type AuthClientCapabilities struct {
 
 func DefaultClientCapabilities() ClientCapabilities {
 	caps := ClientCapabilities{
-		FS:       FileSystemCapabilities{ReadTextFile: true, WriteTextFile: true},
-		Terminal: true,
-		Auth:     AuthClientCapabilities{Terminal: true},
+		FS:          FileSystemCapabilities{ReadTextFile: true, WriteTextFile: true},
+		Terminal:    true,
+		Auth:        AuthClientCapabilities{Terminal: true},
+		Elicitation: map[string]any{"form": map[string]any{}, "url": map[string]any{}},
 	}
 	caps.Session.ConfigOptions = &struct {
 		Boolean *struct{} `json:"boolean,omitempty"`

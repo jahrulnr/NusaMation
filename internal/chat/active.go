@@ -12,23 +12,23 @@ import (
 	"github.com/jahrulnr/nusamation/internal/store"
 )
 
-const maxStreamBytes = 4 << 20
-
 type toolState struct {
-	MessageID string
-	Title     string
-	Name      string
-	Kind      string
-	Status    string
-	Content   json.RawMessage
-	Locations json.RawMessage
-	RawInput  json.RawMessage
-	RawOutput json.RawMessage
-	Meta      json.RawMessage
+	MessageID  string
+	ToolCallID string
+	Title      string
+	Name       string
+	Kind       string
+	Status     string
+	Content    json.RawMessage
+	Locations  json.RawMessage
+	RawInput   json.RawMessage
+	RawOutput  json.RawMessage
+	Meta       json.RawMessage
+	Terminals  map[string]agent.TerminalUpdate
 }
 
 func (t *toolState) json() json.RawMessage {
-	m := map[string]any{"toolCallId": ""}
+	m := map[string]any{"toolCallId": t.ToolCallID}
 	if t.Title != "" {
 		m["title"] = t.Title
 	}
@@ -56,6 +56,9 @@ func (t *toolState) json() json.RawMessage {
 	if len(t.Meta) > 0 {
 		m["_meta"] = t.Meta
 	}
+	if len(t.Terminals) > 0 {
+		m["terminals"] = t.Terminals
+	}
 	b, _ := json.Marshal(m)
 	return b
 }
@@ -71,7 +74,9 @@ func (t *toolState) display() string {
 }
 
 type activeTurn struct {
-	mu sync.Mutex
+	mu       sync.Mutex
+	streamMu sync.Mutex
+	toolMu   sync.Mutex
 
 	conversationID string
 	turn           store.Turn
@@ -87,6 +92,7 @@ type activeTurn struct {
 	assistantID    string
 	assistantACPID string
 	assistant      strings.Builder
+	assistantAll   strings.Builder
 	assistantDirty bool
 	assistantDone  bool
 
@@ -96,6 +102,7 @@ type activeTurn struct {
 	thoughtDone  bool
 
 	tools     map[string]*toolState
+	terminals map[string]agent.TerminalUpdate
 	toolCount int
 
 	delivery     channels.Delivery
@@ -117,18 +124,12 @@ type activeTurn struct {
 func (a *activeTurn) appendAssistant(delta string) (text string, first bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.assistant.Len() >= maxStreamBytes {
-		return "", false
-	}
 	if delta == "" {
 		return "", false
 	}
 	first = a.assistant.Len() == 0
-	remaining := maxStreamBytes - a.assistant.Len()
-	if len(delta) > remaining {
-		delta = delta[:remaining]
-	}
 	a.assistant.WriteString(delta)
+	a.assistantAll.WriteString(delta)
 	a.assistantDirty = true
 	return delta, first
 }
@@ -136,17 +137,10 @@ func (a *activeTurn) appendAssistant(delta string) (text string, first bool) {
 func (a *activeTurn) appendThought(delta string) (text string, first bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.thought.Len() >= maxStreamBytes/2 {
-		return "", false
-	}
 	if delta == "" {
 		return "", false
 	}
 	first = a.thought.Len() == 0
-	remaining := maxStreamBytes/2 - a.thought.Len()
-	if len(delta) > remaining {
-		delta = delta[:remaining]
-	}
 	a.thought.WriteString(delta)
 	a.thoughtDirty = true
 	return delta, first

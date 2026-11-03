@@ -10,6 +10,10 @@
   const now = () => Date.now();
   const uid = (p = "x") => p + "_" + Math.random().toString(36).slice(2, 10);
   const isMobile = () => window.matchMedia("(max-width: 800px)").matches;
+  function readActivityState() {
+    try { return JSON.parse(sessionStorage.getItem("nusamation:activity-state") || "{}"); } catch { return {}; }
+  }
+  const activityState = readActivityState();
 
   const ICONS = {};
   function icon(name, cls = "") {
@@ -36,15 +40,19 @@
     conversations: [],
     approvals: [],
     approvalsById: new Map(),
+    elicitations: [],
     current: null,
     currentAgent: null,
     messages: [],
+    turns: {},
     configs: [],
     active: null,
     commands: [],
     unread: new Map(),
-    openThoughts: new Set(),
-    openTools: new Set(),
+    openThoughts: new Set(activityState.thoughts || []),
+    openTools: new Set(activityState.tools || []),
+    activityExpanded: new Map(activityState.groups || []),
+    unwrappedTools: new Set(activityState.unwrapped || []),
     resolving: new Set(),
     attachments: [],
     replyToChannel: false,
@@ -70,6 +78,10 @@
     scrollPinned: true,
     booted: false,
     loadingConversation: false,
+    preparing: "",
+    prepareController: null,
+    slowTimer: null,
+    authTerminal: null,
     lastNotice: "",
     channelsRefreshTimer: null,
   };
@@ -139,10 +151,11 @@
 
   /* ---------------- API ---------------- */
   class ApiError extends Error {
-    constructor(message, status, code) {
+    constructor(message, status, code, data = {}) {
       super(message);
       this.status = status;
       this.code = code;
+      this.data = data;
     }
   }
 
@@ -171,7 +184,7 @@
       handleLoggedOut();
       throw new ApiError(data.error || "Your session expired.", 401, data.code);
     }
-    if (!res.ok) throw new ApiError(data.error || `Request failed (${res.status})`, res.status, data.code);
+    if (!res.ok) throw new ApiError(data.error || `Request failed (${res.status})`, res.status, data.code, data);
     return data;
   }
 
@@ -225,13 +238,15 @@
       if (pre.dataset.enhanced) return;
       pre.dataset.enhanced = "1";
       pre.style.position = "relative";
-      const btn = document.createElement("button");
-      btn.className = "code-copy";
-      btn.type = "button";
-      btn.dataset.action = "copy-code";
-      btn.title = "Copy code";
-      btn.innerHTML = icon("copy", "sm");
-      pre.appendChild(btn);
+      if (!pre.classList.contains("tool-pre")) {
+        const btn = document.createElement("button");
+        btn.className = "code-copy";
+        btn.type = "button";
+        btn.dataset.action = "copy-code";
+        btn.title = "Copy code";
+        btn.innerHTML = icon("copy", "sm");
+        pre.appendChild(btn);
+      }
       if (window.hljs) {
         $$("code", pre).forEach((code) => {
           if (code.dataset.highlighted) return;
@@ -433,10 +448,12 @@
       const data = await api(`/conversations/${encodeURIComponent(id)}`);
       S.current = data.conversation;
       S.messages = (data.messages || []).map(normalizeMessage);
+      S.turns = data.turns || {};
       S.configs = data.configs || parseConfigs(data.conversation.configOptions);
       S.active = data.active && data.active.running ? data.active : null;
       S.currentAgent = data.agent || agentById(data.conversation.agentId);
       (data.approvals || []).forEach((a) => S.approvalsById.set(a.id, a));
+      S.elicitations = data.elicitations || [];
       S.unread.delete(id);
       S.loadingConversation = false;
       localStorage.setItem("nusamation:lastConversation", id);
@@ -446,7 +463,9 @@
       renderTopbar();
       renderChat();
       renderComposer();
+      showPendingRequest();
       closeMobileSidebar();
+      if (!S.active) prepareComposer();
     } catch (e) {
       S.loadingConversation = false;
       if (e.status === 404) {
@@ -669,7 +688,7 @@
   function modelLabel(c, agent) {
     if (c && c.model) {
       const opt = S.configs.find((o) => (o.category || "").toLowerCase() === "model");
-      const choice = opt && (opt.options || []).find((o) => o.value === c.model);
+      const choice = opt && configChoices(opt).find((o) => o.value === c.model);
       return choice?.name || c.model;
     }
     if (agent && agent.defaultModel) return agent.defaultModel;
@@ -689,6 +708,8 @@
     if (!chat) return;
     const sc = $("#chat-scroll");
     const wasPinned = S.scrollPinned || S.messages.length === 0;
+    const focused = document.activeElement?.closest?.("[data-action][data-id]");
+    const focusedAction = focused && chat.contains(focused) ? [focused.dataset.action, focused.dataset.id] : null;
     if (skeleton || (S.loadingConversation && !S.messages.length)) {
       chat.innerHTML = `<div class="loading-row"><span class="spinner"></span> Loading conversation…</div>`;
       return;
@@ -707,14 +728,24 @@
     const plan = planEntries(S.current.plan);
     if (plan.length) html.push(planCard(plan));
     let lastDay = "";
-    S.messages.forEach((m) => {
+    const savedScroll = new Map($$(".tool-pre", chat).map((el) => [el.dataset.scrollKey, [el.scrollTop, el.scrollLeft]]));
+    for (let i = 0; i < S.messages.length;) {
+      const m = S.messages[i];
       const day = dayLabel(m.createdAt);
       if (day && day !== lastDay) {
         html.push(`<div class="chat-date">${esc(day)}</div>`);
         lastDay = day;
       }
-      html.push(messageHTML(m));
-    });
+      if (m.turnId && (m.kind === "thought" || m.kind === "tool")) {
+        const group = [];
+        while (i < S.messages.length && S.messages[i].turnId === m.turnId && (S.messages[i].kind === "thought" || S.messages[i].kind === "tool")) group.push(S.messages[i++]);
+        if (group.filter((item) => item.kind === "tool").length > 1) html.push(activityHTML(group));
+        else group.forEach((item) => html.push(messageHTML(item)));
+      } else {
+        html.push(messageHTML(m));
+        i++;
+      }
+    }
     const pending = currentApprovals();
     if (pending.length) {
       pending.forEach((a) => html.push(approvalCard(a)));
@@ -722,6 +753,14 @@
     if (S.active && S.active.running && !pending.length) html.push(typingHTML());
     chat.innerHTML = html.join("");
     enhanceMarkdown(chat);
+    $$(".tool-pre", chat).forEach((el) => {
+      const pos = savedScroll.get(el.dataset.scrollKey);
+      if (pos) [el.scrollTop, el.scrollLeft] = pos;
+    });
+    if (focusedAction) {
+      const next = $$("[data-action][data-id]", chat).find((el) => el.dataset.action === focusedAction[0] && el.dataset.id === focusedAction[1]);
+      if (next) next.focus({ preventScroll: true });
+    }
     if (wasPinned && sc) {
       S.lastAutoScroll = Date.now();
       sc.scrollTop = sc.scrollHeight;
@@ -787,7 +826,7 @@
       <div class="msg-avatar" style="background:rgba(180,155,255,.1);border-color:rgba(180,155,255,.22);color:var(--purple)">${icon("brain")}</div>
       <div class="msg-body">
         <div class="thought ${open ? "open" : ""}" data-thought-id="${esc(m.id)}">
-          <button class="thought-head" data-action="toggle-thought" data-id="${esc(m.id)}">
+          <button class="thought-head" data-action="toggle-thought" data-id="${esc(m.id)}" aria-expanded="${open}">
             ${icon("brain")}<span class="label">${streaming ? "Thinking" : "Thought process"}</span>
             <span class="preview">${esc(preview || (streaming ? "…" : ""))}</span>
             ${icon("chevron-right", "chev")}
@@ -798,28 +837,50 @@
     </div>`;
   }
 
+  function activityHTML(messages) {
+    const id = messages[0].turnId + ":" + messages[0].id;
+    const tools = messages.filter((m) => m.kind === "tool");
+    const running = messages.some((m) => m.status === "streaming" || m.status === "pending");
+    const failed = tools.some((m) => ["failed", "error"].includes(String(parseJSON(m.content, {})?.status || m.status)));
+    const open = S.activityExpanded.has(id) ? S.activityExpanded.get(id) : running;
+    const turn = S.turns[messages[0].turnId];
+    const allTurnTools = S.messages.filter((m) => m.turnId === messages[0].turnId && m.kind === "tool").length;
+    const seconds = tools.length === allTurnTools && turn?.startedAt && turn?.endedAt && turn.endedAt >= turn.startedAt ? Math.round((turn.endedAt - turn.startedAt) / 1000) : null;
+    return `<div class="activity ${open ? "open" : ""}">
+      <button class="activity-head" data-action="toggle-activity" data-id="${esc(id)}" aria-expanded="${open}">
+        ${icon("chevron-right", "chev")}<span>${running ? "Working" : seconds !== null ? `Worked for ${seconds}s` : "Activity"}</span>
+        <span class="activity-count">${tools.length} tool calls${failed ? " · failed" : ""}</span>
+      </button><div class="activity-items">${messages.map(messageHTML).join("")}</div>
+    </div>`;
+  }
+
   function toolHTML(m) {
     const t = parseJSON(m.content, {}) || {};
+    if (!t.toolCallId) t.toolCallId = m.toolCallId || m.id;
     const open = S.openTools.has(m.id);
     const kind = String(t.kind || "").toLowerCase();
     const status = String(t.status || m.status || "pending");
     const title = t.title || t.name || m.text || "Tool call";
     const iconName = toolIcon(kind);
     const iconClass = `kind-${kind || "other"}`;
-    const sections = toolSections(t);
+    const sections = toolSections(t, m.id);
+    const preview = toolPreview(t);
+    const exits = Object.values(t.terminals || {}).map((term) => term.exitStatus).filter(Boolean);
+    const exitText = exits.map((exit) => exit.exitCode !== undefined && exit.exitCode !== null ? `Exit ${exit.exitCode}` : exit.signal ? `Signal ${exit.signal}` : "").filter(Boolean).join(", ");
     return `<div class="msg assistant" data-msg-id="${esc(m.id)}">
       <div class="msg-avatar" style="background:rgba(131,184,255,.08);border-color:rgba(131,184,255,.2);color:var(--blue)">${icon("zap")}</div>
       <div class="msg-body">
         <div class="tool-card ${open ? "open" : ""} ${status === "failed" ? "failed" : ""}" data-tool-id="${esc(t.toolCallId || m.toolCallId || m.id)}">
-          <button class="tool-head" data-action="toggle-tool" data-id="${esc(m.id)}">
+          <button class="tool-head" data-action="toggle-tool" data-id="${esc(m.id)}" aria-expanded="${open}">
             <span class="tool-icon ${iconClass}">${icon(iconName)}</span>
             <span class="tool-main">
               <span class="tool-title-row"><span class="tool-title">${esc(title)}</span></span>
-              <span class="tool-sub">${esc(t.name || kind || "tool")}${t.locations && t.locations.length ? ` · ${t.locations.length} location${t.locations.length === 1 ? "" : "s"}` : ""}</span>
+              <span class="tool-sub">${esc(t.name || kind || "tool")}${t.locations && t.locations.length ? ` · ${t.locations.length} location${t.locations.length === 1 ? "" : "s"}` : ""}${exitText ? ` · ${esc(exitText)}` : ""}</span>
             </span>
             <span class="tool-status ${esc(status)}"><span class="dot"></span>${esc(statusLabel(status))}</span>
             ${icon("chevron-right", "chev")}
           </button>
+          ${preview ? `<div class="tool-preview">${esc(preview)}</div>` : ""}
           <div class="tool-body">${sections || `<div class="tool-text">No tool details were provided.</div>`}</div>
         </div>
       </div>
@@ -846,33 +907,47 @@
     return s || "Working";
   }
 
-  function toolSections(t) {
+  function toolSections(t, messageId) {
     const out = [];
     const contentTexts = [];
     const diffs = [];
     const content = Array.isArray(t.content) ? t.content : t.content ? [t.content] : [];
     content.forEach((item) => {
-      if (!item || typeof item !== "object") return;
+      if (!item || typeof item !== "object") { contentTexts.push(pretty(item)); return; }
       if (item.type === "content" && item.content) {
         if (item.content.type === "text" && item.content.text) contentTexts.push(item.content.text);
         else if (item.content.type === "resource" && item.content.resource?.text) contentTexts.push(item.content.resource.text);
+        else contentTexts.push(pretty(item));
       } else if (item.type === "diff") {
         diffs.push(item);
+      } else if (item.type === "terminal" && t.terminals?.[item.terminalId]) {
+        // Rendered from the persistent terminal snapshot below.
       } else if (item.type === "text" && item.text) {
         contentTexts.push(item.text);
-      }
+      } else contentTexts.push(pretty(item));
     });
-    if (t.rawInput && Object.keys(t.rawInput).length) {
-      out.push(`<div class="tool-section"><div class="tool-label">Input</div><pre class="tool-pre">${esc(pretty(t.rawInput))}</pre></div>`);
+    const section = (label, value, language = "") => {
+      const key = messageId + ":" + label;
+      const wrap = !S.unwrappedTools.has(key);
+      return `<div class="tool-section"><div class="tool-section-head"><div class="tool-label">${esc(label)}</div><div class="tool-actions">
+        <button type="button" data-action="tool-wrap" title="Toggle line wrapping">${wrap ? "No wrap" : "Wrap"}</button>
+        <button type="button" data-action="tool-start" title="Go to the start of this output">Start</button>
+        <button type="button" data-action="tool-end" title="Go to the end of this output">End</button>
+        <button type="button" data-action="copy-tool" title="Copy the complete output">Copy</button>
+      </div><button type="button" class="tool-menu-button" data-action="tool-menu" aria-label="${esc(label)} options" title="${esc(label)} options">+</button></div><pre class="tool-pre ${wrap ? "" : "no-wrap"}" data-scroll-key="${esc(key)}"><code class="${language ? `language-${language}` : "nohighlight"}">${esc(value)}</code></pre></div>`;
+    };
+    if (t.rawInput !== undefined && t.rawInput !== null) {
+      out.push(section("Input", typeof t.rawInput === "string" ? t.rawInput : pretty(t.rawInput), typeof t.rawInput === "object" ? "json" : ""));
     }
     if (contentTexts.length) {
-      out.push(`<div class="tool-section"><div class="tool-label">Output</div><pre class="tool-pre">${esc(contentTexts.join("\n"))}</pre></div>`);
+      out.push(section("Output", contentTexts.join("\n")));
     }
     if (diffs.length) {
-      out.push(`<div class="tool-section"><div class="tool-label">Changes</div>${diffs.map((d) => `<pre class="tool-pre">${esc(String(d.path || "") + "\n" + diffText(d))}</pre>`).join("")}</div>`);
+      diffs.forEach((d, i) => out.push(section(`Changes ${i + 1}`, String(d.path || "") + "\n" + diffText(d), "diff")));
     }
-    if (t.rawOutput && Object.keys(t.rawOutput).length) {
-      out.push(`<div class="tool-section"><div class="tool-label">Result</div><pre class="tool-pre">${esc(pretty(t.rawOutput))}</pre></div>`);
+    Object.values(t.terminals || {}).forEach((term) => out.push(section(`Terminal ${term.id}`, term.output || "")));
+    if (t.rawOutput !== undefined && t.rawOutput !== null) {
+      out.push(section("Result", typeof t.rawOutput === "string" ? t.rawOutput : pretty(t.rawOutput), typeof t.rawOutput === "object" ? "json" : ""));
     }
     if (Array.isArray(t.locations) && t.locations.length) {
       out.push(`<div class="tool-section"><div class="tool-label">Locations</div><div class="tool-locs">${t.locations.map((l) => `<span class="tool-loc">${esc((l.path || "") + (l.line ? ":" + l.line : ""))}</span>`).join("")}</div></div>`);
@@ -880,10 +955,26 @@
     return out.join("");
   }
 
+  function toolPreview(t) {
+    const content = Array.isArray(t.content) ? t.content : [];
+    const texts = content.map((item) => item?.type === "content" ? item.content?.text : item?.type === "text" ? item.text : "").filter(Boolean);
+    const terminalOutput = Object.values(t.terminals || {}).map((term) => term.output || "").filter(Boolean).join("\n");
+    const text = terminalOutput || texts.join("\n") || (typeof t.rawOutput === "string" ? t.rawOutput : "");
+    return text ? truncate(text.trim(), 280) : "";
+  }
+
+  function saveActivityState() {
+    try {
+      sessionStorage.setItem("nusamation:activity-state", JSON.stringify({
+        thoughts: [...S.openThoughts], tools: [...S.openTools], groups: [...S.activityExpanded], unwrapped: [...S.unwrappedTools],
+      }));
+    } catch {}
+  }
+
   function diffText(d) {
     const old = String(d.oldText || "").split("\n").map((l) => "- " + l);
     const neu = String(d.newText || "").split("\n").map((l) => "+ " + l);
-    return old.concat(neu).slice(0, 160).join("\n");
+    return old.concat(neu).join("\n");
   }
 
   function planEntries(plan) {
@@ -1005,14 +1096,19 @@
     const conv = S.current;
     const links = (conv && conv.links || []).filter((l) => l.channel !== "web");
     const active = S.active && ["running", "waiting_approval", "cancelling"].includes(S.active.status);
+    const mobileSummary = mobileConfigSummary();
     wrap.innerHTML = `<div class="composer-inner">
       <div class="composer" id="composer">
         <div class="composer-attachments" id="pending-attachments"></div>
         <textarea id="prompt" rows="1" placeholder="Message ${esc(agentName(agent))}…" aria-label="Message">${esc(S.draft)}</textarea>
         <div class="composer-bar">
           <button class="icon-btn sm" data-action="attach" title="Attach files">${icon("paperclip", "sm")}</button>
+          <button class="composer-choice agent-choice" data-action="agent-menu" title="Choose agent">${agentOrb(agent)}<span>${esc(agentName(agent))}</span>${icon("chevron-down", "sm")}</button>
+          <div class="composer-configs">${composerConfigs()}</div>
+          ${mobileSummary ? `<span class="composer-mobile-summary" title="${esc(mobileSummary)}">${esc(mobileSummary)}</span>` : ""}
+          <button class="composer-mobile-settings" data-action="${S.configs.length ? "composer-mobile-settings" : "prepare-composer"}" aria-label="Agent options" title="Agent options">${S.preparing === conv?.id ? `<span class="spinner"></span>` : "+"}</button>
+          ${S.elicitations.some((e) => e.conversationId === conv?.id) ? `<button class="composer-choice" data-action="show-agent-request">Respond</button>` : ""}
           ${links.length ? `<button class="reply-toggle ${S.replyToChannel ? "on" : ""}" data-action="reply-toggle" title="Also send the final answer to this chat">${icon("message", "sm")} ${S.replyToChannel ? "Reply to " + esc(links[0].channel) : "Reply to chat"}</button>` : ""}
-          <span class="composer-hint"><span class="key-hint">↵</span> send <span class="key-hint">⇧↵</span> newline</span>
           <span class="grow"></span>
           ${active ? `<button class="stop-btn" data-action="stop">${icon("stop", "sm")} Stop</button>` : ""}
           <button class="send-btn" id="send-btn" data-action="send" title="Send">${icon("send")}</button>
@@ -1048,11 +1144,43 @@
     updateComposerState();
   }
 
+  function composerConfigs() {
+    if (!S.current) return `<button class="composer-choice" data-action="prepare-composer">Connect agent</button>`;
+    if (S.preparing === S.current.id) return `<span class="composer-loading"><span class="spinner"></span> Connecting…</span>`;
+    const opts = S.configs.filter((o) => o && o.id && (o.type === "select" || o.type === "boolean"));
+    if (!opts.length) return `<button class="composer-choice" data-action="prepare-composer">Load options</button>`;
+    const modes = opts.filter((o) => String(o.category || "").toLowerCase() === "mode");
+    const rest = opts.filter((o) => !modes.includes(o));
+    const direct = modes.map((o) => `<button class="composer-choice" data-action="composer-config" data-id="${esc(o.id)}" title="${esc(o.name || o.id)}">${esc(configLabel(o))}${icon("chevron-down", "sm")}</button>`).join("");
+    if (!rest.length) return direct;
+    const model = rest.find((o) => String(o.category || "").toLowerCase() === "model");
+    const effort = rest.find((o) => ["thought_level", "reasoning_effort"].includes(String(o.category || "").toLowerCase()));
+    const label = model ? configLabel(model) + (effort ? " · " + configLabel(effort) : "") : "Options";
+    return direct + `<button class="composer-choice composer-settings" data-action="composer-settings" title="Model and agent options">${esc(label)}${icon("chevron-down", "sm")}</button>`;
+  }
+
+  function mobileConfigSummary() {
+    const model = S.configs.find((o) => String(o?.category || "").toLowerCase() === "model");
+    const effort = S.configs.find((o) => ["thought_level", "reasoning_effort"].includes(String(o?.category || "").toLowerCase()));
+    return model ? [configLabel(model), effort && configLabel(effort)].filter(Boolean).join(" · ") : "";
+  }
+
+  function configLabel(o) {
+    const choice = configChoices(o).find((v) => String(v.value) === String(o.currentValue));
+    return o.type === "boolean" ? (o.currentValue === true || o.currentValue === "true" ? "On" : "Off") : (choice?.name || o.currentValue || o.name || o.id);
+  }
+
+  function configChoices(o) {
+    return (o.options || []).flatMap((v) => Array.isArray(v.options) ? v.options.map((c) => ({ ...c, groupName: v.name || v.group })) : [v]);
+  }
+
   function autoGrow() {
     const ta = $("#prompt");
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = Math.min(220, ta.scrollHeight) + "px";
+    const viewportHeight = Math.min(window.innerHeight, window.visualViewport?.height || window.innerHeight);
+    const limit = isMobile() ? Math.min(220, Math.max(60, Math.floor(viewportHeight * 0.28))) : 220;
+    ta.style.height = Math.min(limit, ta.scrollHeight) + "px";
     updateComposerState();
   }
 
@@ -1064,7 +1192,7 @@
     btn.disabled = !has || S.sending;
     btn.innerHTML = S.sending ? `<span class="spinner"></span>` : icon("send");
     const agent = currentAgent();
-    ta.placeholder = `Message ${agentName(agent)}…`;
+    ta.placeholder = isMobile() ? "Message…" : `Message ${agentName(agent)}…`;
   }
 
   function renderPendingAttachments() {
@@ -1368,7 +1496,7 @@
       case "agent.session": {
         if (S.current && convId === S.current.id) {
           if (data.configOptions) { S.configs = parseConfigs(data.configOptions); S.current.configOptions = data.configOptions; }
-          renderTopbar();
+          renderTopbar(); renderComposer();
         }
         break;
       }
@@ -1376,7 +1504,7 @@
         if (!S.current || convId !== S.current.id) break;
         if (data.configOptions) { S.configs = parseConfigs(data.configOptions); S.current.configOptions = data.configOptions; }
         if (data.model) S.current.model = data.model;
-        renderTopbar();
+        renderTopbar(); renderComposer();
         if (S.modal?.type === "settings" && S.settingsTab === "channels") { /* noop */ }
         break;
       }
@@ -1395,7 +1523,12 @@
       case "turn.started": {
         const turn = data.turn || data;
         if (S.current && convId === S.current.id) {
-          S.active = { ...turn, running: true, status: "running" };
+          if (turn.id) S.turns[turn.id] = turn;
+          S.active = { ...turn, turnId: turn.id || turn.turnId, running: true, status: "running" };
+          clearTimeout(S.slowTimer);
+          S.slowTimer = setTimeout(() => {
+            if (S.current?.id === convId && S.active?.turnId === turn.id && !S.modal && !S.messages.some((m) => m.turnId === turn.id && m.role === "assistant")) showSlowAgent(false);
+          }, 45000);
           renderTopbar(); renderComposer(); scheduleChatRender();
         }
         break;
@@ -1412,9 +1545,12 @@
       case "turn.completed": {
         const turn = data.turn || {};
         if (S.current && convId === S.current.id) {
+          if (turn.id) S.turns[turn.id] = turn;
           const st = data.status || turn.status;
           S.active = null;
-          if (st === "error") toast("The agent hit an error", data.error || "Check the conversation for details.", "error", 7000);
+          clearTimeout(S.slowTimer);
+          if (S.modal?.type === "agent-slow" && S.modal.conversationId === convId && !S.modal.connecting) closeModal();
+          if (st === "error") showAgentBlocker(new ApiError(data.error || "Check the conversation for details.", 0, "agent_error", { authMethods: data.authMethods || [] }));
           else if (st === "cancelled") toast("Turn cancelled", "The agent stopped.", "info");
           renderTopbar(); renderComposer(); scheduleChatRender();
         }
@@ -1432,6 +1568,7 @@
         if (!S.current || convId !== S.current.id) toast("Approval needed", a.title || "An agent needs your decision.", "info", 7000);
         else toast("Approval needed", a.title || "An agent needs your decision.", "info", 5000);
         if (S.modal?.type === "approvals") renderApprovalsModal();
+        if (S.current && convId === S.current.id) showPendingRequest();
         break;
       }
       case "approval.auto": {
@@ -1448,6 +1585,27 @@
         if (S.current && convId === S.current.id) scheduleChatRender();
         renderTopbar(); renderSidebar();
         if (S.modal?.type === "approvals") renderApprovalsModal();
+        if (S.modal?.type === "approval" && S.modal.id === a.id && a.status !== "pending") {
+          closeModal();
+          showPendingRequest();
+        }
+        break;
+      }
+      case "elicitation.created": {
+        if (!data.id) break;
+        if (S.current?.id === data.conversationId) {
+          S.elicitations = [...S.elicitations.filter((v) => v.id !== data.id), data];
+          renderComposer();
+          showPendingRequest();
+        } else {
+          toast("Agent needs input", "Open the conversation to respond.", "info", 7000);
+        }
+        break;
+      }
+      case "elicitation.resolved": {
+        S.elicitations = S.elicitations.filter((v) => v.id !== data.id);
+        renderComposer();
+        if (S.modal?.type === "elicitation" && S.modal.id === data.id) { closeModal(false); showPendingRequest(); }
         break;
       }
       case "notice": {
@@ -1511,6 +1669,20 @@
     document.querySelectorAll("[data-popover-anchor]").forEach((e) => e.removeAttribute("data-popover-anchor"));
   }
 
+  function toolPreFor(target) {
+    return target.closest(".tool-section")?.querySelector(".tool-pre") ||
+      $$(".tool-pre", $("#chat")).find((pre) => pre.dataset.scrollKey === target.dataset.toolKey);
+  }
+
+  function openToolMenu(anchor) {
+    const pre = toolPreFor(anchor);
+    if (!pre) return;
+    const key = esc(pre.dataset.scrollKey);
+    const wrapped = !pre.classList.contains("no-wrap");
+    const item = (action, label) => `<button class="menu-item" data-action="${action}" data-tool-key="${key}"><span>${label}</span></button>`;
+    openPopover(anchor, `<div class="popover-list">${item("tool-wrap", wrapped ? "Disable line wrap" : "Enable line wrap")}${item("tool-start", "Go to start")}${item("tool-end", "Go to end")}${item("copy-tool", "Copy full text")}</div>`, { width: 205 });
+  }
+
   function openPopover(anchor, html, opts = {}) {
     closePopover();
     if (!anchor) return;
@@ -1519,15 +1691,24 @@
     el.innerHTML = html;
     document.body.appendChild(el);
     anchor.setAttribute("data-popover-anchor", "1");
-    const r = anchor.getBoundingClientRect();
-    const width = Math.min(opts.width || 320, window.innerWidth - 20);
-    el.style.width = width + "px";
-    const er = el.getBoundingClientRect();
-    let left = Math.min(Math.max(10, r.right - width), window.innerWidth - width - 10);
-    let top = r.bottom + 7;
-    if (top + er.height > window.innerHeight - 10) top = Math.max(10, r.top - er.height - 7);
-    el.style.left = left + "px";
-    el.style.top = top + "px";
+    el._reposition = () => {
+      const r = anchor.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const topEdge = viewport?.offsetTop || 0;
+      const height = Math.min(window.innerHeight, viewport?.height || window.innerHeight);
+      const width = Math.min(opts.width || 320, window.innerWidth - 20);
+      el.style.width = width + "px";
+      if (el.classList.contains("composer-popover")) el.style.maxHeight = Math.min(440, Math.max(60, height - 20)) + "px";
+      const er = el.getBoundingClientRect();
+      const left = Math.min(Math.max(10, r.right - width), window.innerWidth - width - 10);
+      const bottom = topEdge + height;
+      let top = r.bottom + 7;
+      if (top + er.height > bottom - 10) top = r.top - er.height - 7;
+      top = Math.max(topEdge + 10, Math.min(top, bottom - er.height - 10));
+      el.style.left = left + "px";
+      el.style.top = top + "px";
+    };
+    el._reposition();
     setTimeout(() => {
       const onDoc = (e) => {
         if (!el.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) {
@@ -1582,8 +1763,115 @@
     }
     return `<div class="config-row"><div class="config-label">${label}<small>${esc(o.description || "")}</small></div>
       <select class="select config-select" data-change="set-config" data-id="${id}">
-        ${(o.options || []).map((c) => `<option value="${esc(c.value)}" ${String(c.value) === String(current) ? "selected" : ""}>${esc(c.name || c.value)}</option>`).join("") || `<option value="${esc(current)}">${esc(current)}</option>`}
+        ${configChoices(o).map((c) => `<option value="${esc(c.value)}" ${String(c.value) === String(current) ? "selected" : ""}>${esc(c.groupName ? c.groupName + " · " + (c.name || c.value) : (c.name || c.value))}</option>`).join("") || `<option value="${esc(current)}">${esc(current)}</option>`}
       </select></div>`;
+  }
+
+  function openComposerSettings(anchor, includeMode = false) {
+    const opts = S.configs.filter((o) => o && o.id && ["select", "boolean"].includes(o.type) && (includeMode || String(o.category || "").toLowerCase() !== "mode"));
+    openPopover(anchor, `<div class="popover-title">Agent options</div><div class="popover-list composer-options">${opts.map((o) => `<button class="menu-item" data-action="composer-subconfig" data-id="${esc(o.id)}"><span class="popover-main"><b>${esc(o.name || o.id)}</b>${o.description ? `<small>${esc(o.description)}</small>` : ""}</span><span class="composer-option-value">${esc(configLabel(o))}</span>${icon("chevron-right", "sm")}</button>`).join("")}</div>`, { width: 300, class: "composer-popover" });
+  }
+
+  function openComposerConfig(anchor, id, nested = false) {
+    const opt = S.configs.find((o) => o.id === id);
+    if (!opt) return;
+    const options = opt.type === "boolean" ? [{ value: "true", name: "On" }, { value: "false", name: "Off" }] : configChoices(opt);
+    openPopover(anchor, `${nested ? `<button class="menu-item" data-action="composer-settings-back">‹ &nbsp; Agent options</button>` : ""}<div class="popover-title">${esc(opt.name || opt.id)}</div>
+      ${options.length > 8 ? `<input class="input composer-search" placeholder="Search ${esc(opt.name || "options")}" aria-label="Search options">` : ""}
+      <div class="popover-list composer-options">${options.map((c) => `<button class="menu-item ${String(c.value) === String(opt.currentValue) ? "selected" : ""}" data-action="pick-config" data-id="${esc(opt.id)}" data-value="${esc(c.value)}" data-type="${esc(opt.type)}"><span class="popover-main"><b>${esc(c.name || c.value)}</b>${c.description || c.groupName ? `<small>${esc([c.groupName, c.description].filter(Boolean).join(" · "))}</small>` : ""}</span>${String(c.value) === String(opt.currentValue) ? icon("check", "sm") : ""}</button>`).join("") || `<div class="popover-empty">No choices published by this agent.</div>`}</div>`, { width: 300, class: "composer-popover" });
+    const search = $(".composer-search");
+    if (search) {
+      search.addEventListener("input", () => $$(".composer-options .menu-item").forEach((item) => { item.hidden = !item.textContent.toLowerCase().includes(search.value.toLowerCase()); }));
+      if (!isMobile()) search.focus();
+    }
+  }
+
+  async function prepareComposer() {
+    if (!S.current) {
+      const draft = S.draft;
+      const attachments = S.attachments;
+      await newConversation();
+      S.draft = draft;
+      S.attachments = attachments;
+      renderComposer();
+      return;
+    }
+    const id = S.current.id;
+    const agentId = S.current.agentId;
+    if (S.preparing === id) return;
+    S.preparing = id;
+    const controller = new AbortController();
+    S.prepareController = controller;
+    const slowTimer = setTimeout(() => { if (S.preparing === id && S.current?.id === id && !S.modal) showSlowAgent(true); }, 30000);
+    renderComposer();
+    try {
+      const d = await api(`/conversations/${encodeURIComponent(id)}/prepare`, { method: "POST", body: {}, signal: controller.signal });
+      if (S.current?.id !== id || S.current?.agentId !== agentId) return;
+      S.current = d.conversation;
+      S.configs = d.configs || [];
+      upsertConversation(d.conversation, false);
+    } catch (e) {
+      if (!controller.signal.aborted && S.current?.id === id && S.current?.agentId === agentId) showAgentBlocker(e);
+    } finally {
+      clearTimeout(slowTimer);
+      if (S.modal?.type === "agent-slow" && S.modal.conversationId === id && S.modal.connecting) closeModal();
+      if (S.prepareController === controller) S.prepareController = null;
+      if (S.preparing === id) S.preparing = "";
+      if (S.current?.id === id) { renderTopbar(); renderComposer(); }
+    }
+  }
+
+  function showSlowAgent(connecting) {
+    S.modal = { type: "agent-slow", conversationId: S.current?.id, connecting };
+    openModal(`${modalHead("Still waiting for the agent", agentName(currentAgent()))}<div class="modal-body" style="padding:18px"><p class="muted">${connecting ? "The agent has not finished connecting." : "The agent has not sent a response yet."} You can keep waiting, inspect its details, or stop.</p></div><div class="modal-foot"><button class="btn btn-secondary" data-action="agent-logs" data-id="${esc(currentAgent()?.id || "")}">Agent details</button><button class="btn btn-secondary" data-action="${connecting ? "stop-preparing" : "stop-slow-turn"}">Stop</button><button class="btn btn-primary" data-action="close-modal">Keep waiting</button></div>`, { size: "md" });
+  }
+
+  function openAuthTerminal(agentId, methodId) {
+    closeModal();
+    const agent = agentById(agentId);
+    const conversationId = S.current?.id;
+    S.modal = { type: "auth-terminal", agentId };
+    openModal(`${modalHead("Sign in to " + agentName(agent), "Follow the agent's login instructions below.")}<div class="modal-body" style="padding:16px"><div id="auth-terminal" class="auth-terminal"></div><div id="auth-terminal-status" class="auth-terminal-status">Connecting…</div></div><div class="modal-foot"><button class="btn btn-secondary" data-action="close-modal">Cancel</button></div>`, { size: "md" });
+    if (typeof Terminal === "undefined") { $("#auth-terminal-status").textContent = "Terminal could not be loaded."; return; }
+    const term = new Terminal({ cursorBlink: true, fontSize: 13, rows: 20, cols: 70, theme: { background: "#0b0c0e", foreground: "#e8e8e8" } });
+    if (typeof WebLinksAddon !== "undefined") term.loadAddon(new WebLinksAddon.WebLinksAddon());
+    const container = $("#auth-terminal");
+    term.open(container);
+    const cols = Math.max(25, Math.floor((container.clientWidth - 20) / 8));
+    term.resize(cols, 20);
+    const url = new URL(`/api/agents/${encodeURIComponent(agentId)}/auth-terminal`, location.href);
+    url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    url.searchParams.set("methodId", methodId);
+    const socket = new WebSocket(url);
+    socket.binaryType = "arraybuffer";
+    S.authTerminal = { socket, terminal: term };
+    socket.onopen = () => {
+      $("#auth-terminal-status").textContent = "Login in progress";
+      socket.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      term.focus();
+    };
+    term.onData((data) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "input", data })); });
+    socket.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) { term.write(new Uint8Array(event.data)); return; }
+      let result;
+      try { result = JSON.parse(event.data); } catch { term.write(event.data); return; }
+      if (result.type !== "exit") return;
+      $("#auth-terminal-status").textContent = result.message || (result.ok ? "Sign-in complete." : "Sign-in failed.");
+      if (result.ok) {
+        closeModal();
+        toast("Sign-in complete", "The agent is reconnecting.", "success");
+        if (conversationId && S.current?.id === conversationId) prepareComposer();
+      }
+    };
+    socket.onerror = () => { const status = $("#auth-terminal-status"); if (status) status.textContent = "Could not start the login terminal."; };
+    socket.onclose = () => { const status = $("#auth-terminal-status"); if (status && status.textContent === "Login in progress") status.textContent = "The login terminal closed."; };
+  }
+
+  function showAgentBlocker(error) {
+    const agent = currentAgent();
+    const methods = error.data?.authMethods?.length ? error.data.authMethods : (agent?.authMethods || []);
+    S.modal = { type: "agent-blocker" };
+    openModal(`${modalHead("Agent needs attention", agentName(agent))}<div class="modal-body" style="padding:18px"><p class="muted">${esc(error.message)}</p>${methods.length ? `<div class="settings-title">Choose how to continue</div><div class="blocker-actions">${methods.map((m) => `<button class="btn btn-secondary" data-action="blocker-auth" data-id="${esc(agent.id)}" data-method="${esc(m.id)}" data-auth-type="${esc(m.type || "agent")}">${esc(m.name || m.id)}</button>`).join("")}</div>` : ""}</div><div class="modal-foot"><button class="btn btn-secondary" data-action="agent-logs" data-id="${esc(agent?.id || "")}">View agent details</button><button class="btn btn-primary" data-action="retry-prepare">Try again</button></div>`, { size: "md" });
   }
 
   async function setConfig(id, value) {
@@ -1594,6 +1882,7 @@
       S.configs = d.configs || parseConfigs(d.conversation.configOptions);
       upsertConversation(d.conversation, false);
       renderTopbar();
+      renderComposer();
       closePopover();
     } catch (e) {
       toast("Could not change setting", e.message, "error");
@@ -1603,6 +1892,7 @@
   async function pickAgent(id) {
     const ag = agentById(id);
     if (!ag) return;
+    if (S.current && S.preparing === S.current.id) { toast("Connecting", "Wait for the agent to finish connecting.", "info"); return; }
     S.welcomeAgent = id;
     if (!S.current) {
       closePopover();
@@ -1622,6 +1912,7 @@
       S.active = null;
       closePopover();
       await loadConversation(d.conversation.id, false);
+      prepareComposer();
       toast("Agent switched", `${ag.name} will receive a recap on the next message.`, "success");
     } catch (e) {
       toast("Could not switch agent", e.message, "error");
@@ -1714,13 +2005,24 @@
     }, 30);
   }
 
-  function closeModal() {
+  function closeModal(cancelRequest = true) {
+    const previousType = S.modal?.type;
+    if (cancelRequest && S.modal?.type === "elicitation") {
+      const { id, conversationId } = S.modal;
+      respondElicitation(conversationId, id, { action: "cancel" });
+    }
+    if (S.authTerminal) {
+      S.authTerminal.socket.close();
+      S.authTerminal.terminal.dispose();
+      S.authTerminal = null;
+    }
     if (S.qrTimer) { clearInterval(S.qrTimer); S.qrTimer = null; }
     if (S.channelsRefreshTimer) { clearInterval(S.channelsRefreshTimer); S.channelsRefreshTimer = null; }
     S.modal = null;
     S.confirmAction = null;
     const root = $("#modal-root");
     if (root) root.innerHTML = "";
+    if (previousType === "agent-slow") setTimeout(showPendingRequest, 0);
   }
 
   function modalHead(title, sub, close = true) {
@@ -1758,6 +2060,92 @@
       ? `<div class="approval-list">${list.map((a) => `<div class="approval-modal-item"><div class="muted" style="font-size:10.5px;margin-bottom:5px">${esc(a.conversationTitle || "Conversation")} · ${esc(a.agentName || "agent")}</div>${approvalCard(a)}</div>`).join("")}</div>`
       : `<div class="empty-settings">${icon("shield")}<div style="margin-top:8px">No pending approvals. Your agents are behaving.</div></div>`;
     openModal(`${modalHead("Approvals", `${list.length} pending`)}<div class="modal-body" style="padding:16px">${body}</div>`, { size: "md" });
+  }
+
+  function showPendingApproval() {
+    if (S.modal) return;
+    const approval = currentApprovals()[0];
+    if (!approval) return;
+    S.modal = { type: "approval", id: approval.id };
+    openModal(`${modalHead("Approval needed", "The agent is waiting for your decision")}<div class="modal-body" style="padding:16px">${approvalCard(approval)}</div>`, { size: "md" });
+  }
+
+  function showPendingRequest() {
+    if (S.modal) return;
+    const request = S.elicitations.find((e) => e.conversationId === S.current?.id);
+    if (request) return showElicitation(request);
+    showPendingApproval();
+  }
+
+  function showElicitation(entry) {
+    const req = entry.request || {};
+    const agent = agentById(entry.agentId) || currentAgent();
+    const schema = req.requestedSchema || {};
+    const required = new Set(schema.required || []);
+    const unsupported = Object.values(schema.properties || {}).some((spec) => !["string", "integer", "number", "boolean", "array"].includes(spec.type) || (spec.type === "array" && !spec.items?.enum && !spec.items?.anyOf));
+    const fields = Object.entries(schema.properties || {}).map(([key, spec]) => {
+      const title = esc(spec.title || key);
+      const label = `<label>${title}${required.has(key) ? " *" : ""}</label>${spec.description ? `<div class="settings-desc">${esc(spec.description)}</div>` : ""}`;
+      const attrs = `data-key="${esc(key)}" data-type="${esc(spec.type || "string")}" ${required.has(key) ? "required" : ""}`;
+      const choices = spec.oneOf || (spec.enum || []).map((v) => ({ const: v, title: v }));
+      let control = "";
+      if (spec.type === "array") {
+        const items = spec.items || {};
+        const values = items.anyOf || (items.enum || []).map((v) => ({ const: v, title: v }));
+        control = `<div class="elicitation-multi" data-key="${esc(key)}" data-min="${esc(spec.minItems ?? (required.has(key) ? 1 : 0))}" data-max="${esc(spec.maxItems ?? "")}">${values.map((v) => `<label><input type="checkbox" value="${esc(v.const)}" ${(spec.default || []).includes(v.const) ? "checked" : ""}> ${esc(v.title || v.const)}</label>`).join("")}</div>`;
+      } else if (choices.length || spec.type === "boolean") {
+        const options = spec.type === "boolean" ? [{ const: "true", title: "Yes" }, { const: "false", title: "No" }] : choices;
+        control = `<select class="select" ${attrs}><option value="">Choose…</option>${options.map((v) => `<option value="${esc(v.const)}" ${String(spec.default) === String(v.const) ? "selected" : ""}>${esc(v.title || v.const)}</option>`).join("")}</select>`;
+      } else {
+        const inputType = spec.type === "number" || spec.type === "integer" ? "number" : spec.format === "email" ? "email" : spec.format === "date" ? "date" : "text";
+        const bounds = `${spec.minimum != null ? `min="${esc(spec.minimum)}"` : ""} ${spec.maximum != null ? `max="${esc(spec.maximum)}"` : ""} ${spec.minLength != null ? `minlength="${esc(spec.minLength)}"` : ""} ${spec.maxLength != null ? `maxlength="${esc(spec.maxLength)}"` : ""}`;
+        control = `<input class="input" type="${inputType}" ${attrs} ${bounds} ${spec.type === "number" ? 'step="any"' : ""} value="${esc(spec.default ?? "")}">`;
+      }
+      return `<div class="field">${label}${control}</div>`;
+    }).join("");
+    let body = `<p class="muted">${esc(req.message || "The agent needs your input.")}</p>`;
+    if (req.mode === "url") {
+      try {
+        const url = new URL(req.url);
+        body += `<div class="settings-row"><div><div class="label">${esc(url.host)}</div><div class="desc">${esc(url.href)}</div></div></div>`;
+      } catch { body += `<p>Invalid URL from agent.</p>`; }
+    } else if (unsupported) {
+      body += `<p>This request contains field types that cannot be entered here.</p><pre class="tool-pre">${esc(JSON.stringify(schema, null, 2))}</pre>`;
+    } else {
+      body += fields;
+    }
+    S.modal = { type: "elicitation", id: entry.id, conversationId: entry.conversationId };
+    openModal(`<form data-form="elicitation" id="elicitation-form">${modalHead("Agent needs input", agentName(agent))}<div class="modal-body" style="padding:18px">${body}</div><div class="modal-foot"><button type="button" class="btn btn-secondary" data-action="elicitation-decline">Decline</button><button type="submit" class="btn btn-primary" ${unsupported ? "disabled" : ""}>${req.mode === "url" ? "Open link" : "Continue"}</button></div></form>`, { size: "md" });
+  }
+
+  async function respondElicitation(conversationId, id, response) {
+    try {
+      await api(`/conversations/${encodeURIComponent(conversationId)}/elicitations/${encodeURIComponent(id)}`, { method: "POST", body: response });
+      S.elicitations = S.elicitations.filter((e) => e.id !== id);
+      if (S.modal?.type === "elicitation" && S.modal.id === id) closeModal(false);
+      showPendingRequest();
+    } catch (e) { toast("Could not answer agent", e.message, "error"); }
+  }
+
+  function submitElicitation(form) {
+    const entry = S.elicitations.find((e) => e.id === S.modal?.id);
+    if (!entry) return;
+    const req = entry.request || {};
+    const content = {};
+    if (req.mode === "url") {
+      try { const url = new URL(req.url); if (!["http:", "https:"].includes(url.protocol)) throw new Error("invalid protocol"); window.open(url.href, "_blank", "noopener"); } catch { toast("Invalid link", "The agent provided an invalid URL.", "error"); return; }
+    } else {
+      for (const input of $$('[data-key][data-type]', form)) {
+        if (input.value === "") continue;
+        content[input.dataset.key] = input.dataset.type === "boolean" ? input.value === "true" : ["number", "integer"].includes(input.dataset.type) ? Number(input.value) : input.value;
+      }
+      for (const group of $$(".elicitation-multi", form)) {
+        const selected = $$("input:checked", group).map((input) => input.value);
+        if (selected.length < Number(group.dataset.min || 0) || (group.dataset.max && selected.length > Number(group.dataset.max))) { toast("Check your selection", "Choose the requested number of options.", "error"); return; }
+        if (selected.length) content[group.dataset.key] = selected;
+      }
+    }
+    respondElicitation(entry.conversationId, entry.id, req.mode === "url" ? { action: "accept" } : { action: "accept", content });
   }
 
   async function resolveApproval(id, optionId, card) {
@@ -2082,7 +2470,7 @@
       const a = d.agent;
       const rt = d.runtime || {};
       S.modal = { type: "agentlogs", id };
-      const methods = (a.authMethods || []).map((m) => `<button class="btn btn-secondary btn-sm" data-action="auth-agent" data-id="${esc(a.id)}" data-method="${esc(m.id)}">${esc(m.name || m.id)}</button>`).join("");
+      const methods = (a.authMethods || []).map((m) => `<button class="btn btn-secondary btn-sm" data-action="auth-agent" data-id="${esc(a.id)}" data-method="${esc(m.id)}" data-auth-type="${esc(m.type || "agent")}">${esc(m.name || m.id)}</button>`).join("");
       openModal(`${modalHead(`Runtime · ${a.name}`, "stderr ring buffer and live process state")}<div class="modal-body" style="padding:16px">
         <div class="about-grid" style="margin-bottom:14px"><div class="about-item"><div class="k">Status</div><div class="v">${esc(rt.status || a.status || "unknown")}</div></div><div class="about-item"><div class="k">PID</div><div class="v">${rt.pid || "—"}</div></div><div class="about-item"><div class="k">Uptime</div><div class="v">${rt.uptimeSeconds ? rt.uptimeSeconds + "s" : "—"}</div></div><div class="about-item"><div class="k">Last probe</div><div class="v">${a.lastProbeAt ? timeAgo(a.lastProbeAt) + " ago" : "never"}</div></div></div>
         ${methods ? `<div class="settings-section"><div class="settings-title">Authentication</div><div style="display:flex;gap:7px;flex-wrap:wrap">${methods}</div><div class="settings-desc">Some agents open a browser or terminal login flow. Finish it, then probe again.</div></div>` : ""}
@@ -2125,6 +2513,7 @@
       renderSidebar(); renderTopbar(); renderChat(); renderComposer();
       closeMobileSidebar();
       focusComposer();
+      prepareComposer();
     } catch (e) {
       toast("Could not create conversation", e.message, "error");
     }
@@ -2329,6 +2718,7 @@
     else if (form.dataset.form === "agent") saveAgent(form);
     else if (form.dataset.form === "mcp") saveMCP(form);
     else if (form.dataset.form === "password") savePassword(form);
+    else if (form.dataset.form === "elicitation") submitElicitation(form);
   });
 
   document.addEventListener("input", (e) => {
@@ -2388,6 +2778,30 @@
       case "conv-menu": e.preventDefault(); openConversationMenu(target, id); break;
       case "agent-menu": openAgentMenu(target); break;
       case "config-menu": openConfigMenu(target); break;
+      case "prepare-composer": await prepareComposer(); break;
+      case "show-agent-request": showPendingRequest(); break;
+      case "composer-config": openComposerConfig(target, id); break;
+      case "composer-settings": openComposerSettings(target); break;
+      case "composer-mobile-settings": openComposerSettings(target, true); break;
+      case "composer-subconfig": openComposerConfig(isMobile() ? $(".composer-mobile-settings") : $(".composer-settings"), id, true); break;
+      case "composer-settings-back": openComposerSettings(isMobile() ? $(".composer-mobile-settings") : $(".composer-settings"), isMobile()); break;
+      case "pick-config": await setConfig(id, target.dataset.type === "boolean" ? target.dataset.value === "true" : target.dataset.value); break;
+      case "retry-prepare": closeModal(); await prepareComposer(); break;
+      case "stop-preparing": S.prepareController?.abort(); closeModal(); break;
+      case "stop-slow-turn": closeModal(); await stopTurn(); break;
+      case "elicitation-decline": {
+        if (S.modal?.type === "elicitation") respondElicitation(S.modal.conversationId, S.modal.id, { action: "decline" });
+        break;
+      }
+      case "blocker-auth": {
+        if (target.dataset.authType === "terminal") { openAuthTerminal(id, target.dataset.method); break; }
+        try {
+          await api(`/agents/${encodeURIComponent(id)}/authenticate`, { method: "POST", body: { methodId: target.dataset.method } });
+          closeModal();
+          await prepareComposer();
+        } catch (err) { showAgentBlocker(err); }
+        break;
+      }
       case "routing-menu": openRoutingMenu(target); break;
       case "more-menu": openMoreMenu(target); break;
       case "toggle-pin": await togglePin(id); closePopover(); break;
@@ -2414,13 +2828,59 @@
       case "toggle-thought": {
         const mid = target.dataset.id;
         if (S.openThoughts.has(mid)) S.openThoughts.delete(mid); else S.openThoughts.add(mid);
+        saveActivityState();
+        S.scrollPinned = false;
+        renderChat();
+        break;
+      }
+      case "toggle-activity": {
+        const expanded = target.getAttribute("aria-expanded") === "true";
+        S.activityExpanded.set(target.dataset.id, !expanded);
+        saveActivityState();
+        S.scrollPinned = false;
         renderChat();
         break;
       }
       case "toggle-tool": {
         const mid = target.dataset.id;
         if (S.openTools.has(mid)) S.openTools.delete(mid); else S.openTools.add(mid);
+        saveActivityState();
+        S.scrollPinned = false;
         renderChat();
+        break;
+      }
+      case "tool-menu": openToolMenu(target); break;
+      case "tool-wrap": {
+        const pre = toolPreFor(target);
+        if (!pre) break;
+        const unwrapped = pre.classList.toggle("no-wrap");
+        if (unwrapped) S.unwrappedTools.add(pre.dataset.scrollKey); else S.unwrappedTools.delete(pre.dataset.scrollKey);
+        const button = pre.closest(".tool-section")?.querySelector('.tool-actions [data-action="tool-wrap"]');
+        if (button) button.textContent = unwrapped ? "Wrap" : "No wrap";
+        saveActivityState();
+        closePopover();
+        break;
+      }
+      case "tool-start":
+      case "tool-end": {
+        const pre = toolPreFor(target);
+        closePopover();
+        if (pre) {
+          const end = action === "tool-end";
+          pre.scrollTop = end ? pre.scrollHeight : 0;
+          const text = pre.querySelector("code")?.textContent || "";
+          const firstNewline = text.indexOf("\n");
+          const multipleLines = firstNewline >= 0 && firstNewline < text.length - 1;
+          pre.scrollLeft = end && !multipleLines ? pre.scrollWidth : 0;
+          pre.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
+        break;
+      }
+      case "copy-tool": {
+        const code = toolPreFor(target)?.querySelector("code");
+        closePopover();
+        if (!code) break;
+        try { await navigator.clipboard.writeText(code.textContent); toast("Copied", "", "success", 1500); } catch { toast("Copy failed", "", "error"); }
         break;
       }
       case "copy-code": {
@@ -2448,6 +2908,7 @@
       case "probe-agent": probeAgent(id); break;
       case "agent-logs": openAgentLogs(id); break;
       case "auth-agent": {
+        if (target.dataset.authType === "terminal") { openAuthTerminal(id, target.dataset.method); break; }
         try {
           await api(`/agents/${encodeURIComponent(id)}/authenticate`, { method: "POST", body: { methodId: target.dataset.method } });
           toast("Authentication started", "Finish the browser or terminal flow, then probe again.", "info");
@@ -2524,6 +2985,22 @@
   });
 
   window.addEventListener("online", () => { S.reconnectAttempt = 0; connectWS(); renderOffline(); });
+  window.addEventListener("resize", () => {
+    const searchPopover = isMobile() && document.activeElement?.matches(".composer-search") ? $(".composer-popover") : null;
+    if (searchPopover) searchPopover._reposition?.(); else closePopover();
+    autoGrow();
+    const box = $("#auth-terminal");
+    const live = S.authTerminal;
+    if (box && live) {
+      const cols = Math.max(25, Math.floor((box.clientWidth - 20) / 8));
+      live.terminal.resize(cols, live.terminal.rows);
+      if (live.socket.readyState === WebSocket.OPEN) live.socket.send(JSON.stringify({ type: "resize", cols, rows: live.terminal.rows }));
+    }
+  });
+  window.visualViewport?.addEventListener("resize", () => {
+    autoGrow();
+    if (isMobile() && document.activeElement?.matches(".composer-search")) $(".composer-popover")?._reposition?.();
+  });
   window.addEventListener("offline", () => { S.wsState = "offline"; renderOffline(); renderSidebar(); });
   window.addEventListener("popstate", () => {
     const m = location.pathname.match(/^\/c\/([^/]+)/);

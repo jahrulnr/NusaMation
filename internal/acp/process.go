@@ -55,6 +55,20 @@ type callResult struct {
 type pendingCall struct {
 	method string
 	ch     chan callResult
+	ctx    context.Context
+}
+
+type requestOwnerKey struct{}
+
+// WithRequestOwner associates agent-initiated requests with the conversation
+// that initiated an ACP call, including requests made before session/new returns.
+func WithRequestOwner(ctx context.Context, owner string) context.Context {
+	return context.WithValue(ctx, requestOwnerKey{}, owner)
+}
+
+func RequestOwner(ctx context.Context) string {
+	owner, _ := ctx.Value(requestOwnerKey{}).(string)
+	return owner
 }
 
 type Process struct {
@@ -88,6 +102,7 @@ type notifMsg struct {
 	method    string
 	sessionID string
 	update    json.RawMessage
+	barrier   chan struct{}
 }
 
 func NewProcess(cfg ProcessConfig, handler Handler) *Process {
@@ -207,7 +222,28 @@ func (p *Process) handleMessage(msg rpcMessage) {
 		case <-p.done:
 		}
 	case len(msg.ID) > 0:
-		p.handleResponse(msg)
+		// A prompt response must not overtake earlier session updates. Keep
+		// reading stdout while the notification handler drains, since it may
+		// need to service an agent request in the meantime.
+		p.mu.Lock()
+		call := p.pending[idKey(msg.ID)]
+		p.mu.Unlock()
+		if call != nil && call.method == "session/prompt" {
+			barrier := make(chan struct{})
+			select {
+			case p.notifCh <- notifMsg{barrier: barrier}:
+				go func() {
+					select {
+					case <-barrier:
+						p.handleResponse(msg)
+					case <-p.done:
+					}
+				}()
+			case <-p.done:
+			}
+		} else {
+			p.handleResponse(msg)
+		}
 	}
 }
 
@@ -232,8 +268,26 @@ func (p *Process) handleRequest(msg rpcMessage) {
 			p.respond(msg.ID, nil, &RPCError{Code: CodeInternalError, Message: "internal client error"})
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+	parent := context.Background()
+	var ref struct {
+		RequestID json.RawMessage `json:"requestId"`
+	}
+	if json.Unmarshal(msg.Params, &ref) == nil && len(ref.RequestID) > 0 {
+		p.mu.Lock()
+		if call := p.pending[idKey(ref.RequestID)]; call != nil && call.ctx != nil {
+			parent = call.ctx
+		}
+		p.mu.Unlock()
+	}
+	ctx, cancel := context.WithTimeout(parent, 60*time.Minute)
 	defer cancel()
+	go func() {
+		select {
+		case <-p.done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	result, rpcErr := p.handler.OnRequest(ctx, msg.Method, msg.Params)
 	p.respond(msg.ID, result, rpcErr)
 }
@@ -258,6 +312,10 @@ func (p *Process) notificationLoop() {
 	for {
 		select {
 		case n := <-p.notifCh:
+			if n.barrier != nil {
+				close(n.barrier)
+				continue
+			}
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
@@ -271,6 +329,10 @@ func (p *Process) notificationLoop() {
 			for {
 				select {
 				case n := <-p.notifCh:
+					if n.barrier != nil {
+						close(n.barrier)
+						continue
+					}
 					func() {
 						defer func() { _ = recover() }()
 						p.handler.OnNotification(n.method, n.sessionID, n.update)
@@ -336,7 +398,7 @@ func (p *Process) Call(ctx context.Context, method string, params any, out any) 
 	p.nextID++
 	id := p.nextID
 	key := fmt.Sprintf("%d", id)
-	call := &pendingCall{method: method, ch: make(chan callResult, 1)}
+	call := &pendingCall{method: method, ch: make(chan callResult, 1), ctx: ctx}
 	p.pending[key] = call
 	p.mu.Unlock()
 

@@ -35,6 +35,10 @@ The adapter must implement ACP v1 and use newline-delimited JSON-RPC on stdio. N
 
 Press **Probe** to start a temporary ACP session and capture capabilities, models, config options and auth methods. Probing does not disturb a live conversation.
 
+In a conversation, **Connect agent** prepares the ACP session before the first message. The composer shows the mode separately and groups the model, reasoning, and other advertised settings under the model/options menu. The choices come from the current session; a long list can be searched. On narrow screens the composer keeps the selected model summary and moves all advertised options, including mode, into the **+** menu. The textarea grows within the available viewport.
+
+Permission requests and ACP form/URL input requests appear in a dialog. Login methods advertised by the agent can be started there; terminal-based methods run in a terminal in the dialog, and the agent reconnects after a successful login. A request that the agent never sends over ACP cannot be answered by the client. If a connection or prompt takes a long time, the dialog offers details, wait and stop actions.
+
 ### Devin
 
 ```text
@@ -97,13 +101,13 @@ Important: an agent's own permission mode is separate. If an agent is configured
 
 NusaMation filters MCP servers by the agent's advertised ACP MCP capabilities and passes them to `session/new`. Secrets are encrypted at rest and never returned by the API. Editing an agent/MCP server invalidates its runtime so the next turn restarts with the new configuration.
 
-The agent process inherits only the configured environment plus `PATH`, `HOME`, `TERM=dumb` and related safe basics; use per-agent env for tokens.
+The agent process inherits the NusaMation process environment, with per-agent environment values added on top. Start NusaMation with the environment needed by the configured agents.
 
 ## Workspace
 
-The first run seeds `data/workspace/README.md` and `AGENTS.md`. This is the shared working directory for all agents unless a conversation has a different cwd. ACP filesystem and terminal requests are confined to the session roots; sensitive paths (`.env*`, agent config dirs, `.git/hooks`) are denied.
+The first run seeds `data/workspace/README.md` and `AGENTS.md`. This is the shared working directory for all agents unless a conversation has a different cwd. Client-side ACP filesystem requests check the session roots and sensitive paths. For terminal requests, NusaMation checks the working directory but does not sandbox the command; the agent's own tools and sandbox have their own access rules.
 
-If the agent needs a file outside the workspace, use an absolute path in the prompt only if the agent's own sandbox allows it; NusaMation will reject client-side fs/terminal access outside roots.
+The agent's own sandbox controls its direct filesystem and command access; the ACP client-side filesystem checks do not confine commands run in a terminal.
 
 ## Troubleshooting
 

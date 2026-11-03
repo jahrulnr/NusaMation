@@ -28,6 +28,7 @@ type server struct {
 	nextID  int
 	pending map[string]chan json.RawMessage
 	cancel  chan struct{}
+	values  map[string]any
 }
 
 func main() {
@@ -35,6 +36,7 @@ func main() {
 		out:     bufio.NewWriter(os.Stdout),
 		pending: map[string]chan json.RawMessage{},
 		cancel:  make(chan struct{}),
+		values:  map[string]any{"mode": "ask", "model": "fake-fast"},
 	}
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 64*1024), 32*1024*1024)
@@ -94,7 +96,7 @@ func (s *server) handle(msg message) {
 		s.mu.Unlock()
 		s.notify("session/update", map[string]any{
 			"sessionId": "fake-session",
-			"update":    map[string]any{"sessionUpdate": "config_option_update", "configOptions": configOptions()},
+			"update":    map[string]any{"sessionUpdate": "config_option_update", "configOptions": s.configOptions()},
 		})
 		s.notify("session/update", map[string]any{
 			"sessionId": "fake-session",
@@ -102,11 +104,19 @@ func (s *server) handle(msg message) {
 				map[string]any{"name": "compact", "description": "Compact the fake context"},
 			}},
 		})
-		s.respond(msg.ID, map[string]any{"sessionId": "fake-session", "configOptions": configOptions()})
+		s.respond(msg.ID, map[string]any{"sessionId": "fake-session", "configOptions": s.configOptions()})
 	case "session/load", "session/resume":
-		s.respond(msg.ID, map[string]any{"sessionId": "fake-session", "configOptions": configOptions()})
+		s.respond(msg.ID, map[string]any{"sessionId": "fake-session", "configOptions": s.configOptions()})
 	case "session/set_config_option":
-		s.respond(msg.ID, map[string]any{"configOptions": configOptions()})
+		var req struct {
+			ConfigID string `json:"configId"`
+			Value    any    `json:"value"`
+		}
+		_ = json.Unmarshal(msg.Params, &req)
+		s.mu.Lock()
+		s.values[req.ConfigID] = req.Value
+		s.mu.Unlock()
+		s.respond(msg.ID, map[string]any{"configOptions": s.configOptions()})
 	case "session/set_mode":
 		s.respond(msg.ID, map[string]any{})
 	case "session/close":
@@ -136,18 +146,20 @@ func (s *server) handle(msg message) {
 	}
 }
 
-func configOptions() []any {
+func (s *server) configOptions() []any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return []any{
 		map[string]any{
 			"id": "mode", "name": "Session Mode", "category": "mode", "type": "select",
-			"currentValue": "ask", "options": []any{
+			"currentValue": s.values["mode"], "options": []any{
 				map[string]any{"value": "ask", "name": "Ask"},
 				map[string]any{"value": "accept-edits", "name": "Code"},
 			},
 		},
 		map[string]any{
 			"id": "model", "name": "Model", "category": "model", "type": "select",
-			"currentValue": "fake-fast", "options": []any{
+			"currentValue": s.values["model"], "options": []any{
 				map[string]any{"value": "fake-fast", "name": "Fake Fast"},
 				map[string]any{"value": "fake-smart", "name": "Fake Smart"},
 			},
@@ -167,6 +179,10 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 		if p.Text != "" {
 			text += p.Text
 		}
+	}
+	if strings.Contains(text, "timeline-terminal-test") || strings.Contains(text, "timeline-background-test") {
+		s.terminalDemo(id, sessionID, strings.Contains(text, "timeline-background-test"))
+		return
 	}
 	s.update(map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{
 		"type": "text", "text": "The fake agent received the prompt and is checking a safe path before acting.",
@@ -228,6 +244,50 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 	s.respond(id, map[string]any{"stopReason": "end_turn", "usage": map[string]any{
 		"totalTokens": 1280, "inputTokens": 1180, "outputTokens": 100,
 	}})
+}
+
+// terminalDemo exercises the ACP terminal lifecycle for integration tests.
+func (s *server) terminalDemo(id json.RawMessage, sessionID string, background bool) {
+	s.update(map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{"type": "text", "text": "Checking the command."}})
+	result := s.callClient("terminal/create", map[string]any{"sessionId": sessionID, "command": "/bin/sh", "args": []string{"-c", "printf first; sleep 0.5; printf second; exit 3"}, "outputByteLimit": 4})
+	var terminal struct {
+		TerminalID string `json:"terminalId"`
+	}
+	if json.Unmarshal(result, &terminal) != nil || terminal.TerminalID == "" {
+		s.respond(id, map[string]any{"stopReason": "end_turn"})
+		return
+	}
+	s.update(map[string]any{"sessionUpdate": "tool_call", "toolCallId": "terminal-demo", "title": "Run demo command", "kind": "execute", "status": "in_progress", "content": []any{map[string]any{"type": "terminal", "terminalId": terminal.TerminalID}}})
+	if background {
+		s.chunk("Command continues in the background.")
+		s.respond(id, map[string]any{"stopReason": "end_turn"})
+		go func() {
+			s.callClient("terminal/wait_for_exit", map[string]any{"sessionId": sessionID, "terminalId": terminal.TerminalID})
+			s.callClient("terminal/release", map[string]any{"sessionId": sessionID, "terminalId": terminal.TerminalID})
+		}()
+		return
+	}
+	s.callClient("terminal/wait_for_exit", map[string]any{"sessionId": sessionID, "terminalId": terminal.TerminalID})
+	s.callClient("terminal/release", map[string]any{"sessionId": sessionID, "terminalId": terminal.TerminalID})
+	s.update(map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "terminal-demo", "status": "failed"})
+	s.chunk("Command finished.")
+	s.respond(id, map[string]any{"stopReason": "end_turn"})
+}
+
+func (s *server) callClient(method string, params any) json.RawMessage {
+	s.mu.Lock()
+	s.nextID++
+	id := s.nextID
+	ch := make(chan json.RawMessage, 1)
+	s.pending[fmt.Sprintf("%d", id)] = ch
+	s.mu.Unlock()
+	s.write(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+	select {
+	case result := <-ch:
+		return result
+	case <-time.After(10 * time.Second):
+		return nil
+	}
 }
 
 func (s *server) askPermission(sessionID string) string {

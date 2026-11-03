@@ -36,10 +36,12 @@ type Service struct {
 	uploadDir string
 	workspace string
 
-	mu      sync.Mutex
-	active  map[string]*activeTurn
-	running map[string]bool
-	waiters map[string]chan approvalDecision
+	mu            sync.Mutex
+	active        map[string]*activeTurn
+	running       map[string]bool
+	waiters       map[string]chan approvalDecision
+	elicitations  map[string]*elicitationWaiter
+	terminalTurns map[string]*activeTurn
 }
 
 type Options struct {
@@ -60,16 +62,18 @@ func New(opts Options) *Service {
 		opts.Events = events.Nop{}
 	}
 	return &Service{
-		store:     opts.Store,
-		agents:    opts.Agents,
-		channels:  opts.Channels,
-		bus:       opts.Events,
-		log:       opts.Log.With("component", "chat"),
-		uploadDir: opts.UploadDir,
-		workspace: opts.Workspace,
-		active:    map[string]*activeTurn{},
-		running:   map[string]bool{},
-		waiters:   map[string]chan approvalDecision{},
+		store:         opts.Store,
+		agents:        opts.Agents,
+		channels:      opts.Channels,
+		bus:           opts.Events,
+		log:           opts.Log.With("component", "chat"),
+		uploadDir:     opts.UploadDir,
+		workspace:     opts.Workspace,
+		active:        map[string]*activeTurn{},
+		running:       map[string]bool{},
+		waiters:       map[string]chan approvalDecision{},
+		elicitations:  map[string]*elicitationWaiter{},
+		terminalTurns: map[string]*activeTurn{},
 	}
 }
 

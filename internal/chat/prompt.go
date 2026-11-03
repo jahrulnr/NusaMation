@@ -95,49 +95,8 @@ func (s *Service) runPrompt(a *activeTurn) (status, stopReason string, runErr er
 		}
 	}()
 
-	cwd := a.conv.Cwd
-	if cwd == "" {
-		cwd = a.agent.Cwd
-	}
-	if cwd == "" {
-		cwd = s.workspace
-	}
-	if st, err := os.Stat(cwd); err != nil || !st.IsDir() {
-		if s.workspace != "" {
-			cwd = s.workspace
-		}
-	}
+	req := s.sessionRequest(a.conv, a.agent)
 	meta, _ := s.metaMap(a.conv)
-	desired := map[string]any{}
-	if raw, ok := meta["desiredConfig"].(map[string]any); ok {
-		for k, v := range raw {
-			desired[k] = v
-		}
-	}
-	model := a.conv.Model
-	if model == "" {
-		model = a.agent.DefaultModel
-	}
-	cached := a.conv.ConfigOptions
-	if len(cached) == 0 {
-		cached = a.agent.ConfigOptions
-	}
-	req := agent.EnsureRequest{
-		AgentID:        a.agent.ID,
-		ConversationID: a.conversationID,
-		Cwd:            cwd,
-		ACPSessionID:   a.conv.ACPSessionID,
-		DesiredModel:   model,
-		DesiredConfig:  desired,
-		CachedConfig:   cached,
-	}
-	if dirs, ok := meta["additionalDirectories"].([]any); ok {
-		for _, d := range dirs {
-			if s, ok := d.(string); ok && s != "" {
-				req.AdditionalDirs = append(req.AdditionalDirs, s)
-			}
-		}
-	}
 
 	session, err := s.agents.EnsureSession(a.ctx, req)
 	if err != nil {
@@ -195,6 +154,68 @@ func (s *Service) runPrompt(a *activeTurn) (status, stopReason string, runErr er
 		stop = "end_turn"
 	}
 	return "completed", stop, nil
+}
+
+// PrepareSession discovers the current agent's options before the first prompt.
+func (s *Service) PrepareSession(ctx context.Context, conversationID string) error {
+	conv, err := s.store.GetConversation(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	ag, err := s.store.GetAgent(ctx, conv.AgentID)
+	if err != nil {
+		return err
+	}
+	_, err = s.agents.EnsureSession(ctx, s.sessionRequest(conv, ag))
+	return err
+}
+
+func (s *Service) sessionRequest(conv store.Conversation, ag store.Agent) agent.EnsureRequest {
+	cwd := conv.Cwd
+	if cwd == "" {
+		cwd = ag.Cwd
+	}
+	if cwd == "" {
+		cwd = s.workspace
+	}
+	if st, err := os.Stat(cwd); err != nil || !st.IsDir() {
+		if s.workspace != "" {
+			cwd = s.workspace
+		}
+	}
+	meta, _ := s.metaMap(conv)
+	desired := map[string]any{}
+	if raw, ok := meta["desiredConfig"].(map[string]any); ok {
+		for k, v := range raw {
+			desired[k] = v
+		}
+	}
+	model := conv.Model
+	if model == "" {
+		model = ag.DefaultModel
+	}
+	cached := conv.ConfigOptions
+	if len(ParseConfigOptions(cached)) == 0 {
+		cached = ag.ConfigOptions
+	}
+	req := agent.EnsureRequest{
+		AgentID:        ag.ID,
+		ConversationID: conv.ID,
+		Cwd:            cwd,
+		ACPSessionID:   conv.ACPSessionID,
+		DesiredModel:   model,
+		DesiredConfig:  desired,
+		CachedConfig:   cached,
+	}
+	if dirs, ok := meta["additionalDirectories"].([]any); ok {
+		for _, d := range dirs {
+			if s, ok := d.(string); ok && s != "" {
+				req.AdditionalDirs = append(req.AdditionalDirs, s)
+			}
+		}
+	}
+
+	return req
 }
 
 func (s *Service) buildRecap(a *activeTurn) string {

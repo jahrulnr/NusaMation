@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
@@ -67,6 +68,19 @@ func TestOrchestratorApprovalFlow(t *testing.T) {
 	conv, err := svc.CreateConversation(context.Background(), ag.ID, "Fake test", workspace, "web", "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := svc.PrepareSession(context.Background(), conv.ID); err != nil {
+		t.Fatal(err)
+	}
+	if agentMgr.Session(conv.ID) == nil {
+		t.Fatal("prepared session was not registered")
+	}
+	updated, err := svc.SetConfig(context.Background(), conv.ID, "model", "fake-smart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modelFromConfigs(updated.ConfigOptions) != "fake-smart" || modelFromConfigs(agentMgr.Session(conv.ID).Config()) != "fake-smart" {
+		t.Fatal("model selection did not reach the live ACP session")
 	}
 	if _, _, err := svc.Submit(context.Background(), SubmitInput{
 		ConversationID: conv.ID, Text: "Run the demo and inspect the workspace.", Channel: "web",
@@ -152,6 +166,92 @@ func TestOrchestratorApprovalFlow(t *testing.T) {
 	convNow, err := st.GetConversation(context.Background(), conv.ID)
 	if err != nil || convNow.Status != "idle" {
 		t.Fatalf("conversation status = %#v, %v", convNow, err)
+	}
+
+	_, terminalTurn, err := svc.Submit(context.Background(), SubmitInput{ConversationID: conv.ID, Text: "timeline-terminal-test", Channel: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(10 * time.Second)
+	var sawLive, sawFinal bool
+	for time.Now().Before(deadline) {
+		messages, err := st.ListMessages(context.Background(), conv.ID, 0, 0, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range messages {
+			if m.TurnID != terminalTurn.ID || m.ToolCallID != "terminal-demo" {
+				continue
+			}
+			var payload struct {
+				Terminals map[string]agent.TerminalUpdate `json:"terminals"`
+			}
+			if err := json.Unmarshal(m.Content, &payload); err != nil {
+				t.Fatal(err)
+			}
+			for _, term := range payload.Terminals {
+				if term.Output == "first" && term.ExitStatus == nil {
+					sawLive = true
+				}
+				if term.Output == "firstsecond" && term.ExitStatus != nil && term.ExitStatus.ExitCode != nil && *term.ExitStatus.ExitCode == 3 {
+					sawFinal = true
+				}
+			}
+		}
+		if sawLive && sawFinal {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	if !sawLive || !sawFinal {
+		t.Fatalf("terminal updates: live=%v final=%v", sawLive, sawFinal)
+	}
+	for time.Now().Before(deadline) {
+		turn, _ := st.GetTurn(context.Background(), terminalTurn.ID)
+		if turn.Status == "completed" {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	_, backgroundTurn, err := svc.Submit(context.Background(), SubmitInput{ConversationID: conv.ID, Text: "timeline-background-test", Channel: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(10 * time.Second)
+	sawCompletedBeforeOutput := false
+	var backgroundFinal bool
+	for time.Now().Before(deadline) {
+		turn, _ := st.GetTurn(context.Background(), backgroundTurn.ID)
+		messages, err := st.ListMessages(context.Background(), conv.ID, 0, 0, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range messages {
+			if m.TurnID != backgroundTurn.ID || m.ToolCallID != "terminal-demo" {
+				continue
+			}
+			var payload struct {
+				Terminals map[string]agent.TerminalUpdate `json:"terminals"`
+			}
+			if err := json.Unmarshal(m.Content, &payload); err != nil {
+				t.Fatal(err)
+			}
+			for _, term := range payload.Terminals {
+				if turn.Status == "completed" && term.ExitStatus == nil {
+					sawCompletedBeforeOutput = true
+				}
+				if term.Output == "firstsecond" && term.ExitStatus != nil {
+					backgroundFinal = true
+				}
+			}
+		}
+		if sawCompletedBeforeOutput && backgroundFinal {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	if !sawCompletedBeforeOutput || !backgroundFinal {
+		t.Fatalf("background terminal: turn finished first=%v final output=%v", sawCompletedBeforeOutput, backgroundFinal)
 	}
 }
 

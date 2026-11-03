@@ -28,6 +28,9 @@ type terminal struct {
 
 	mu        sync.Mutex
 	buf       []byte
+	full      []byte
+	version   uint64
+	notify    func(TerminalUpdate)
 	limit     int
 	truncated bool
 	running   bool
@@ -38,9 +41,16 @@ type terminal struct {
 	lastUsed  time.Time
 }
 
+type TerminalUpdate struct {
+	ID         string                  `json:"id"`
+	Output     string                  `json:"output"`
+	ExitStatus *acp.TerminalExitStatus `json:"exitStatus,omitempty"`
+	Version    uint64                  `json:"-"`
+}
+
 func (t *terminal) append(p []byte) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.full = append(t.full, p...)
 	t.buf = append(t.buf, p...)
 	if t.limit > 0 && len(t.buf) > t.limit {
 		extra := len(t.buf) - t.limit
@@ -50,6 +60,12 @@ func (t *terminal) append(p []byte) {
 		}
 		t.buf = append([]byte(nil), t.buf[extra:]...)
 		t.truncated = true
+	}
+	t.version++
+	update := TerminalUpdate{ID: t.id, Output: string(t.full), Version: t.version}
+	t.mu.Unlock()
+	if t.notify != nil {
+		t.notify(update)
 	}
 }
 
@@ -75,10 +91,10 @@ func NewTerminalManager(log *slog.Logger) *TerminalManager {
 	return tm
 }
 
-func (tm *TerminalManager) Handle(ctx context.Context, method string, params json.RawMessage, roots []string) (any, *acp.RPCError) {
+func (tm *TerminalManager) Handle(ctx context.Context, method string, params json.RawMessage, roots []string, notify func(TerminalUpdate)) (any, *acp.RPCError) {
 	switch method {
 	case "terminal/create":
-		return tm.create(ctx, params, roots)
+		return tm.create(ctx, params, roots, notify)
 	case "terminal/output":
 		return tm.outputReq(params)
 	case "terminal/wait_for_exit":
@@ -92,7 +108,7 @@ func (tm *TerminalManager) Handle(ctx context.Context, method string, params jso
 	}
 }
 
-func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, roots []string) (any, *acp.RPCError) {
+func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, roots []string, notify func(TerminalUpdate)) (any, *acp.RPCError) {
 	var req acp.TerminalCreateRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: "invalid terminal/create params"}
@@ -143,6 +159,7 @@ func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, root
 		done:      make(chan struct{}),
 		cmd:       cmd,
 		lastUsed:  time.Now(),
+		notify:    notify,
 	}
 	if err := cmd.Start(); err != nil {
 		return nil, &acp.RPCError{Code: acp.CodeInternalError, Message: err.Error()}
@@ -150,12 +167,15 @@ func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, root
 	tm.mu.Lock()
 	tm.terms[t.id] = t
 	tm.mu.Unlock()
+	if notify != nil {
+		notify(TerminalUpdate{ID: t.id})
+	}
 	go func() {
-		buf := make([]byte, 32*1024)
 		var wg sync.WaitGroup
 		wg.Add(2)
 		read := func(r interface{ Read([]byte) (int, error) }) {
 			defer wg.Done()
+			buf := make([]byte, 32*1024)
 			for {
 				n, err := r.Read(buf)
 				if n > 0 {
@@ -174,8 +194,13 @@ func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, root
 		t.mu.Lock()
 		t.running = false
 		t.exit = status
+		t.version++
+		update := TerminalUpdate{ID: t.id, Output: string(t.full), ExitStatus: status, Version: t.version}
 		close(t.done)
 		t.mu.Unlock()
+		if t.notify != nil {
+			t.notify(update)
+		}
 		tm.log.Debug("terminal exited", "id", t.id, "command", t.command, "status", status)
 	}()
 	return acp.TerminalCreateResponse{TerminalID: t.id}, nil

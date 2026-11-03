@@ -96,6 +96,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.protected(s.handlePrompt))
 	mux.HandleFunc("POST /api/conversations/{id}/cancel", s.protected(s.handleCancel))
 	mux.HandleFunc("POST /api/conversations/{id}/retry", s.protected(s.handleRetry))
+	mux.HandleFunc("POST /api/conversations/{id}/prepare", s.protected(s.handlePrepareConversation))
+	mux.HandleFunc("POST /api/conversations/{id}/elicitations/{elicitationId}", s.protected(s.handleElicitationResponse))
 	mux.HandleFunc("POST /api/conversations/{id}/config", s.protected(s.handleSetConfig))
 	mux.HandleFunc("POST /api/conversations/{id}/agent", s.protected(s.handleSwitchAgent))
 	mux.HandleFunc("POST /api/conversations/{id}/routing", s.protected(s.handleRouting))
@@ -115,6 +117,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/agents/{id}", s.protected(s.handleDeleteAgent))
 	mux.HandleFunc("POST /api/agents/{id}/probe", s.protected(s.handleProbeAgent))
 	mux.HandleFunc("POST /api/agents/{id}/authenticate", s.protected(s.handleAuthenticateAgent))
+	mux.HandleFunc("GET /api/agents/{id}/auth-terminal", s.protected(s.handleAuthTerminal))
 	mux.HandleFunc("POST /api/agents/{id}/logout", s.protected(s.handleLogoutAgent))
 	mux.HandleFunc("GET /api/agents/{id}/logs", s.protected(s.handleAgentLogs))
 

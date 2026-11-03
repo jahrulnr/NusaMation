@@ -169,6 +169,7 @@ func (r *Runtime) EnsureSession(ctx context.Context, req EnsureRequest) (*Sessio
 }
 
 func (r *Runtime) loadOrCreate(ctx context.Context, s *Session, req EnsureRequest) (*Session, error) {
+	ctx = acp.WithRequestOwner(ctx, s.ConversationID())
 	s.ensureMu.Lock()
 	defer s.ensureMu.Unlock()
 	if s.isLoaded() {
@@ -361,12 +362,18 @@ func (r *Runtime) findSession(acpID string) *Session {
 }
 
 func (r *Runtime) Prompt(ctx context.Context, s *Session, blocks []acp.ContentBlock) (acp.PromptResult, error) {
+	ctx = acp.WithRequestOwner(ctx, s.ConversationID())
 	client, err := r.ensureClient(ctx)
 	if err != nil {
 		return acp.PromptResult{}, err
 	}
 	s.touch()
-	return client.Prompt(ctx, s.ACPID(), blocks)
+	result, err := client.Prompt(ctx, s.ACPID(), blocks)
+	if acp.IsAuthRequired(err) {
+		r.setState("needs_auth", trimErr(err))
+		return result, &AuthRequiredError{Methods: client.AuthMethods(), Err: err}
+	}
+	return result, err
 }
 
 func (r *Runtime) Cancel(ctx context.Context, s *Session) error {
@@ -378,6 +385,7 @@ func (r *Runtime) Cancel(ctx context.Context, s *Session) error {
 }
 
 func (r *Runtime) SetConfig(ctx context.Context, s *Session, configID string, value any) (json.RawMessage, error) {
+	ctx = acp.WithRequestOwner(ctx, s.ConversationID())
 	client, err := r.ensureClient(ctx)
 	if err != nil {
 		return nil, err
@@ -450,6 +458,11 @@ func (r *Runtime) Authenticate(ctx context.Context, methodID string) error {
 	client, err := r.ensureClient(ctx)
 	if err != nil {
 		return err
+	}
+	for _, method := range client.AuthMethods() {
+		if method.ID == methodID && method.Type == "terminal" {
+			return errors.New("this authentication method requires an interactive terminal, which is not available in the web UI")
+		}
 	}
 	if err := client.Authenticate(ctx, methodID); err != nil {
 		return err
@@ -625,9 +638,31 @@ func (h *runtimeHandler) OnRequest(ctx context.Context, method string, params js
 		if s == nil {
 			return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: "unknown session"}
 		}
-		return h.r.mgr.terminals.Handle(ctx, method, params, s.Roots())
+		return h.r.mgr.terminals.Handle(ctx, method, params, s.Roots(), func(update TerminalUpdate) {
+			h.r.mgr.Sink().TerminalUpdate(s, update)
+		})
 	case "elicitation/create":
-		return nil, &acp.RPCError{Code: acp.CodeMethodNotFound, Message: "elicitation is not supported by this client"}
+		var req struct {
+			SessionID string `json:"sessionId"`
+			Mode      string `json:"mode"`
+		}
+		if json.Unmarshal(params, &req) != nil || (req.Mode != "form" && req.Mode != "url") {
+			return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: "unsupported elicitation mode"}
+		}
+		s := h.r.findSession(req.SessionID)
+		if s == nil && acp.RequestOwner(ctx) != "" {
+			h.r.mu.Lock()
+			s = h.r.sessions[acp.RequestOwner(ctx)]
+			h.r.mu.Unlock()
+		}
+		if s == nil {
+			return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: "unknown elicitation session or request"}
+		}
+		response, err := h.r.mgr.Sink().Elicit(ctx, s, params)
+		if err != nil {
+			return nil, &acp.RPCError{Code: acp.CodeInternalError, Message: err.Error()}
+		}
+		return response, nil
 	default:
 		return nil, &acp.RPCError{Code: acp.CodeMethodNotFound, Message: "unsupported client method"}
 	}
