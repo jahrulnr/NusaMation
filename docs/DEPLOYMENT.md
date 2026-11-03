@@ -10,7 +10,53 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nusamation ./cmd/nusamation
 
 The binary contains the web UI. There is no Node/npm step. Copy `nusamation` to the host and create a data directory.
 
-## systemd
+## User service (recommended for a personal machine)
+
+For a single user on a Linux machine with a systemd user manager, the Makefile installs and supervises NusaMation without root:
+
+```bash
+make install
+```
+
+It builds and installs `~/.local/bin/nusamation`, creates `~/.nusamation` with mode `0700`, writes `~/.config/systemd/user/nusamation.service`, then enables and starts the service. An environment file is created at `~/.config/nusamation/env` only if it does not already exist:
+
+```ini
+NUSAMATION_ADDR=127.0.0.1:8787
+NUSAMATION_DATA_DIR=/home/you/.nusamation
+NUSAMATION_LOG_LEVEL=info
+```
+
+Edit that file to add `NUSAMATION_PUBLIC_URL` or other supported settings, then run `make service-restart`. The unit keeps `~/.local/bin` on `PATH` so agent CLIs installed there are visible to the service.
+
+`systemctl --user enable` makes the service start with the user session. `make install` also tries `loginctl enable-linger "$USER"` so it starts at boot without a login; when that is unavailable it prints the command to run manually:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+Useful targets:
+
+```bash
+make service-status
+make service-logs       # journalctl --user -u nusamation.service -f
+make service-restart
+make service-stop
+make service-start
+```
+
+The first-run admin password is printed to the service journal:
+
+```bash
+journalctl --user -u nusamation.service -n 60 --no-pager
+```
+
+If you already run NusaMation manually, stop it before installing; otherwise the service cannot bind port `8787`.
+
+`make uninstall` stops and removes the unit and binary but keeps `~/.nusamation` and `~/.config/nusamation`. `make purge` also deletes both of those directories. Use `purge` deliberately.
+
+## system-wide systemd
+
+Use this when NusaMation should run as a dedicated service account shared by multiple users or managed by root:
 
 ```ini
 # /etc/systemd/system/nusamation.service

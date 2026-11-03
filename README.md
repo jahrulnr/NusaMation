@@ -49,6 +49,47 @@ Forgot the password? Stop the app and reset it:
 
 If `devin` is on `PATH`, the first-run setup seeds a **Devin** agent with `devin acp`. Otherwise add any ACP CLI in **Control center → Agents**.
 
+### Install as a user service
+
+On Linux with a systemd user manager, install the binary and autostart it without root:
+
+```bash
+make install
+```
+
+This installs:
+
+| Path | Purpose |
+|---|---|
+| `~/.local/bin/nusamation` | Executable |
+| `~/.nusamation/` | Data directory (database, workspace, uploads, secrets) |
+| `~/.config/systemd/user/nusamation.service` | systemd user unit |
+| `~/.config/nusamation/env` | Optional environment overrides, created only when missing |
+
+The service is enabled for login and started immediately:
+
+```bash
+make service-status
+make service-logs      # journalctl --user -u nusamation.service -f
+make service-restart
+make service-stop
+make service-start
+```
+
+`make install` also tries to enable systemd lingering so the service starts at boot without a login. If `loginctl` is unavailable or not permitted, it prints the command to run manually:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+On first run, read the generated admin password from the journal:
+
+```bash
+journalctl --user -u nusamation.service -n 60 --no-pager
+```
+
+If port `8787` is already used by a manually started instance, stop that instance before `make install`. Re-running `make install` is safe: the environment file and data are not overwritten. `make uninstall` removes the binary and service but keeps data; `make purge` also removes the data and environment file.
+
 ### Run the demo agent
 
 The repository includes a deterministic fake ACP agent for UI and integration testing:
