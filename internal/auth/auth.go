@@ -29,8 +29,8 @@ func EnsureBootstrap(ctx context.Context, st *store.Store, envPassword string) (
 	if password == "" {
 		password = "nm_" + security.Token(9)
 	}
-	if len(password) < 8 {
-		return "", false, fmt.Errorf("NUSAMATION_PASSWORD must be at least 8 characters")
+	if len(password) < 4 {
+		return "", false, fmt.Errorf("NUSAMATION_PASSWORD must be at least 4 characters")
 	}
 	hash, err := security.HashPassword(password)
 	if err != nil {
@@ -58,8 +58,8 @@ func Verify(ctx context.Context, st *store.Store, password string) bool {
 }
 
 func SetPassword(ctx context.Context, st *store.Store, password string) error {
-	if len(password) < 8 {
-		return fmt.Errorf("password must be at least 8 characters")
+	if len(password) < 4 {
+		return fmt.Errorf("password must be at least 4 characters")
 	}
 	hash, err := security.HashPassword(password)
 	if err != nil {

@@ -367,14 +367,9 @@ func (s *Service) deliverOutbound(a *activeTurn) {
 	var ch channels.Channel
 	var target channels.Target
 	deliver := false
-	if a.turn.OriginChannel != "" && a.turn.OriginChannel != "web" {
-		a.mu.Lock()
-		routing := a.conv.Routing
-		a.mu.Unlock()
-		if routing.ReplyToOrigin {
-			if c, t, ok := s.originChannel(a); ok {
-				ch, target, deliver = c, t, true
-			}
+	if s.deliveryChannel(a) != "web" {
+		if c, t, ok := s.originChannel(a); ok {
+			ch, target, deliver = c, t, true
 		}
 	}
 	if deliver {

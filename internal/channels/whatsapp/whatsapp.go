@@ -67,6 +67,7 @@ type groupEntry struct {
 var _ channels.Channel = (*Channel)(nil)
 var _ channels.Controller = (*Channel)(nil)
 var _ channels.MediaSender = (*Channel)(nil)
+var _ channels.ResponseStyler = (*Channel)(nil)
 
 func New(st *appstore.Store, cfg config.Config, mgr *channels.Manager, log *slog.Logger) (*Channel, error) {
 	if log == nil {
@@ -98,6 +99,20 @@ func (c *Channel) SetHandler(h channels.InboundHandler) { c.handler = h }
 
 func (c *Channel) Name() string  { return "whatsapp" }
 func (c *Channel) Label() string { return "WhatsApp" }
+
+// ResponseRules tells the agent to write replies WhatsApp can render: only
+// WhatsApp markup, short messages, with files referenced by absolute path so
+// they are delivered as attachments.
+func (c *Channel) ResponseRules() string {
+	return "Your reply is delivered to WhatsApp. Format it with WhatsApp markup " +
+		"only: *bold*, _italic_, ~strikethrough~, `code`, ``` code blocks ```, " +
+		"> quotes, and simple lists — headings, tables, footnotes and HTML do " +
+		"not render. Write URLs out in full; a [text](url) link shows the " +
+		"markdown literally. Keep the reply short — text over 30,000 " +
+		"characters is truncated. To send the user a file, link its absolute " +
+		"path inside your working directory, e.g. [name](/absolute/path); the " +
+		"file arrives as an attachment and the link is stripped from the text."
+}
 
 func (c *Channel) Start(ctx context.Context) error {
 	c.mu.Lock()

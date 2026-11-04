@@ -153,6 +153,55 @@ func TestAuthCSRFAndConversationAPI(t *testing.T) {
 	if res.StatusCode != 200 || detail.Conversation.ID != created.Conversation.ID {
 		t.Fatalf("detail status=%d body=%#v", res.StatusCode, detail)
 	}
+
+	userMsg := store.Message{ConversationID: created.Conversation.ID, Role: "user", Text: "first"}
+	if err := st.AppendMessage(context.Background(), &userMsg); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := st.CreateTurn(context.Background(), created.Conversation.ID, userMsg.ID, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentMsg := store.Message{ConversationID: created.Conversation.ID, TurnID: turn.ID, Role: "assistant", Text: "answer"}
+	if err := st.AppendMessage(context.Background(), &agentMsg); err != nil {
+		t.Fatal(err)
+	}
+	res, err = client.Get(ts.URL + "/api/conversations/" + created.Conversation.ID + "/messages?before=3&limit=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var page struct {
+		Messages []messageView         `json:"messages"`
+		Turns    map[string]store.Turn `json:"turns"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if len(page.Messages) != 2 || page.Messages[0].ID != userMsg.ID || page.Turns[turn.ID].UserMessageID != userMsg.ID {
+		t.Fatalf("history page did not include messages and their turn: %#v", page)
+	}
+
+	for _, tc := range []struct {
+		password string
+		want     int
+	}{{"abc", http.StatusBadRequest}, {"abcd", http.StatusOK}} {
+		payload, _ := json.Marshal(map[string]string{"current": "test-password-123", "new": tc.password})
+		req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/auth/password", bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", login.CSRF)
+		res, err = client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		if res.StatusCode != tc.want {
+			t.Fatalf("password length %d: status = %d, want %d", len(tc.password), res.StatusCode, tc.want)
+		}
+	}
+	if !auth.Verify(context.Background(), st, "abcd") {
+		t.Fatal("four-character password was not saved")
+	}
 }
 
 func min(a, b int) int {

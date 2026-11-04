@@ -420,6 +420,25 @@ func (s *Service) ActiveStatus(conversationID string) (turnID, status string, ok
 	return a.turn.ID, a.turn.Status, true
 }
 
+// ActiveMessageTexts returns the current in-memory stream, including chunks not
+// yet flushed to storage. The snapshot pairs with offsetBytes on delta events.
+func (s *Service) ActiveMessageTexts(conversationID string) map[string]string {
+	result := make(map[string]string)
+	a := s.activeFor(conversationID)
+	if a == nil {
+		return result
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.assistantID != "" {
+		result[a.assistantID] = a.assistant.String()
+	}
+	if a.thoughtID != "" {
+		result[a.thoughtID] = a.thought.String()
+	}
+	return result
+}
+
 func (s *Service) CreateConversation(ctx context.Context, agentID, title, cwd, channel, ref string) (store.Conversation, error) {
 	var defaults store.AgentDefaults
 	_ = s.store.GetJSONSetting(ctx, "agent.defaults", &defaults)

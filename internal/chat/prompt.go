@@ -127,6 +127,7 @@ func (s *Service) runPrompt(a *activeTurn) (status, stopReason string, runErr er
 	if len(blocks) == 0 {
 		return "error", "", errors.New("nothing to send to the agent")
 	}
+	blocks = s.withChannelRules(a, blocks)
 	if !a.beginPrompt() {
 		return "cancelled", "cancelled", nil
 	}
@@ -334,6 +335,56 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 	return blocks
 }
 
+// withChannelRules appends the delivery surface's formatting rules as the
+// last prompt block so it is the freshest instruction in the turn.
+func (s *Service) withChannelRules(a *activeTurn, blocks []acp.ContentBlock) []acp.ContentBlock {
+	if rules := s.responseRules(a); rules != "" {
+		blocks = append(blocks, acp.ContentBlock{Type: "text", Text: rules})
+	}
+	return blocks
+}
+
+// responseRules returns the formatting rules of the channel this turn's reply
+// will be delivered on, wrapped in the system-reminder tag Claude Code uses
+// for injected context. The text rides inside the user turn: appended at the
+// tail it never invalidates the session's cached prompt prefix, and being
+// byte-identical per channel it becomes part of that prefix on later turns.
+// Channels without a declared style contribute no block.
+func (s *Service) responseRules(a *activeTurn) string {
+	if s.channels == nil {
+		return ""
+	}
+	ch, ok := s.channels.Get(s.deliveryChannel(a))
+	if !ok {
+		return ""
+	}
+	styler, ok := ch.(channels.ResponseStyler)
+	if !ok {
+		return ""
+	}
+	rules := strings.TrimSpace(styler.ResponseRules())
+	if rules == "" {
+		return ""
+	}
+	return "<system-reminder>\n" + rules + "\n</system-reminder>"
+}
+
+// deliveryChannel resolves the channel this turn's reply is delivered on: the
+// origin channel when reply-to-origin applies, otherwise the web UI.
+func (s *Service) deliveryChannel(a *activeTurn) string {
+	name := a.turn.OriginChannel
+	if name == "" || name == "web" {
+		return "web"
+	}
+	a.mu.Lock()
+	reply := a.conv.Routing.ReplyToOrigin
+	a.mu.Unlock()
+	if !reply {
+		return "web"
+	}
+	return name
+}
+
 // fileURI builds a proper file:// URL — percent-encoding keeps paths with
 // spaces or non-ASCII names valid.
 func fileURI(path string) string {
@@ -388,13 +439,7 @@ func (s *Service) recordPromptUsage(a *activeTurn, raw json.RawMessage) {
 }
 
 func (s *Service) startDelivery(a *activeTurn) {
-	if a.turn.OriginChannel == "" || a.turn.OriginChannel == "web" {
-		return
-	}
-	a.mu.Lock()
-	routing := a.conv.Routing
-	a.mu.Unlock()
-	if !routing.ReplyToOrigin {
+	if s.deliveryChannel(a) == "web" {
 		return
 	}
 	ch, target, ok := s.originChannel(a)

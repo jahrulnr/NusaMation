@@ -134,8 +134,19 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 	}
 	approvals, _ := s.store.ListApprovalsForConversation(r.Context(), id, 100)
 	views := s.hydrateMessages(r, msgs)
+	liveTexts := s.chat.ActiveMessageTexts(id)
+	for i := range views {
+		if text, ok := liveTexts[views[i].ID]; ok {
+			views[i].Text = text
+		}
+	}
 	configs, _ := s.chat.ConversationConfig(r.Context(), id)
 	activeTurnID, activeStatus, active := s.chat.ActiveStatus(id)
+	if active {
+		if turn, err := s.store.GetTurn(r.Context(), activeTurnID); err == nil {
+			turns[turn.ID] = turn
+		}
+	}
 	ag, _ := s.store.GetAgent(r.Context(), conv.AgentID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"conversation": conv,
@@ -252,8 +263,20 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "messages", err.Error())
 		return
 	}
+	turns := make(map[string]store.Turn)
+	for _, msg := range msgs {
+		if msg.TurnID == "" {
+			continue
+		}
+		if _, ok := turns[msg.TurnID]; !ok {
+			if turn, err := s.store.GetTurn(r.Context(), msg.TurnID); err == nil {
+				turns[msg.TurnID] = turn
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"messages": s.hydrateMessages(r, msgs),
+		"turns":    turns,
 		"hasMore":  len(msgs) == limit,
 	})
 }

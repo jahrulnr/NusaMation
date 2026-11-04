@@ -8,11 +8,13 @@
   <title>NusaMation</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/vendor/highlight.css">
-  <link rel="stylesheet" href="/static/app.css?v=17">
+  <link rel="stylesheet" href="/static/vendor/katex.min.css">
+  <link rel="stylesheet" href="/static/app.css?v=20">
   <script defer src="/static/vendor/marked.min.js"></script>
   <script defer src="/static/vendor/purify.min.js"></script>
+  <script defer src="/static/vendor/markdown-math.min.js"></script>
   <script defer src="/static/vendor/highlight.min.js"></script>
-  <script defer src="/static/app.js?v=18"></script>
+  <script defer src="/static/app.js?v=21"></script>
 </head>
 <body>
   <svg xmlns="http://www.w3.org/2000/svg" class="svg-defs" aria-hidden="true">
@@ -54,7 +56,7 @@
     <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m4 18 5-5 4 4 3-3 4 4"/></symbol>
     <symbol id="i-wifi-off" viewBox="0 0 24 24"><path d="M3 3l18 18M8.5 8.5A12 12 0 0 1 21 9M2 9a15 15 0 0 1 3.5-2M5 13a10 10 0 0 1 4-2M8.5 17a5 5 0 0 1 7 0M12 21h.01"/></symbol>
   </svg>
-  <div id="app" class="boot"><div class="boot-orb"></div><div class="boot-name">NusaMation</div><div class="boot-sub">waking your agent mesh…</div></div>
+  <div id="app"><div class="boot-skeleton" role="status" aria-label="Loading NusaMation"><aside><span class="skeleton-line short"></span><span class="skeleton-line"></span><span class="skeleton-line"></span><span class="skeleton-line short"></span></aside><main><header><span class="skeleton-line short"></span></header><div class="chat-skeleton"><div class="skeleton-message user"><span></span><span></span></div><div class="skeleton-message assistant"><i></i><span></span><span></span><span></span></div><div class="skeleton-message user"><span></span><span></span></div></div><footer><span class="skeleton-line"></span></footer></main></div></div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
   <div id="modal-root"></div>
   <noscript><div class="noscript">NusaMation needs JavaScript enabled.</div></noscript>

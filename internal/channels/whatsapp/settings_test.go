@@ -1,6 +1,9 @@
 package whatsapp
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestAllowlistAndNormalization(t *testing.T) {
 	s := DefaultSettings()
@@ -31,5 +34,14 @@ func TestSettingsGroupPolicyNormalization(t *testing.T) {
 	}
 	if NormalizeNumber("+62 (812) 3456") != "628123456" {
 		t.Fatalf("NormalizeNumber = %q", NormalizeNumber("+62 (812) 3456"))
+	}
+}
+
+func TestResponseRulesCoversWhatsAppSurface(t *testing.T) {
+	rules := (&Channel{}).ResponseRules()
+	for _, marker := range []string{"*bold*", "_italic_", "~strikethrough~", "30,000", "attachment"} {
+		if !strings.Contains(rules, marker) {
+			t.Fatalf("rules %q missing %q", rules, marker)
+		}
 	}
 }

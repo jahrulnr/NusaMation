@@ -100,8 +100,12 @@
     draftPreviewSeq: 0,
     booted: false,
     loadingConversation: false,
+    loadingDeltas: [],
     loadError: "",
     loadSeq: 0,
+    historyHasMore: false,
+    historyLoading: false,
+    historyError: "",
     preparing: "",
     prepareController: null,
     slowTimer: null,
@@ -259,12 +263,19 @@
   }
 
   /* ---------------- markdown ---------------- */
-  function renderMarkdown(text) {
+  const markdownCache = new Map();
+  function renderMarkdown(text, scope = "preview") {
+    const source = String(text || "");
+    const cached = markdownCache.get(scope);
+    if (cached?.source === source) return cached.html;
     if (window.marked && window.DOMPurify) {
       try {
-        window.marked.setOptions({ gfm: true, breaks: true });
-        let html = window.marked.parse(String(text || ""));
+        const parser = new window.marked.Marked({ gfm: true, breaks: true });
+        if (window.NusaMarkdown) parser.use(window.NusaMarkdown.latex(), window.NusaMarkdown.math(), window.NusaMarkdown.markedFootnote({ prefixId: "footnote-" + scope.replace(/[^a-zA-Z0-9_-]/g, "-") + "-" }), window.NusaMarkdown.emoji());
+        let html = parser.parse(source);
         html = window.DOMPurify.sanitize(html, { ADD_ATTR: ["target", "rel"] });
+        if (!markdownCache.has(scope) && markdownCache.size >= 3000) markdownCache.delete(markdownCache.keys().next().value);
+        markdownCache.set(scope, { source, html });
         return html;
       } catch (e) {
         console.warn("markdown failed", e);
@@ -273,15 +284,157 @@
     return `<p>${esc(text).replace(/\n/g, "<br>")}</p>`;
   }
 
+  function plainMarkdown(text) {
+    const el = document.createElement("div");
+    el.innerHTML = renderMarkdown(text);
+    return (el.textContent || "").replace(/\s+/g, " ").trim();
+  }
+
+  let mermaidModule;
+  let mermaidAttempt = 0;
+  let diagramID = 0;
+
+  function setupDiagramZoom(figure, width) {
+    const viewport = $(".diagram-viewport", figure);
+    const svg = $("svg", viewport);
+    let scale = 1;
+    const setScale = (next, x, y) => {
+      const box = viewport.getBoundingClientRect();
+      const before = svg.getBoundingClientRect();
+      const anchorX = x ?? box.left + box.width / 2;
+      const anchorY = y ?? box.top + box.height / 2;
+      const fractionX = before.width ? (anchorX - before.left) / before.width : 0.5;
+      const fractionY = before.height ? (anchorY - before.top) / before.height : 0.5;
+      scale = Math.max(0.25, Math.min(5, next));
+      svg.style.width = (width * scale) + "px";
+      const after = svg.getBoundingClientRect();
+      viewport.scrollLeft += after.left + fractionX * after.width - anchorX;
+      viewport.scrollTop += after.top + fractionY * after.height - anchorY;
+      $(".diagram-scale", figure).textContent = Math.round(scale * 100) + "%";
+    };
+    figure.addEventListener("click", (event) => {
+      const action = event.target.closest("[data-diagram-zoom]")?.dataset.diagramZoom;
+      if (!action) return;
+      event.stopPropagation();
+      setScale(action === "reset" ? 1 : scale * (action === "in" ? 1.25 : 0.8));
+    });
+    viewport.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      setScale(scale * Math.exp(-event.deltaY * 0.002), event.clientX, event.clientY);
+    }, { passive: false });
+    let drag = null;
+    viewport.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse" && event.button === 0) {
+        drag = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop, active: false };
+      }
+    });
+    viewport.addEventListener("pointermove", (event) => {
+      if (!drag || event.pointerType !== "mouse") return;
+      const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+      if (!drag.active && Math.hypot(dx, dy) < 4) return;
+      if (!drag.active) { drag.active = true; viewport.setPointerCapture(event.pointerId); viewport.classList.add("dragging"); }
+      viewport.scrollLeft = drag.left - dx;
+      viewport.scrollTop = drag.top - dy;
+      event.preventDefault();
+    });
+    const endDrag = () => { drag = null; viewport.classList.remove("dragging"); };
+    viewport.addEventListener("pointerup", endDrag);
+    viewport.addEventListener("pointercancel", endDrag);
+    let initialDistance = 0, initialScale = 1;
+    const distance = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+    viewport.addEventListener("touchstart", (event) => {
+      if (event.touches.length === 2) { initialDistance = distance(event.touches); initialScale = scale; event.preventDefault(); }
+    }, { passive: false });
+    viewport.addEventListener("touchmove", (event) => {
+      if (event.touches.length === 2 && initialDistance) {
+        event.preventDefault();
+        setScale(initialScale * distance(event.touches) / initialDistance,
+          (event.touches[0].clientX + event.touches[1].clientX) / 2,
+          (event.touches[0].clientY + event.touches[1].clientY) / 2);
+      }
+    }, { passive: false });
+    viewport.addEventListener("touchend", (event) => { if (event.touches.length < 2) initialDistance = 0; });
+    setScale(1);
+  }
+
+  async function renderDiagram(pre, code) {
+    const source = code.textContent;
+    const placeholder = document.createElement("div");
+    placeholder.className = "diagram-skeleton";
+    placeholder.setAttribute("role", "status");
+    placeholder.setAttribute("aria-label", "Loading diagram");
+    placeholder.innerHTML = `<div class="skeleton-line short"></div><div class="skeleton-diagram-row"><span></span><span></span><span></span></div>`;
+    pre.before(placeholder);
+    pre.hidden = true;
+    $(".diagram-retry", pre)?.remove();
+    let moduleLoaded = false;
+    try {
+      mermaidModule ||= import(`/static/vendor/pele.min.js${mermaidAttempt ? "?retry=" + mermaidAttempt : ""}`);
+      const { render } = await mermaidModule;
+      moduleLoaded = true;
+      // Unique SVG IDs keep markers and accessibility references independent.
+      const prefix = "diagram-" + (++diagramID);
+      const result = render(source, { idPrefix: prefix, responsive: false, autoDirection: false,
+        limit: Number.MAX_SAFE_INTEGER, outputLimit: Number.MAX_SAFE_INTEGER, maxEdges: Number.MAX_SAFE_INTEGER });
+      if (!pre.isConnected) return;
+      const figure = document.createElement("div");
+      figure.className = "mermaid-diagram";
+      figure._diagramSource = source;
+      figure.innerHTML = `<div class="diagram-toolbar"><button type="button" data-diagram-zoom="out" aria-label="Zoom out">−</button><button type="button" data-diagram-zoom="reset" class="diagram-scale" aria-label="Reset zoom">100%</button><button type="button" data-diagram-zoom="in" aria-label="Zoom in">+</button></div><div class="diagram-viewport"></div><details class="diagram-source"><summary>Diagram source</summary><pre><code></code></pre></details>`;
+      $(".diagram-viewport", figure).innerHTML = window.DOMPurify.sanitize(result.svg, { USE_PROFILES: { svg: true, svgFilters: true } });
+      $(".diagram-source code", figure).textContent = source;
+      if (!$("svg", figure)) throw new Error("Diagram SVG was not rendered");
+      placeholder.remove();
+      pre.replaceWith(figure);
+      setupDiagramZoom(figure, result.width);
+    } catch (err) {
+      // Keep the original code visible when syntax is incomplete or unsupported.
+      placeholder.remove();
+      pre.hidden = false;
+      if (!moduleLoaded && pre.isConnected) {
+        mermaidModule = null;
+        mermaidAttempt++;
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "diagram-retry";
+        retry.textContent = "Retry diagram";
+        retry.addEventListener("click", (event) => { event.stopPropagation(); renderDiagram(pre, code); });
+        pre.appendChild(retry);
+      }
+      console.warn("Could not render diagram", err);
+    }
+  }
+
+  const svgWidths = new Map();
+  function sizeSVGImage(img) {
+    if (img.hasAttribute("width") || img.hasAttribute("height") || !/\.svg(?:[?#]|$)/i.test(img.src)) return;
+    let size = svgWidths.get(img.src);
+    if (!size) {
+      size = fetch(img.src).then((r) => r.ok ? r.text() : "").then((text) => {
+        const svg = new DOMParser().parseFromString(text, "image/svg+xml").documentElement;
+        const width = svg.getAttribute("width");
+        if (width && /^\d+(?:\.\d+)?(?:px)?$/.test(width)) return parseFloat(width);
+        const viewBox = (svg.getAttribute("viewBox") || "").trim().split(/[ ,]+/).map(Number);
+        return viewBox.length === 4 ? viewBox[2] : 0;
+      }).catch(() => 0);
+      svgWidths.set(img.src, size);
+    }
+    size.then((width) => {
+      if (img.isConnected && (width || img.naturalWidth)) img.style.width = (width || img.naturalWidth) + "px";
+    });
+  }
+
   function enhanceMarkdown(root) {
     if (!root) return;
+    $$(".markdown img", root).forEach(sizeSVGImage);
     $$("a", root).forEach((a) => {
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
+      if (!a.getAttribute("href")?.startsWith("#")) { a.target = "_blank"; a.rel = "noopener noreferrer"; }
     });
     $$("pre", root).forEach((pre) => {
       if (pre.dataset.enhanced) return;
       pre.dataset.enhanced = "1";
+      const diagram = $("code.language-mermaid", pre);
+      if (diagram) renderDiagram(pre, diagram);
       pre.style.position = "relative";
       if (!pre.classList.contains("tool-pre")) {
         const btn = document.createElement("button");
@@ -393,6 +546,10 @@
   }
 
   /* ---------------- app start ---------------- */
+  function bootSkeletonHTML() {
+    return `<div class="boot-skeleton" role="status" aria-label="Loading NusaMation"><aside><span class="skeleton-line short"></span><span class="skeleton-line"></span><span class="skeleton-line"></span><span class="skeleton-line short"></span></aside><main><header><span class="skeleton-line short"></span></header><div class="chat-skeleton"><div class="skeleton-message user"><span></span><span></span></div><div class="skeleton-message assistant"><i></i><span></span><span></span><span></span></div><div class="skeleton-message user"><span></span><span></span></div></div><footer><span class="skeleton-line"></span></footer></main></div>`;
+  }
+
   async function startApp() {
     S.booted = true;
     S.current = null;
@@ -404,7 +561,8 @@
     S.approvalsById = new Map();
     const app = $("#app");
     app.className;
-    app.innerHTML = `<div class="boot"><div class="boot-orb"></div><div class="boot-name">NusaMation</div><div class="boot-sub">loading your agent mesh…</div></div>`;
+    app.className = "";
+    app.innerHTML = bootSkeletonHTML();
     try {
       const data = await api("/bootstrap");
       applyBootstrap(data);
@@ -479,10 +637,17 @@
   async function loadConversation(id, push = true) {
     const seq = ++S.loadSeq;
     S.loadingConversation = true;
+    S.loadingDeltas = [];
     S.loadError = "";
+    S.historyHasMore = false;
+    S.historyLoading = false;
+    S.historyError = "";
     switchComposer(id);
     S.scrollPinned = true;
     S.current = S.conversations.find((c) => c.id === id) || S.current;
+    S.messages = [];
+    S.turns = {};
+    S.active = null;
     S.configs = [];
     renderSidebar();
     renderTopbar();
@@ -492,8 +657,27 @@
     try {
       const data = await api(`/conversations/${encodeURIComponent(id)}`);
       if (seq !== S.loadSeq) return;
+      const duringLoad = S.messages.filter((message) => message.conversationId === id);
+      const bufferedDeltas = S.loadingDeltas;
+      S.loadingDeltas = [];
       S.current = data.conversation;
       S.messages = (data.messages || []).map(normalizeMessage);
+      const received = new Set(S.messages.map((message) => message.id));
+      duringLoad.forEach((message) => {
+        if (!received.has(message.id)) S.messages.push(message);
+        else if (message.status && message.status !== "streaming") {
+          const index = S.messages.findIndex((item) => item.id === message.id);
+          S.messages[index] = message;
+        }
+      });
+      S.messages.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+      let streamGap = false;
+      for (const delta of bufferedDeltas) {
+        if (typeof delta.offsetBytes !== "number") continue;
+        const message = S.messages.find((item) => item.id === delta.messageId);
+        if (!message || applyStreamDelta(message, delta) === "gap") streamGap = true;
+      }
+      S.historyHasMore = S.messages.length > 0 && Number(S.messages[0].seq) > 1;
       S.turns = data.turns || {};
       S.configs = data.configs || parseConfigs(data.conversation.configOptions);
       S.active = data.active && data.active.running ? data.active : null;
@@ -512,9 +696,11 @@
       showPendingRequest();
       closeMobileSidebar();
       if (!S.active) prepareComposer();
+      if (streamGap) scheduleStreamResync(id);
     } catch (e) {
       if (seq !== S.loadSeq) return;
       S.loadingConversation = false;
+      S.loadingDeltas = [];
       if (e.status === 404) {
         S.conversations = S.conversations.filter((c) => c.id !== id);
         S.current = null;
@@ -532,6 +718,42 @@
         renderChat();
       }
     }
+  }
+
+  async function loadOlderMessages() {
+    if (!S.current || !S.historyHasMore || S.historyLoading || !S.messages.length) return;
+    const id = S.current.id, seq = S.loadSeq, before = S.messages[0].seq;
+    const sc = $("#chat-scroll");
+    S.historyLoading = true;
+    S.historyError = "";
+    renderHistoryControl();
+    try {
+      const data = await api(`/conversations/${encodeURIComponent(id)}/messages?before=${encodeURIComponent(before)}&limit=100`);
+      if (seq !== S.loadSeq || S.current?.id !== id) return;
+      const oldHeight = sc.scrollHeight, oldTop = sc.scrollTop;
+      const known = new Set(S.messages.map((m) => m.id));
+      const older = (data.messages || []).map(normalizeMessage).filter((m) => !known.has(m.id));
+      S.messages = older.concat(S.messages);
+      Object.values(data.turns || {}).forEach(upsertTurn);
+      S.historyHasMore = older.length > 0 && Number(older[0].seq) > 1;
+      S.historyLoading = false;
+      S.scrollPinned = false;
+      renderChat();
+      sc.scrollTop = oldTop + (sc.scrollHeight - oldHeight);
+    } catch (e) {
+      if (seq !== S.loadSeq || S.current?.id !== id) return;
+      S.historyLoading = false;
+      S.historyError = e.message;
+      renderHistoryControl();
+    }
+  }
+
+  function renderHistoryControl() {
+    const el = $("#history-control");
+    if (!el) return;
+    el.innerHTML = S.historyLoading
+      ? `<div class="history-skeleton" role="status" aria-label="Loading earlier messages"><span class="skeleton-line"></span><span class="skeleton-line short"></span></div>`
+      : S.historyHasMore ? `<button class="btn btn-secondary btn-sm" data-action="load-older">${S.historyError ? "Retry loading earlier messages" : "Load earlier messages"}</button>` : "";
   }
 
   function setRoute(id) {
@@ -582,7 +804,10 @@
       sc.addEventListener(type, () => { userScrollAt = Date.now(); }, { passive: true });
     }
     sc.addEventListener("scroll", () => {
-      if (Date.now() - userScrollAt < 1000) S.scrollPinned = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 140;
+      if (Date.now() - userScrollAt < 1000) {
+        S.scrollPinned = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 140;
+        if (sc.scrollTop < 160 && S.historyHasMore && !S.historyError && !S.loadingConversation) loadOlderMessages();
+      }
     }, { passive: true });
     renderSidebar();
     renderTopbar();
@@ -650,11 +875,7 @@
           <span class="grow"></span>
           ${S.approvals.length ? `<button class="badge-soft amber" data-action="open-approvals">${icon("shield", "sm")} ${S.approvals.length}</button>` : ""}
         </div>
-        <div class="user-row" data-action="open-account">
-          <div class="user-avatar">AD</div>
-          <div class="grow"><div class="user-name">Administrator</div><div class="user-sub">Local owner</div></div>
-          ${icon("settings", "sm")}
-        </div>
+
       </div>`;
     filterSidebar();
   }
@@ -756,8 +977,8 @@
     const wasPinned = S.scrollPinned || S.messages.length === 0;
     const focused = document.activeElement?.closest?.("[data-action][data-id]");
     const focusedAction = focused && chat.contains(focused) ? [focused.dataset.action, focused.dataset.id] : null;
-    if (skeleton || (S.loadingConversation && !S.messages.length)) {
-      chat.innerHTML = `<div class="loading-row"><span class="spinner"></span> Loading conversation…</div>`;
+    if (skeleton || S.loadingConversation) {
+      chat.innerHTML = `<div class="chat-skeleton" role="status" aria-label="Loading conversation"><div class="skeleton-message user"><span></span><span></span></div><div class="skeleton-message assistant"><i></i><span></span><span></span><span></span></div><div class="skeleton-message user"><span></span><span></span></div><div class="skeleton-message assistant"><i></i><span></span><span></span></div></div>`;
       return;
     }
     if (S.loadError && S.loadError === S.current?.id) {
@@ -774,39 +995,91 @@
       enhanceMarkdown(chat);
       return;
     }
-    const html = [];
+    const rows = [{ key: "history", html: `<div id="history-control"></div>` }];
     const plan = planEntries(S.current.plan);
-    if (plan.length) html.push(planCard(plan));
+    if (plan.length) rows.push({ key: "plan", html: planCard(plan) });
     let lastDay = "";
-    const savedScroll = new Map($$(".tool-pre", chat).map((el) => [el.dataset.scrollKey, [el.scrollTop, el.scrollLeft]]));
-    for (let i = 0; i < S.messages.length;) {
-      const m = S.messages[i];
+    const userSeq = new Map(S.messages.filter((m) => m.role === "user").map((m) => [m.id, m.seq]));
+    const turnSeq = new Map(Object.values(S.turns).filter((t) => userSeq.has(t.userMessageId)).map((t) => [t.id, userSeq.get(t.userMessageId)]));
+    const messages = S.messages.slice().sort((a, b) => (turnSeq.get(a.turnId) ?? a.seq) - (turnSeq.get(b.turnId) ?? b.seq) || a.seq - b.seq);
+    const toolCounts = new Map();
+    messages.forEach((m) => { if (m.kind === "tool") toolCounts.set(m.turnId, (toolCounts.get(m.turnId) || 0) + 1); });
+    for (let i = 0; i < messages.length;) {
+      const m = messages[i];
       const day = dayLabel(m.createdAt);
       if (day && day !== lastDay) {
-        html.push(`<div class="chat-date">${esc(day)}</div>`);
+        rows.push({ key: "date:" + m.id, html: `<div class="chat-date">${esc(day)}</div>` });
         lastDay = day;
       }
       if (m.turnId && (m.kind === "thought" || m.kind === "tool")) {
         const group = [];
-        while (i < S.messages.length && S.messages[i].turnId === m.turnId && (S.messages[i].kind === "thought" || S.messages[i].kind === "tool")) group.push(S.messages[i++]);
-        if (group.filter((item) => item.kind === "tool").length > 1) html.push(activityHTML(group));
-        else group.forEach((item) => html.push(messageHTML(item)));
+        while (i < messages.length && messages[i].turnId === m.turnId && (messages[i].kind === "thought" || messages[i].kind === "tool")) group.push(messages[i++]);
+        if (group.filter((item) => item.kind === "tool").length > 1) rows.push({ key: "activity:" + m.turnId + ":" + m.id, html: activityHTML(group, toolCounts.get(m.turnId)) });
+        else group.forEach((item) => rows.push({ key: "message:" + item.id, html: messageHTML(item) }));
       } else {
-        html.push(messageHTML(m));
+        rows.push({ key: "message:" + m.id, html: messageHTML(m) });
         i++;
       }
     }
     const pending = currentApprovals();
-    if (pending.length) {
-      pending.forEach((a) => html.push(approvalCard(a)));
+    pending.forEach((a) => rows.push({ key: "approval:" + a.id, html: approvalCard(a) }));
+    if (S.active && S.active.running && !pending.length) rows.push({ key: "typing", html: typingHTML() });
+
+    // Reuse unchanged rows: a new tool or turn should not rebuild thousands of
+    // existing messages, or discard their diagrams and interactive state.
+    const existing = new Map(Array.from(chat.children).filter((el) => el.dataset.renderKey).map((el) => [el.dataset.renderKey, el]));
+    const desired = new Map(rows.map((row) => [row.key, row.html]));
+    const savedScroll = new Map(), savedDiagrams = new Map(), detailsState = new Map();
+    for (const [key, element] of existing) {
+      if (desired.get(key) === element._renderHTML) continue;
+      $$(".tool-pre", element).forEach((el) => savedScroll.set(el.dataset.scrollKey, [el.scrollTop, el.scrollLeft]));
+      const messageNodes = element.matches("[data-msg-id]") ? [element, ...$$("[data-msg-id]", element)] : $$("[data-msg-id]", element);
+      messageNodes.forEach((el) => {
+        $$("pre > code.language-mermaid, .mermaid-diagram", el).forEach((node, index) => {
+          if (node.classList.contains("mermaid-diagram")) savedDiagrams.set(el.dataset.msgId + ":" + index, node);
+        });
+        detailsState.set(el.dataset.msgId, $$(".markdown details", el).map((d) => d.open));
+      });
     }
-    if (S.active && S.active.running && !pending.length) html.push(typingHTML());
-    chat.innerHTML = html.join("");
-    enhanceMarkdown(chat);
-    $$(".tool-pre", chat).forEach((el) => {
-      const pos = savedScroll.get(el.dataset.scrollKey);
-      if (pos) [el.scrollTop, el.scrollLeft] = pos;
-    });
+    const changed = [];
+    let cursor = chat.firstElementChild;
+    for (const row of rows) {
+      let node = existing.get(row.key);
+      if (!node || node._renderHTML !== row.html) {
+        if (node) {
+          if (cursor === node) cursor = node.nextElementSibling;
+          node.remove();
+        }
+        const wrapper = document.createElement("div");
+        wrapper.innerHTML = row.html;
+        node = wrapper.firstElementChild;
+        node.dataset.renderKey = row.key;
+        node._renderHTML = row.html;
+        changed.push(node);
+      }
+      if (node !== cursor) chat.insertBefore(node, cursor);
+      cursor = node.nextElementSibling;
+    }
+    while (cursor) { const next = cursor.nextElementSibling; cursor.remove(); cursor = next; }
+    renderHistoryControl();
+    for (const root of changed) {
+      const messageNodes = root.matches("[data-msg-id]") ? [root, ...$$("[data-msg-id]", root)] : $$("[data-msg-id]", root);
+      messageNodes.forEach((el) => {
+        $$("pre > code.language-mermaid", el).forEach((code, index) => {
+          const previous = savedDiagrams.get(el.dataset.msgId + ":" + index);
+          if (previous && previous._diagramSource === code.textContent) code.parentElement.replaceWith(previous);
+        });
+      });
+      enhanceMarkdown(root);
+      messageNodes.forEach((el) => $$(".markdown details", el).forEach((d, i) => {
+        const saved = detailsState.get(el.dataset.msgId);
+        if (saved && i < saved.length) d.open = saved[i];
+      }));
+      $$(".tool-pre", root).forEach((el) => {
+        const pos = savedScroll.get(el.dataset.scrollKey);
+        if (pos) [el.scrollTop, el.scrollLeft] = pos;
+      });
+    }
     if (focusedAction) {
       const next = $$("[data-action][data-id]", chat).find((el) => el.dataset.action === focusedAction[0] && el.dataset.id === focusedAction[1]);
       if (next) next.focus({ preventScroll: true });
@@ -847,7 +1120,7 @@
     return `<div class="msg user" data-msg-id="${esc(m.id)}">
       <div class="msg-body">
         ${messageHead(m)}
-        <div class="user-bubble markdown">${renderMarkdown(m.text)}</div>
+        <div class="user-bubble markdown">${renderMarkdown(m.text, m.id)}</div>
         ${attachmentsHTML(m.attachments)}
         ${queueStatusLabel(m) ? `<div class="queue-status">${esc(queueStatusLabel(m))}</div>` : ""}
       </div>
@@ -862,7 +1135,7 @@
       <div class="msg-avatar">${agentOrb(agent, "agent-orb")}</div>
       <div class="msg-body">
         ${messageHead(m)}
-        <div class="markdown">${renderMarkdown(text)}${streaming ? `<span class="streaming-caret"></span>` : ""}</div>
+        <div class="markdown">${renderMarkdown(text, m.id)}${streaming ? `<span class="streaming-caret"></span>` : ""}</div>
         ${attachmentsHTML(m.attachments)}
       </div>
     </div>`;
@@ -871,7 +1144,7 @@
   function thoughtHTML(m) {
     const open = S.openThoughts.has(m.id);
     const streaming = m.status === "streaming";
-    const preview = truncate((m.text || "").replace(/\s+/g, " "), 110);
+    const preview = truncate(plainMarkdown(m.text || ""), 110);
     return `<div class="msg assistant" data-msg-id="${esc(m.id)}">
       <div class="msg-avatar" style="background:rgba(180,155,255,.1);border-color:rgba(180,155,255,.22);color:var(--purple)">${icon("brain")}</div>
       <div class="msg-body">
@@ -881,13 +1154,13 @@
             <span class="preview">${esc(preview || (streaming ? "…" : ""))}</span>
             ${icon("chevron-right", "chev")}
           </button>
-          <div class="thought-body markdown">${renderMarkdown(m.text || "")}</div>
+          <div class="thought-body markdown">${renderMarkdown(m.text || "", "thought-" + m.id)}</div>
         </div>
       </div>
     </div>`;
   }
 
-  function activityHTML(messages) {
+  function activityHTML(messages, allTurnTools) {
     const id = messages[0].turnId + ":" + messages[0].id;
     const tools = messages.filter((m) => m.kind === "tool");
     // Follow the turn, not the messages: message status goes idle between tool calls and made the label flicker.
@@ -896,7 +1169,6 @@
     // Collapsed by default. Only the user's toggle opens it, so appending tool calls never flips it.
     const open = S.activityExpanded.get(id) === true;
     const turn = S.turns[messages[0].turnId];
-    const allTurnTools = S.messages.filter((m) => m.turnId === messages[0].turnId && m.kind === "tool").length;
     const seconds = tools.length === allTurnTools && turn?.startedAt && turn?.endedAt && turn.endedAt >= turn.startedAt ? Math.round((turn.endedAt - turn.startedAt) / 1000) : null;
     return `<div class="activity ${open ? "open" : ""}">
       <button class="activity-head" data-action="toggle-activity" data-id="${esc(id)}" aria-expanded="${open}">
@@ -1136,6 +1408,107 @@
     </div>`;
   }
 
+  const streamEncoder = new TextEncoder();
+  const streamDecoder = new TextDecoder();
+  let streamResyncTimer = null;
+  let streamResyncRoom = "";
+  function scheduleStreamResync(conversationId) {
+    if (streamResyncTimer && streamResyncRoom === conversationId) return;
+    clearTimeout(streamResyncTimer);
+    streamResyncRoom = conversationId;
+    streamResyncTimer = setTimeout(() => {
+      streamResyncTimer = null;
+      streamResyncRoom = "";
+      if (S.current?.id === conversationId && !S.loadingConversation) loadConversation(conversationId, false);
+    }, 100);
+  }
+
+  function applyStreamDelta(message, data) {
+    let delta = data.delta || "";
+    if (typeof data.offsetBytes === "number") {
+      const existing = message._streamBytes ?? streamEncoder.encode(message.text || "").length;
+      const bytes = streamEncoder.encode(delta);
+      if (data.offsetBytes > existing) return "gap";
+      const overlap = existing - data.offsetBytes;
+      if (overlap >= bytes.length) return "duplicate";
+      if (overlap > 0) delta = streamDecoder.decode(bytes.subarray(overlap));
+      message._streamBytes = existing + bytes.length - overlap;
+    } else {
+      delete message._streamBytes;
+    }
+    message.text = (message.text || "") + delta;
+    message.status = "streaming";
+    return "changed";
+  }
+
+  const pendingStreamMessages = new Set();
+  let streamRenderTimer = null;
+  function scheduleStreamRender(id) {
+    pendingStreamMessages.add(id);
+    if (streamRenderTimer) return;
+    streamRenderTimer = setTimeout(() => {
+      streamRenderTimer = null;
+      const ids = Array.from(pendingStreamMessages);
+      pendingStreamMessages.clear();
+      for (const messageId of ids) {
+        const message = S.messages.find((item) => item.id === messageId);
+        if (message && !renderStreamMessage(message)) { scheduleChatRender(); break; }
+      }
+    }, 80);
+  }
+
+  function renderStreamMessage(message) {
+    const chat = $("#chat"), sc = $("#chat-scroll");
+    if (!chat || !sc || message.role !== "assistant") return false;
+    const node = chat.querySelector(`[data-msg-id="${CSS.escape(message.id)}"]`);
+    if (!node) return false;
+    if (message.kind === "tool") {
+      const positions = new Map($$(".tool-pre", node).map((pre) => [pre.dataset.scrollKey, [pre.scrollTop, pre.scrollLeft]]));
+      const focus = document.activeElement;
+      const action = node.contains(focus) ? focus?.dataset?.action : null;
+      const actionId = node.contains(focus) ? focus?.dataset?.id : null;
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = toolHTML(message);
+      const replacement = wrapper.firstElementChild;
+      const activity = node.closest(".activity");
+      node.replaceWith(replacement);
+      $$(".tool-pre", replacement).forEach((pre) => { const pos = positions.get(pre.dataset.scrollKey); if (pos) [pre.scrollTop, pre.scrollLeft] = pos; });
+      if (action) $$('[data-action]', replacement).find((el) => el.dataset.action === action && el.dataset.id === actionId)?.focus({ preventScroll: true });
+      if (activity) {
+        const ids = new Set($$("[data-msg-id]", activity).map((el) => el.dataset.msgId));
+        const tools = S.messages.filter((item) => ids.has(item.id) && item.kind === "tool");
+        const failed = tools.some((item) => ["failed", "error"].includes(String(parseJSON(item.content, {})?.status || item.status)));
+        const count = $(".activity-count", activity);
+        if (count) count.textContent = `${tools.length} tool calls${failed ? " · failed" : ""}`;
+      }
+      enhanceMarkdown(replacement);
+      if (S.scrollPinned) sc.scrollTop = sc.scrollHeight;
+      return true;
+    }
+    if (!["text", "thought"].includes(message.kind)) return false;
+    const body = message.kind === "thought" ? $(".thought-body", node || chat) : $(".msg-body > .markdown", node || chat);
+    if (!body) return false;
+    const oldDetails = $$("details", body).map((d) => d.open);
+    const diagrams = $$("pre > code.language-mermaid, .mermaid-diagram", body).map((el) => el.classList.contains("mermaid-diagram") ? el : null);
+    const text = message.text || "";
+    body.innerHTML = renderMarkdown(text, message.kind === "thought" ? "thought-" + message.id : message.id)
+      + (message.kind === "text" && message.status === "streaming" ? `<span class="streaming-caret"></span>` : "");
+    $$("pre > code.language-mermaid", body).forEach((code, i) => {
+      const previous = diagrams[i];
+      if (previous && previous._diagramSource === code.textContent) code.parentElement.replaceWith(previous);
+    });
+    $$("details", body).forEach((detail, i) => { if (i < oldDetails.length) detail.open = oldDetails[i]; });
+    if (message.kind === "thought") {
+      const preview = $(".thought-head .preview", node);
+      if (preview) preview.textContent = truncate(plainMarkdown(text.slice(0, 1000)), 110) || "…";
+      const label = $(".thought-head .label", node);
+      if (label) label.textContent = message.status === "streaming" ? "Thinking" : "Thought process";
+    }
+    enhanceMarkdown(body);
+    if (S.scrollPinned) sc.scrollTop = sc.scrollHeight;
+    return true;
+  }
+
   function scheduleChatRender() {
     if (S.renderTimer) return;
     S.renderTimer = requestAnimationFrame(() => {
@@ -1365,7 +1738,7 @@
     if (target && S.active && S.active.turnId === target) {
       return S.active.status === "cancelling" ? "Waiting for agent to stop" : "Waiting for tools";
     }
-    return "Queued";
+    return "Queued · waiting for the agent";
   }
 
   function renderPendingAttachments() {
@@ -1515,6 +1888,7 @@
     const i = S.messages.findIndex((x) => x.id === m.id);
     if (i >= 0) {
       S.messages[i] = { ...S.messages[i], ...m };
+      delete S.messages[i]._streamBytes;
       if (!m.attachments) m.attachments = S.messages[i].attachments;
     } else {
       S.messages.push(m);
@@ -1658,6 +2032,7 @@
       }
       case "message.delta": {
         if (!S.current || data.conversationId !== S.current.id) break;
+        if (S.loadingConversation) { S.loadingDeltas.push(data); break; }
         let m = S.messages.find((x) => x.id === data.messageId);
         if (!m) {
           m = normalizeMessage({
@@ -1667,10 +2042,11 @@
           });
           S.messages.push(m);
         }
-        m.text = (m.text || "") + (data.delta || "");
-        m.status = "streaming";
+        const result = applyStreamDelta(m, data);
+        if (result === "gap") { scheduleStreamResync(data.conversationId); break; }
+        if (result === "duplicate") break;
         touchConversationFromMessage(m);
-        scheduleChatRender();
+        scheduleStreamRender(m.id);
         break;
       }
       case "message.updated": {
@@ -1678,8 +2054,10 @@
         if (!m.id) break;
         touchConversationFromMessage(m);
         if (S.current && m.conversationId === S.current.id) {
+          const previous = S.messages.find((item) => item.id === m.id);
           upsertMessage(m);
-          scheduleChatRender();
+          if (previous && previous.kind === m.kind && previous.seq === m.seq && previous.turnId === m.turnId && m.role === "assistant" && ["text", "thought"].includes(m.kind) && !m.attachments) scheduleStreamRender(m.id);
+          else scheduleChatRender();
         }
         break;
       }
@@ -1687,7 +2065,12 @@
       case "tool.updated": {
         const m = normalizeMessage(data.message || data);
         if (!m.id) break;
-        if (S.current && m.conversationId === S.current.id) { upsertMessage(m); scheduleChatRender(); }
+        if (S.current && m.conversationId === S.current.id) {
+          const previous = S.messages.find((item) => item.id === m.id);
+          upsertMessage(m);
+          if (type === "tool.updated" && previous && previous.kind === "tool" && previous.seq === m.seq && previous.turnId === m.turnId) scheduleStreamRender(m.id);
+          else scheduleChatRender();
+        }
         break;
       }
       case "agent.session": {
@@ -2593,9 +2976,9 @@
     }).join("");
     return `${settingsHead("Default ACP", "Used for new chats, including new WhatsApp conversations. Choose options in order; each choice refreshes the available options.")}
       <div class="field"><label>Agent</label><select class="select" data-change="default-agent" ${S.defaultBusy ? "disabled" : ""}><option value="">Choose an agent</option>${S.agents.filter((a) => a.enabled).map((a) => `<option value="${esc(a.id)}" ${draft.agentId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></div>
-      ${S.defaultBusy ? `<div class="settings-desc"><span class="spinner"></span> Loading agent options…</div>` : ""}
+      ${S.defaultBusy ? `<div class="settings-loading" role="status"><span class="spinner"></span><span>Loading agent options…</span></div>` : ""}
       ${S.defaultError ? `<div class="settings-desc" role="alert">${esc(S.defaultError)} <button class="btn btn-secondary btn-sm" data-action="default-retry">Retry</button></div>` : ""}
-      ${draft.selections.length ? `<div class="settings-section"><div class="settings-title">Selected in order</div>${draft.selections.map((s) => { const opt = S.defaultConfigs.find((o) => o.id === s.id); const label = opt && configChoices(opt).find((c) => String(c.value) === String(s.value))?.name; return `<div class="settings-row"><span>${esc(s.name || opt?.name || s.id)}: ${esc(s.label ?? label ?? s.value)}</span></div>`; }).join("")}<button class="btn btn-secondary btn-sm" data-action="default-undo" ${S.defaultBusy ? "disabled" : ""}>Undo last choice</button></div>` : ""}
+      ${draft.selections.length ? `<div class="settings-section"><div class="settings-title">Selected in order</div>${draft.selections.map((s) => { const opt = S.defaultConfigs.find((o) => o.id === s.id); const label = opt && configChoices(opt).find((c) => String(c.value) === String(s.value))?.name; return `<div class="settings-row"><div class="label">${esc(s.name || opt?.name || s.id)}</div><span class="default-value">${esc(s.label ?? label ?? s.value)}</span></div>`; }).join("")}<button class="btn btn-secondary btn-sm" data-action="default-undo" ${S.defaultBusy ? "disabled" : ""}>Undo last choice</button></div>` : ""}
       ${draft.agentId && !S.defaultError ? `<div class="form-grid" style="margin-top:16px">${rows || (!S.defaultBusy ? `<div class="settings-desc">No more configurable options.</div>` : "")}</div>` : ""}
       <div class="form-actions"><button class="btn btn-primary" data-action="save-agent-defaults" ${!draft.agentId || S.defaultBusy || S.defaultError ? "disabled" : ""}>Save defaults</button></div>`;
   }
@@ -2686,8 +3069,8 @@
     const groups = agents.map((a) => {
       const list = S.mcp[a.id] || [];
       return `<div class="settings-section">
-        <div class="section-head"><div><h3>${esc(a.name)}</h3><div class="settings-desc" style="margin:2px 0 0">${list.length} server${list.length === 1 ? "" : "s"}</div></div><button class="btn btn-ghost btn-sm" data-action="add-mcp" data-agent="${esc(a.id)}">${icon("plus", "sm")} Add</button></div>
-        ${list.length ? list.map((m) => `<div class="mcp-card"><span class="tool-icon kind-execute">${icon(m.transport === "stdio" ? "terminal" : "globe")}</span><div class="grow" style="min-width:0"><div class="mcp-name">${esc(m.name)} <span class="status-dot ${m.enabled ? "" : "warn"}"></span></div><div class="mcp-sub">${esc(m.transport)} · ${esc(m.transport === "stdio" ? m.command : m.url)} ${esc((m.args || []).join(" "))}</div></div><div class="mcp-actions"><button class="icon-btn sm" data-action="edit-mcp" data-id="${esc(m.id)}" title="Edit">${icon("edit", "sm")}</button><button class="icon-btn sm" data-action="delete-mcp" data-id="${esc(m.id)}" title="Delete">${icon("trash", "sm")}</button></div></div>`).join("") : `<div class="empty-settings" style="padding:16px">No MCP servers. Add stdio, HTTP or SSE tools.</div>`}
+        <div class="section-head"><div><h3>${esc(a.name)}</h3><div class="settings-desc" style="margin:2px 0 0">${list.length} server${list.length === 1 ? "" : "s"}</div></div>${list.length ? `<button class="btn btn-ghost btn-sm" data-action="add-mcp" data-agent="${esc(a.id)}">${icon("plus", "sm")} Add</button>` : ""}</div>
+        ${list.length ? list.map((m) => `<div class="mcp-card"><span class="tool-icon kind-execute">${icon(m.transport === "stdio" ? "terminal" : "globe")}</span><div class="grow" style="min-width:0"><div class="mcp-name">${esc(m.name)} <span class="status-dot ${m.enabled ? "" : "warn"}"></span></div><div class="mcp-sub">${esc(m.transport)} · ${esc(m.transport === "stdio" ? m.command : m.url)} ${esc((m.args || []).join(" "))}</div></div><div class="mcp-actions"><button class="icon-btn sm" data-action="edit-mcp" data-id="${esc(m.id)}" title="Edit">${icon("edit", "sm")}</button><button class="icon-btn sm" data-action="delete-mcp" data-id="${esc(m.id)}" title="Delete">${icon("trash", "sm")}</button></div></div>`).join("") : `<div class="mcp-empty"><span>No servers configured</span><button class="btn btn-secondary btn-sm" data-action="add-mcp" data-agent="${esc(a.id)}">${icon("plus", "sm")} Add server</button></div>`}
       </div>`;
     }).join("");
     return `${settingsHead("MCP servers", "Tools are attached per agent. Changes restart the agent runtime on the next turn.")}${groups || `<div class="empty-settings">Add an agent first.</div>`}`;
@@ -2721,7 +3104,7 @@
 
   function channelCard(ch) {
     const statusClass = ch.loggedIn ? "" : ch.state === "error" ? "offline" : "warn";
-    return `<div class="agent-card"><span class="tool-icon kind-execute" style="width:34px;height:34px">${ch.name === "whatsapp" ? icon("message") : icon("globe")}</span><div class="grow"><div class="agent-card-name">${esc(ch.label || ch.name)} <span class="status-dot ${statusClass}"></span></div><div class="agent-card-sub">${esc(ch.state || "unknown")}${ch.detail ? " · " + esc(ch.detail) : ""}</div></div>${ch.selfID ? `<span class="badge-soft green">${esc(ch.selfID)}</span>` : ""}</div>`;
+    return `<div class="agent-card"><span class="tool-icon kind-execute" style="width:34px;height:34px">${ch.name === "whatsapp" ? icon("message") : icon("globe")}</span><div class="agent-card-main"><div class="agent-card-name">${esc(ch.label || ch.name)} <span class="status-dot ${statusClass}"></span></div><div class="agent-card-sub">${esc(ch.state || "unknown")}${ch.detail ? " · " + esc(ch.detail) : ""}</div></div>${ch.selfID ? `<span class="badge-soft green">${esc(ch.selfID)}</span>` : ""}</div>`;
   }
 
   function whatsappPanel() {
@@ -2785,7 +3168,8 @@
         <div class="settings-title">Change password</div>
         <form data-form="password" style="max-width:420px">
           <div class="field"><label>Current password</label><input class="input" type="password" name="current" autocomplete="current-password" required></div>
-          <div class="field"><label>New password</label><input class="input" type="password" name="new" autocomplete="new-password" minlength="8" required></div>
+          <div class="field"><label>New password</label><input class="input" type="password" name="new" autocomplete="new-password" minlength="4" required></div>
+          <div class="field"><label>Confirm new password</label><input class="input" type="password" name="confirm" autocomplete="new-password" minlength="4" required></div>
           <button class="btn btn-secondary" type="submit">Update password</button>
         </form>
       </div>
@@ -3034,6 +3418,7 @@
 
   async function savePassword(form) {
     const fd = new FormData(form);
+    if (fd.get("new") !== fd.get("confirm")) { toast("Passwords do not match", "Check the new password and try again.", "error"); return; }
     try {
       const d = await api("/auth/password", { method: "POST", body: { current: fd.get("current"), new: fd.get("new") } });
       S.csrf = d.csrf;
@@ -3299,6 +3684,7 @@
       case "retry": await retryTurn(); break;
       case "retry-boot": startApp(); break;
       case "retry-load": await loadConversation(id, false); break;
+      case "load-older": await loadOlderMessages(); break;
       case "attach": $("#file-input")?.click(); break;
       case "reply-toggle": S.replyToChannel = !S.replyToChannel; renderComposer(); focusComposer(); break;
       case "remove-attachment": S.attachments = S.attachments.filter((a) => (a.upload || a).id !== id); renderPendingAttachments(); break;

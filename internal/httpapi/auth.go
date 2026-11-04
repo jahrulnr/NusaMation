@@ -91,8 +91,8 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid_password", "The current password is not correct.")
 		return
 	}
-	if len(strings.TrimSpace(in.New)) < 8 {
-		writeError(w, http.StatusBadRequest, "weak_password", "The new password must be at least 8 characters.")
+	if len(strings.TrimSpace(in.New)) < 4 {
+		writeError(w, http.StatusBadRequest, "weak_password", "The new password must be at least 4 characters.")
 		return
 	}
 	if err := auth.SetPassword(r.Context(), s.store, in.New); err != nil {

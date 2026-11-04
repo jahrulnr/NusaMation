@@ -188,7 +188,7 @@ func (s *Service) appendAgentText(a *activeTurn, acpMessageID, delta string) {
 		}
 	}
 	s.ensureStream(a, "assistant", acpMessageID)
-	delta, first := a.appendAssistant(delta)
+	delta, first, offset := a.appendAssistant(delta)
 	if delta == "" {
 		return
 	}
@@ -196,7 +196,7 @@ func (s *Service) appendAgentText(a *activeTurn, acpMessageID, delta string) {
 	msgID := a.assistantID
 	a.mu.Unlock()
 	s.emit("message.delta", a.conversationID, map[string]any{
-		"conversationId": a.conversationID, "messageId": msgID, "kind": "text", "delta": delta,
+		"conversationId": a.conversationID, "messageId": msgID, "kind": "text", "delta": delta, "offsetBytes": offset,
 	})
 	_ = first
 }
@@ -230,7 +230,8 @@ func (s *Service) rotateStream(a *activeTurn, kind string) {
 
 func (s *Service) appendAgentThought(a *activeTurn, delta string) {
 	s.ensureStream(a, "thought", "")
-	delta, _ = a.appendThought(delta)
+	var offset int
+	delta, _, offset = a.appendThought(delta)
 	if delta == "" {
 		return
 	}
@@ -238,7 +239,7 @@ func (s *Service) appendAgentThought(a *activeTurn, delta string) {
 	msgID := a.thoughtID
 	a.mu.Unlock()
 	s.emit("message.delta", a.conversationID, map[string]any{
-		"conversationId": a.conversationID, "messageId": msgID, "kind": "thought", "delta": delta,
+		"conversationId": a.conversationID, "messageId": msgID, "kind": "thought", "delta": delta, "offsetBytes": offset,
 	})
 }
 

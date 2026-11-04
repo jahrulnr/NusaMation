@@ -82,6 +82,14 @@ type MediaSender interface {
 	SendMedia(ctx context.Context, target Target, media OutboundMedia) error
 }
 
+// ResponseStyler is implemented by channels whose delivery surface has its
+// own message format (WhatsApp's limited markup, the web UI's full Markdown).
+// The chat service appends the rules to the prompt so the agent writes for
+// the surface its reply will be delivered on.
+type ResponseStyler interface {
+	ResponseRules() string
+}
+
 type Channel interface {
 	Name() string
 	Label() string

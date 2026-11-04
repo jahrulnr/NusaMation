@@ -253,29 +253,31 @@ func (a *activeTurn) markPromptSent() {
 	a.signal()
 }
 
-func (a *activeTurn) appendAssistant(delta string) (text string, first bool) {
+func (a *activeTurn) appendAssistant(delta string) (text string, first bool, offset int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if delta == "" {
-		return "", false
+		return "", false, 0
 	}
+	offset = a.assistant.Len()
 	first = a.assistant.Len() == 0
 	a.assistant.WriteString(delta)
 	a.assistantAll.WriteString(delta)
 	a.assistantDirty = true
-	return delta, first
+	return delta, first, offset
 }
 
-func (a *activeTurn) appendThought(delta string) (text string, first bool) {
+func (a *activeTurn) appendThought(delta string) (text string, first bool, offset int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if delta == "" {
-		return "", false
+		return "", false, 0
 	}
+	offset = a.thought.Len()
 	first = a.thought.Len() == 0
 	a.thought.WriteString(delta)
 	a.thoughtDirty = true
-	return delta, first
+	return delta, first, offset
 }
 
 func (a *activeTurn) assistantSnapshot() (id, text string, dirty bool) {

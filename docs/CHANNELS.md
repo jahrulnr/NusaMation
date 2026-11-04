@@ -23,6 +23,8 @@ type Channel interface {
 
 Controllable channels additionally implement `Controller` (`Connect`, `Disconnect`, `Logout`, `QR`, `Settings`, `UpdateSettings`). The HTTP API type-asserts this interface.
 
+Channels whose surface has its own message format implement `ResponseStyler` (`ResponseRules() string`). The chat service appends the returned text to every prompt for that surface inside a `<system-reminder>` block, so the agent writes in the format its reply will be delivered on (WhatsApp markup vs the web UI's full Markdown). Channels that skip it contribute no block.
+
 Adapters receive a `channels.InboundHandler` (the chat orchestrator) and call:
 
 ```go
@@ -124,7 +126,8 @@ The chat layer converts markdown to WhatsApp-friendly text (bold, italic, headin
    ch.SetHandler(chatSvc)
    chanMgr.Register(ch)
    ```
-6. Add a settings card to `web/static/app.js` (optional; plain channels still show status).
-7. Add tests for allowlist, dedupe and target parsing.
+6. Implement `ResponseStyler` when the platform has its own message format — the rules are appended to each prompt so the agent writes for that surface.
+7. Add a settings card to `web/static/app.js` (optional; plain channels still show status).
+8. Add tests for allowlist, dedupe and target parsing.
 
 The orchestrator and web UI do not need channel-specific code for text delivery.
