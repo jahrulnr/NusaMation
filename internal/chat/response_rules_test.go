@@ -140,3 +140,20 @@ type blankRulesChannel struct{ fakeMediaChannel }
 
 func (c *blankRulesChannel) Name() string          { return "blankstyled" }
 func (c *blankRulesChannel) ResponseRules() string { return "   " }
+
+func TestWhatsAppTurnContext(t *testing.T) {
+	svc := rulesTestService(t)
+	a := rulesTurn("whatsapp", true)
+	a.turn.OriginRef = `{"externalId":"group@g.us","messageId":"WA1","senderId":"123@s.whatsapp.net"}`
+	a.user.Text = "hello"
+	blocks := svc.withChannelRules(a, svc.buildPrompt(a, ""))
+	found := false
+	for _, b := range blocks {
+		if strings.Contains(b.Text, "WhatsApp message context:") {
+			found = strings.Contains(b.Text, `"target":"group@g.us"`) && strings.Contains(b.Text, `"messageId":"WA1"`) && strings.Contains(b.Text, `"senderId":"123@s.whatsapp.net"`) && strings.Contains(b.Text, `"quotedText":"hello"`) && strings.Contains(b.Text, "nusamation whatsapp send")
+		}
+	}
+	if !found {
+		t.Fatalf("missing WhatsApp context: %#v", blocks)
+	}
+}

@@ -160,11 +160,23 @@ func (c *Channel) handleMessage(ctx context.Context, evt *events.Message) error 
 	}
 	var vote *channels.PollVote
 	if upd := evt.Message.GetPollUpdateMessage(); upd != nil {
-		if mk := upd.GetPollCreationMessageKey(); mk.GetFromMe() {
+		mk := upd.GetPollCreationMessageKey()
+		var generalOptions []string
+		var general bool
+		if mk.GetFromMe() {
+			generalOptions, general = c.generalPollOptions(ctx, info.Chat, mk.GetID())
+		}
+		if general {
+			c.cachePollOptions(info.Chat.String(), mk.GetID(), generalOptions)
+			text = joinCaption(text, c.pollVoteText(ctx, evt, upd)+"\n[Poll ID: "+mk.GetID()+"]")
+		} else if mk.GetFromMe() {
 			// A vote on a poll this channel sent (agent question/approval) —
 			// carry the selection structurally so the chat service can
 			// resolve the pending question instead of prompting the agent.
-			_, picked := c.decodeVote(ctx, evt, mk)
+			decoded, picked := c.decodeVote(ctx, evt, mk)
+			if decoded == nil || (len(decoded.GetSelectedOptions()) > 0 && len(picked) != len(decoded.GetSelectedOptions())) {
+				return nil
+			}
 			vote = &channels.PollVote{PollMessageID: mk.GetID(), Selected: picked}
 		} else {
 			text = joinCaption(text, c.pollVoteText(ctx, evt, upd))

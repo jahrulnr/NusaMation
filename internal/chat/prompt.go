@@ -338,6 +338,17 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 // withChannelRules appends the delivery surface's formatting rules as the
 // last prompt block so it is the freshest instruction in the turn.
 func (s *Service) withChannelRules(a *activeTurn, blocks []acp.ContentBlock) []acp.ContentBlock {
+	if a.turn.OriginChannel == "whatsapp" {
+		var origin struct {
+			ExternalID string `json:"externalId"`
+			MessageID  string `json:"messageId"`
+			SenderID   string `json:"senderId"`
+		}
+		if json.Unmarshal([]byte(a.turn.OriginRef), &origin) == nil && origin.ExternalID != "" {
+			metadata, _ := json.Marshal(map[string]string{"target": origin.ExternalID, "messageId": origin.MessageID, "senderId": origin.SenderID, "quotedText": a.user.Text})
+			blocks = append(blocks, acp.ContentBlock{Type: "text", Text: "<system-reminder>\nWhatsApp message context: " + string(metadata) + ". For polls, reactions, quoted replies, stickers, locations, contacts and events, use `nusamation whatsapp send` as documented in the NusaMation WhatsApp ops documentation.\n</system-reminder>"})
+		}
+	}
 	if rules := s.responseRules(a); rules != "" {
 		blocks = append(blocks, acp.ContentBlock{Type: "text", Text: rules})
 	}

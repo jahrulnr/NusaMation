@@ -25,7 +25,7 @@ Controllable channels additionally implement `Controller` (`Connect`, `Disconnec
 
 Channels whose surface has its own message format implement `ResponseStyler` (`ResponseRules() string`). The chat service appends the returned text to every prompt for that surface inside a `<system-reminder>` block, so the agent writes in the format its reply will be delivered on (WhatsApp markup vs the web UI's full Markdown). Channels that skip it contribute no block.
 
-Channels with a native poll widget may implement `PollAsker` (`SendPoll(ctx, target, question, options, maxSelectable) → pollMessageID`). The chat service then delivers approvals and single-field choice questions as polls instead of text. Incoming votes on those polls must be delivered as `Inbound.PollVote{PollMessageID, Selected}` (option names, not platform hashes) so the orchestrator can resolve the pending question; votes on polls the user created stay regular `Text`. Channels without it get the `/approve <id>` text fallback.
+Channels with a native poll widget may implement `PollAsker` (`SendPoll(ctx, target, question, options, maxSelectable) → pollMessageID`). The chat service then delivers approvals and single-field choice questions as polls instead of text. Incoming votes on those polls must be delivered as `Inbound.PollVote{PollMessageID, Selected}` (option names, not platform hashes) so the orchestrator can resolve the pending question; votes on polls the user created stay regular `Text`. Without poll support approvals fall back to `/approve <id>`; questions point to the web UI.
 
 Adapters receive a `channels.InboundHandler` (the chat orchestrator) and call:
 
@@ -97,12 +97,12 @@ Values are normalised to digits. An empty list allows any sender who can message
 ### Group policy
 
 - `disabled` — ignore all group messages.
-- `mention` (default) — only process messages that @mention the bot or reply to it. Poll traffic (creations, votes, added options) cannot carry @-mentions, so it passes as passive context and reaches the agent as `[Poll]`/`[Poll vote]`/`[Poll option added]` text markers.
+- `mention` (default) — only process messages that @mention the bot or reply to it. Poll traffic (creations, votes, added options) cannot carry @-mentions, so it is exempt: user/general polls reach the agent as `[Poll]`/`[Poll vote]`/`[Poll option added]` text markers, and votes on approval/question polls resolve their pending request.
 - `all` — process every group message. Use with care; this can be noisy and expensive.
 
 ### Approvals and questions
 
-When `notifyApprovals` is on, pending approvals and single-choice agent questions (elicitation form fields with enum/oneOf/boolean/array options) are delivered as **native WhatsApp polls** — tap to vote, single-select resolves immediately, multi-select resolves after a ~15 s quiet window. Channels without poll support (or option lists over 12) fall back to the `/approve <id>` text flow, and non-choice input still points at the web UI. Votes on the bot's own polls are routed to the pending question; votes on user-created polls arrive as `[Poll vote: …]` text.
+When `notifyApprovals` is on, pending approvals and single-field choice agent questions (elicitation form fields with enum/oneOf/boolean/array options) are delivered as **native WhatsApp polls** — tap to vote, single-select resolves immediately, multi-select resolves after a ~15 s quiet window. Without poll support or for option lists over 12, approvals fall back to `/approve <id>` and questions point to the web UI. Votes on approval/question polls are routed to the pending request; votes on user-created and general-purpose polls arrive as `[Poll vote: …]` text.
 
 ### Media
 
@@ -138,3 +138,13 @@ The chat layer converts markdown to WhatsApp-friendly text (bold, italic, headin
 9. Add tests for allowlist, dedupe and target parsing.
 
 The orchestrator and web UI do not need channel-specific code for text delivery.
+
+### Explicit WhatsApp outbound messages
+
+The connected WhatsApp adapter can also send native general-purpose polls,
+quoted text replies, reactions, WebP stickers, locations, vCard contacts, and
+events. Use `nusamation whatsapp send` with a JSON object on stdin or the
+authenticated `POST /api/channels/whatsapp/send` endpoint. See the synced
+[WhatsApp operations guide](../assets/docs/whatsapp.md#sending-native-whatsapp-content)
+for fields and examples. General-poll votes are agent text context; polls for
+pending approvals and questions retain their existing resolution behavior.

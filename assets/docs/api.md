@@ -38,6 +38,7 @@ POST /api/agents/{id}/probe|authenticate|logout
 GET  /api/agents/{id}/logs|auth-terminal
 GET|POST /api/mcp     PATCH|DELETE /api/mcp/{id}
 GET  /api/channels
+POST /api/channels/whatsapp/send          # native poll, reply, reaction, sticker, location, contact, event
 POST /api/channels/{name}/connect|disconnect|logout
 GET  /api/channels/{name}/qr|settings
 PUT  /api/channels/{name}/settings

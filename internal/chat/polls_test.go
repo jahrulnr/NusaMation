@@ -169,8 +169,26 @@ func TestResolvePollVoteMultiDebounce(t *testing.T) {
 	if len(w.latest) != 2 {
 		t.Fatalf("latest selection = %#v", w.latest)
 	}
+	in.PollVote.Selected = nil
+	if err := svc.resolvePollVote(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.latest) != 0 || w.timer == nil {
+		t.Fatal("deselecting all must replace the previous selection")
+	}
 	w.timer.Stop()
 	delete(svc.pollWaiters, pollWaiterKey("whatsapp", "P3"))
+}
+
+func TestResolvePollVoteInvalidKeepsWaiter(t *testing.T) {
+	svc := testPollService()
+	svc.registerPollWaiter(&pollWaiter{channel: "whatsapp", pollMessageID: "P", kind: "approval", options: map[string]string{"Yes": "yes"}, createdAt: time.Now()})
+	if err := svc.resolvePollVote(context.Background(), channels.Inbound{Channel: "whatsapp", PollVote: &channels.PollVote{PollMessageID: "P", Selected: []string{"unknown"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if svc.pollWaiters[pollWaiterKey("whatsapp", "P")] == nil {
+		t.Fatal("unknown option consumed the waiter")
+	}
 }
 
 func TestResolvePollVoteGuardKeepsWaiter(t *testing.T) {

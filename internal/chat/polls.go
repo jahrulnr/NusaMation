@@ -42,6 +42,7 @@ type pollWaiter struct {
 	createdAt      time.Time
 	latest         []string
 	timer          *time.Timer
+	generation     uint64
 }
 
 func pollWaiterKey(channel, pollMessageID string) string {
@@ -283,12 +284,17 @@ func (s *Service) resolvePollVote(ctx context.Context, in channels.Inbound) erro
 		w = nil
 	}
 	s.mu.Unlock()
-	if w == nil || len(in.PollVote.Selected) == 0 {
+	if w == nil {
 		return nil
 	}
 	if !s.pollVoterAllowed(ctx, w.turnID, in.SenderID) {
 		_ = s.reply(ctx, in, "Only the person who sent that request can answer it.")
 		return nil
+	}
+	for _, option := range in.PollVote.Selected {
+		if _, ok := w.options[option]; !ok {
+			return nil
+		}
 	}
 	if w.multi {
 		s.mu.Lock()
@@ -298,13 +304,15 @@ func (s *Service) resolvePollVote(ctx context.Context, in channels.Inbound) erro
 		}
 		w.latest = append([]string(nil), in.PollVote.Selected...)
 		inbound := in
+		w.generation++
+		generation := w.generation
 		if w.timer != nil {
 			w.timer.Stop()
 		}
 		w.timer = time.AfterFunc(pollMultiQuiet, func() {
 			s.mu.Lock()
 			w := s.pollWaiters[key]
-			if w == nil {
+			if w == nil || w.generation != generation {
 				s.mu.Unlock()
 				return
 			}
@@ -323,6 +331,9 @@ func (s *Service) resolvePollVote(ctx context.Context, in channels.Inbound) erro
 			_ = s.finishPollVote(ctx, inbound, w, sel)
 		})
 		s.mu.Unlock()
+		return nil
+	}
+	if len(in.PollVote.Selected) == 0 {
 		return nil
 	}
 	s.mu.Lock()

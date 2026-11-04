@@ -417,6 +417,7 @@ func linkRefFromInbound(in channels.Inbound) string {
 	b, _ := json.Marshal(map[string]any{
 		"externalId": in.ExternalID, "threadId": in.ThreadID,
 		"displayName": in.ChatName, "isGroup": in.IsGroup, "senderId": in.SenderID,
+		"messageId": in.MessageID,
 	})
 	return string(b)
 }

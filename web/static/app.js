@@ -1554,8 +1554,8 @@
           ${mobileSummary ? `<span class="composer-mobile-summary" title="${esc(mobileSummary)}">${esc(mobileSummary)}</span>` : ""}
           <button class="composer-mobile-settings" data-action="${S.configs.length ? "composer-mobile-settings" : "prepare-composer"}" aria-label="Agent options" title="Agent options">${S.preparing === (conv?.id || "draft") ? `<span class="spinner"></span>` : "+"}</button>
           ${S.elicitations.some((e) => e.conversationId === conv?.id) ? `<button class="composer-choice" data-action="show-agent-request">Respond</button>` : ""}
-          ${links.length ? `<button class="reply-toggle ${S.replyToChannel ? "on" : ""}" data-action="reply-toggle" title="Also send the final answer to this chat">${icon("message", "sm")} ${S.replyToChannel ? "Reply to " + esc(links[0].channel) : "Reply to chat"}</button>` : ""}
           <span class="grow"></span>
+          ${links.length ? `<button class="reply-toggle ${S.replyToChannel ? "on" : ""}" data-action="reply-toggle" aria-pressed="${S.replyToChannel}" aria-label="Also send the final answer to this chat" title="Also send the final answer to this chat">${icon("message", "sm")}<span class="reply-label">${S.replyToChannel ? "Reply to " + esc(links[0].channel) : "Reply to chat"}</span><span class="reply-short">${S.replyToChannel ? esc(links[0].channel) : "Chat"}</span></button>` : ""}
           ${active ? `<button class="stop-btn" data-action="stop" aria-label="Stop" title="Stop">${icon("stop", "sm")}</button>` : ""}
           <div class="send-split">
             <button class="send-btn" id="send-btn" data-action="send" title="${sendTitle()}" aria-label="${sendTitle()}">${icon("send")}</button>
@@ -1622,12 +1622,12 @@
     if (!opts.length) return `<button class="composer-choice" data-action="prepare-composer">Load options</button>`;
     const modes = opts.filter((o) => String(o.category || "").toLowerCase() === "mode");
     const rest = opts.filter((o) => !modes.includes(o));
-    const direct = modes.map((o) => `<button class="composer-choice" data-action="composer-config" data-id="${esc(o.id)}" title="${esc(o.name || o.id)}">${esc(configLabel(o))}${icon("chevron-down", "sm")}</button>`).join("");
+    const direct = modes.map((o) => `<button class="composer-choice" data-action="composer-config" data-id="${esc(o.id)}" title="${esc(o.name || o.id)}"><span>${esc(configLabel(o))}</span>${icon("chevron-down", "sm")}</button>`).join("");
     if (!rest.length) return direct;
     const model = rest.find((o) => String(o.category || "").toLowerCase() === "model");
     const effort = rest.find((o) => ["thought_level", "reasoning_effort"].includes(String(o.category || "").toLowerCase()));
     const label = model ? configLabel(model) + (effort ? " · " + configLabel(effort) : "") : "Options";
-    return direct + `<button class="composer-choice composer-settings" data-action="composer-settings" title="Model and agent options">${esc(label)}${icon("chevron-down", "sm")}</button>`;
+    return direct + `<button class="composer-choice composer-settings" data-action="composer-settings" title="Model and agent options"><span>${esc(label)}</span>${icon("chevron-down", "sm")}</button>`;
   }
 
   function mobileConfigSummary() {

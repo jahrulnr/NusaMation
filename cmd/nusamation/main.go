@@ -73,7 +73,7 @@ Commands:
   automation    Manage scheduled ACP jobs and run history
   agent         Manage ACP agent CLIs (list, detect, get, add, set, remove)
   config        Manage stored settings (list, get, add, set, remove)
-  whatsapp      Manage WhatsApp channel settings (show, set)
+  whatsapp      Manage WhatsApp channel settings and send messages
   reset-password  Reset the admin password
   version       Print version
 

@@ -1,13 +1,45 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/jahrulnr/nusamation/internal/channels"
+	"github.com/jahrulnr/nusamation/internal/channels/whatsapp"
 )
+
+func (s *Server) handleWhatsAppSend(w http.ResponseWriter, r *http.Request) {
+	ch, ok := s.channelByName("whatsapp")
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "WhatsApp channel not found.")
+		return
+	}
+	sender, ok := ch.(interface {
+		SendStructured(context.Context, whatsapp.OutboundRequest) (string, error)
+	})
+	if !ok {
+		writeError(w, http.StatusBadRequest, "not_supported", "WhatsApp sending is unavailable.")
+		return
+	}
+	var req whatsapp.OutboundRequest
+	if err := readJSON(w, r, &req, 36<<20); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	id, err := sender.SendStructured(r.Context(), req)
+	if err != nil {
+		if id != "" {
+			writeJSON(w, http.StatusBadGateway, map[string]any{"messageId": id, "code": "send_partial", "error": err.Error()})
+			return
+		}
+		writeError(w, http.StatusBadRequest, "send_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messageId": id})
+}
 
 func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"channels": s.channelStatuses()})
