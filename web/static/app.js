@@ -96,6 +96,8 @@
     sending: false,
     sendDelivery: "queue",
     scrollPinned: true,
+    draftSelections: [],
+    draftPreviewSeq: 0,
     booted: false,
     loadingConversation: false,
     loadError: "",
@@ -183,8 +185,7 @@
     return (agent && agent.name) || "Agent";
   }
   function currentAgent() {
-    if (S.currentAgent) return S.currentAgent;
-    if (S.current) return S.agents.find((a) => a.id === S.current.agentId) || null;
+    if (S.current) return S.agents.find((a) => a.id === S.current.agentId) || (S.currentAgent?.id === S.current.agentId ? S.currentAgent : null);
     return S.agents.find((a) => a.id === S.welcomeAgent) || S.agents.find((a) => a.enabled) || S.agents[0] || null;
   }
   function agentById(id) {
@@ -482,6 +483,7 @@
     switchComposer(id);
     S.scrollPinned = true;
     S.current = S.conversations.find((c) => c.id === id) || S.current;
+    S.configs = [];
     renderSidebar();
     renderTopbar();
     if (S.current && S.current.id !== id) S.current = null;
@@ -575,12 +577,12 @@
       </div>`;
     document.title = "NusaMation";
     const sc = $("#chat-scroll");
+    let userScrollAt = 0;
+    for (const type of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+      sc.addEventListener(type, () => { userScrollAt = Date.now(); }, { passive: true });
+    }
     sc.addEventListener("scroll", () => {
-      if (Date.now() - (S.lastAutoScroll || 0) < 180) {
-        S.scrollPinned = true;
-        return;
-      }
-      S.scrollPinned = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 140;
+      if (Date.now() - userScrollAt < 1000) S.scrollPinned = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 140;
     }, { passive: true });
     renderSidebar();
     renderTopbar();
@@ -734,13 +736,9 @@
   }
 
   function modelLabel(c, agent) {
-    if (c && c.model) {
-      const opt = S.configs.find((o) => (o.category || "").toLowerCase() === "model");
-      const choice = opt && configChoices(opt).find((o) => o.value === c.model);
-      return choice?.name || c.model;
-    }
-    if (agent && agent.defaultModel) return agent.defaultModel;
-    return "Default model";
+    const opt = S.configs.find((o) => (o.category || "").toLowerCase() === "model");
+    if (opt) return configLabel(opt);
+    return agent?.defaultModel || "Default model";
   }
 
   function activeLabel() {
@@ -814,12 +812,10 @@
       if (next) next.focus({ preventScroll: true });
     }
     if (wasPinned && sc) {
-      S.lastAutoScroll = Date.now();
       sc.scrollTop = sc.scrollHeight;
       S.scrollPinned = true;
       requestAnimationFrame(() => {
         if (S.scrollPinned) {
-          S.lastAutoScroll = Date.now();
           sc.scrollTop = sc.scrollHeight;
         }
       });
@@ -1174,7 +1170,7 @@
     const links = (conv && conv.links || []).filter((l) => l.channel !== "web");
     const active = S.active && ["running", "waiting_approval", "cancelling"].includes(S.active.status);
     const mobileSummary = mobileConfigSummary();
-    wrap.innerHTML = `<div class="composer-inner">
+    const markup = `<div class="composer-inner">
       <div class="composer" id="composer">
         <div class="composer-attachments" id="pending-attachments"></div>
         <textarea id="prompt" rows="1" placeholder="Message ${esc(agentName(agent))}…" aria-label="Message">${esc(S.draft)}</textarea>
@@ -1183,11 +1179,11 @@
           <button class="composer-choice agent-choice" data-action="agent-menu" title="Choose agent">${agentOrb(agent)}<span>${esc(agentName(agent))}</span>${icon("chevron-down", "sm")}</button>
           <div class="composer-configs">${composerConfigs()}</div>
           ${mobileSummary ? `<span class="composer-mobile-summary" title="${esc(mobileSummary)}">${esc(mobileSummary)}</span>` : ""}
-          <button class="composer-mobile-settings" data-action="${S.configs.length ? "composer-mobile-settings" : "prepare-composer"}" aria-label="Agent options" title="Agent options">${S.preparing === conv?.id ? `<span class="spinner"></span>` : "+"}</button>
+          <button class="composer-mobile-settings" data-action="${S.configs.length ? "composer-mobile-settings" : "prepare-composer"}" aria-label="Agent options" title="Agent options">${S.preparing === (conv?.id || "draft") ? `<span class="spinner"></span>` : "+"}</button>
           ${S.elicitations.some((e) => e.conversationId === conv?.id) ? `<button class="composer-choice" data-action="show-agent-request">Respond</button>` : ""}
           ${links.length ? `<button class="reply-toggle ${S.replyToChannel ? "on" : ""}" data-action="reply-toggle" title="Also send the final answer to this chat">${icon("message", "sm")} ${S.replyToChannel ? "Reply to " + esc(links[0].channel) : "Reply to chat"}</button>` : ""}
           <span class="grow"></span>
-          ${active ? `<button class="stop-btn" data-action="stop" aria-label="Stop" title="Stop">${icon("stop", "sm")} <span class="stop-label">Stop</span></button>` : ""}
+          ${active ? `<button class="stop-btn" data-action="stop" aria-label="Stop" title="Stop">${icon("stop", "sm")}</button>` : ""}
           <div class="send-split">
             <button class="send-btn" id="send-btn" data-action="send" title="${sendTitle()}" aria-label="${sendTitle()}">${icon("send")}</button>
             ${isBusyTurn() ? `<button class="send-menu-btn" id="send-menu-btn" data-action="send-menu" aria-haspopup="menu" aria-expanded="false" aria-label="Send options" title="Send options"${S.sending ? " disabled" : ""}>${icon("chevron-down", "sm")}</button>` : ""}
@@ -1198,21 +1194,38 @@
       <input type="file" id="file-input" multiple hidden>
       <div class="drop-overlay" id="drop-overlay">Drop files to attach</div>
     </div>`;
+    const next = document.createElement("div");
+    next.innerHTML = markup;
+    const existing = $(".composer-inner", wrap);
+    if (existing && oldTa) {
+      $("#pending-attachments", existing).replaceWith($("#pending-attachments", next));
+      $(".composer-bar", existing).replaceWith($(".composer-bar", next));
+      $(".composer-foot", existing).replaceWith($(".composer-foot", next));
+      if (oldTa.dataset.composerKey !== composerKey) oldTa.value = S.draft;
+    } else {
+      wrap.innerHTML = markup;
+    }
     const ta = $("#prompt");
-    ta.addEventListener("input", () => { S.draft = ta.value; autoGrow(); });
-    ta.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-        e.preventDefault();
-        sendMessage();
-      }
-    });
-    ta.addEventListener("paste", handlePaste);
-    if (wasFocused) {
+    ta.dataset.composerKey = composerKey;
+    if (!oldTa || !existing) {
+      ta.addEventListener("input", () => { S.draft = ta.value; autoGrow(); });
+      ta.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && e.shiftKey && !isMobile() && !e.isComposing) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+      ta.addEventListener("paste", handlePaste);
+    }
+    if (wasFocused && ta !== oldTa) {
       ta.focus();
       try { ta.setSelectionRange(selStart, selEnd); } catch {}
     }
     autoGrow();
-    $("#file-input")?.addEventListener("change", (e) => uploadFiles(e.target.files));
+    $("#file-input").onchange = (e) => uploadFiles(e.target.files);
+    wrap.onpointerdown = (e) => {
+      if (isMobile() && document.activeElement === ta && e.target.closest('[data-action="prepare-composer"]')) e.preventDefault();
+    };
     wrap.ondragover = (e) => { e.preventDefault(); $("#drop-overlay")?.classList.add("show"); };
     wrap.ondragleave = (e) => { if (!wrap.contains(e.relatedTarget)) $("#drop-overlay")?.classList.remove("show"); };
     wrap.ondrop = (e) => {
@@ -1231,8 +1244,7 @@
   }
 
   function composerConfigs() {
-    if (!S.current) return `<button class="composer-choice" data-action="prepare-composer">Connect agent</button>`;
-    if (S.preparing === S.current.id) return `<span class="composer-loading"><span class="spinner"></span> Connecting…</span>`;
+    if (S.preparing === (S.current?.id || "draft")) return `<span class="composer-loading"><span class="spinner"></span> Connecting…</span>`;
     const opts = S.configs.filter((o) => o && o.id && (o.type === "select" || o.type === "boolean"));
     if (!opts.length) return `<button class="composer-choice" data-action="prepare-composer">Load options</button>`;
     const modes = opts.filter((o) => String(o.category || "").toLowerCase() === "mode");
@@ -1275,7 +1287,7 @@
     const btn = $("#send-btn");
     if (!ta || !btn) return;
     const has = ta.value.trim().length > 0 || S.attachments.length > 0;
-    btn.disabled = !has || S.sending;
+    btn.disabled = !has || S.sending || (!S.current && S.preparing === "draft");
     btn.innerHTML = S.sending ? `<span class="spinner"></span>` : icon("send");
     btn.title = sendTitle();
     btn.setAttribute("aria-label", sendTitle());
@@ -1404,7 +1416,7 @@
   }
 
   async function sendMessage() {
-    if (S.sending) return;
+    if (S.sending || (!S.current && S.preparing === "draft")) return;
     const ta = $("#prompt");
     if (!ta) return;
     const text = ta.value.trim();
@@ -1420,6 +1432,7 @@
       if (!conversation) {
         const ag = agentById(S.welcomeAgent) || S.agents.find((a) => a.enabled);
         if (!ag) { openSettings("agents"); throw new Error("Add an agent before sending a message."); }
+        owner.pendingSelections = S.draftSelections.slice();
         const d = await api("/conversations", { method: "POST", body: { agentId: ag.id } });
         conversation = d.conversation;
         moveComposer(sourceKey, conversation.id);
@@ -1430,9 +1443,17 @@
           S.current = conversation;
           S.messages = [];
           S.configs = [];
+          S.currentAgent = ag;
           S.active = null;
           setRoute(conversation.id);
         }
+      }
+      if (owner.pendingSelections?.length) {
+        await api(`/conversations/${encodeURIComponent(conversation.id)}/prepare`, { method: "POST", body: {} });
+        for (const choice of owner.pendingSelections) {
+          await api(`/conversations/${encodeURIComponent(conversation.id)}/config`, { method: "POST", body: { configId: choice.id, value: choice.value } });
+        }
+        owner.pendingSelections = [];
       }
       const links = (conversation.links || []).filter((l) => l.channel !== "web");
       const body = {
@@ -1444,7 +1465,7 @@
       };
       const d = await api(`/conversations/${encodeURIComponent(conversation.id)}/messages`, { method: "POST", body });
       owner.sending = false;
-      if (owner.draft.trim() === text) owner.draft = "";
+      if (owner.draft.trim() === text) { owner.draft = ""; if (composerFor(composerKey) === owner) $("#prompt").value = ""; }
       owner.attachments = owner.attachments.filter((a) => !attachments.includes(a));
       if (composerFor(composerKey) !== owner || S.current?.id !== conversation.id) return;
       renderPendingAttachments();
@@ -1977,7 +1998,7 @@
 
   async function prepareComposer() {
     if (!S.current) {
-      await newConversation(S.welcomeAgent, true);
+      await previewDraft();
       return;
     }
     const id = S.current.id;
@@ -2002,6 +2023,30 @@
       if (S.prepareController === controller) S.prepareController = null;
       if (S.preparing === id) S.preparing = "";
       if (S.current?.id === id) { renderTopbar(); renderComposer(); }
+    }
+  }
+
+  async function previewDraft() {
+    const agentId = S.welcomeAgent;
+    if (!agentId) return false;
+    const seq = ++S.draftPreviewSeq;
+    S.preparing = "draft";
+    renderComposer();
+    try {
+      const chosenIds = new Set(S.draftSelections.map((choice) => choice.id));
+      const defaults = agentId === S.agentDefaults.agentId ? (S.agentDefaults.selections || []).filter((choice) => !chosenIds.has(choice.id)) : [];
+      const d = await api("/settings/agent-defaults/preview", { method: "POST", body: { agentId, selections: [...defaults, ...S.draftSelections] } });
+      if (seq !== S.draftPreviewSeq || S.current || S.welcomeAgent !== agentId) return false;
+      S.configs = d.configs || [];
+      return true;
+    } catch (e) {
+      if (seq === S.draftPreviewSeq && !S.current) showAgentBlocker(e);
+      return false;
+    } finally {
+      if (seq === S.draftPreviewSeq) {
+        S.preparing = "";
+        if (!S.current) renderComposer();
+      }
     }
   }
 
@@ -2085,7 +2130,14 @@
   }
 
   async function setConfig(id, value) {
-    if (!S.current) return;
+    if (!S.current) {
+      const previous = S.draftSelections.slice();
+      S.draftSelections = previous.filter((choice) => choice.id !== id).concat({ id, value });
+      closePopover();
+      const seq = S.draftPreviewSeq + 1;
+      if (!await previewDraft() && seq === S.draftPreviewSeq && !S.current) S.draftSelections = previous;
+      return;
+    }
     try {
       const d = await api(`/conversations/${encodeURIComponent(S.current.id)}/config`, { method: "POST", body: { configId: id, value } });
       S.current = d.conversation;
@@ -2107,6 +2159,10 @@
     if (!S.current) {
       closePopover();
       S.currentAgent = ag;
+      S.configs = [];
+      S.draftSelections = [];
+      ++S.draftPreviewSeq;
+      S.preparing = "";
       renderTopbar();
       renderChat();
       renderComposer();
@@ -2865,32 +2921,26 @@
     }
   }
   /* ---------------- actions ---------------- */
-  async function newConversation(agentId = "", transferDraft = false) {
-    const defaultAgent = agentById(S.agentDefaults.agentId);
-    const ag = agentById(agentId) || (defaultAgent?.enabled ? defaultAgent : null) || (!S.current ? agentById(S.welcomeAgent) : null) || currentAgent() || S.agents.find((a) => a.enabled);
-    if (!ag) { openSettings("agents"); return; }
-    const sourceKey = composerKey;
-    try {
-      const d = await api("/conversations", { method: "POST", body: { agentId: ag.id } });
-      if (transferDraft) moveComposer(sourceKey, d.conversation.id);
-      upsertConversation(d.conversation);
-      if (composerKey !== (transferDraft ? d.conversation.id : sourceKey)) return;
-      else switchComposer(d.conversation.id);
-      ++S.loadSeq;
-      S.loadingConversation = false;
-      S.current = d.conversation;
-      S.turns = {};
-      S.messages = [];
-      S.active = null;
-      S.configs = parseConfigs(d.conversation.configOptions);
-      setRoute(d.conversation.id);
-      renderSidebar(); renderTopbar(); renderChat(); renderComposer();
-      closeMobileSidebar();
-      focusComposer();
-      prepareComposer();
-    } catch (e) {
-      toast("Could not create conversation", e.message, "error");
-    }
+  async function newConversation() {
+    ++S.loadSeq;
+    ++S.draftPreviewSeq;
+    S.prepareController?.abort();
+    S.preparing = "";
+    S.current = null;
+    S.currentAgent = null;
+    S.messages = [];
+    S.turns = {};
+    S.active = null;
+    S.configs = [];
+    S.draftSelections = [];
+    S.welcomeAgent = (agentById(S.agentDefaults.agentId)?.enabled ? S.agentDefaults.agentId : "") || S.agents.find((a) => a.enabled)?.id || "";
+    switchComposer("");
+    S.scrollPinned = true;
+    S.loadingConversation = false;
+    setRoute("");
+    renderSidebar(); renderTopbar(); renderChat(); renderComposer();
+    closeMobileSidebar();
+    focusComposer();
   }
 
   function openConversationMenu(anchor, id) {
