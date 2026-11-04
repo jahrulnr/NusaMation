@@ -541,6 +541,12 @@ func (s *Store) UpdateMCP(ctx context.Context, id string, in MCPServer) (MCPServ
 	if err != nil {
 		return MCPServer{}, err
 	}
+	if in.AgentID != "" && in.AgentID != cur.AgentID {
+		if _, err := s.GetAgent(ctx, in.AgentID); err != nil {
+			return MCPServer{}, fmt.Errorf("target agent %q does not exist", in.AgentID)
+		}
+		cur.AgentID = in.AgentID
+	}
 	if in.Name != "" {
 		cur.Name = strings.TrimSpace(in.Name)
 	}
@@ -582,8 +588,8 @@ func (s *Store) UpdateMCP(ctx context.Context, id string, in MCPServer) (MCPServ
 	if err != nil {
 		return MCPServer{}, err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE mcp_servers SET name=?,transport=?,command=?,args_json=?,env_enc=?,url=?,headers_enc=?,enabled=?,updated_at=? WHERE id=?`,
-		cur.Name, cur.Transport, cur.Command, js(cur.Args, "[]"), envEnc, cur.URL, headersEnc, boolInt(cur.Enabled), nowMS(), id)
+	_, err = s.db.ExecContext(ctx, `UPDATE mcp_servers SET agent_id=?,name=?,transport=?,command=?,args_json=?,env_enc=?,url=?,headers_enc=?,enabled=?,updated_at=? WHERE id=?`,
+		cur.AgentID, cur.Name, cur.Transport, cur.Command, js(cur.Args, "[]"), envEnc, cur.URL, headersEnc, boolInt(cur.Enabled), nowMS(), id)
 	if err != nil {
 		return MCPServer{}, err
 	}

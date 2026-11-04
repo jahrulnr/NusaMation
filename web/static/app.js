@@ -31,6 +31,10 @@
     slate: "linear-gradient(145deg,#c5ccd8,#6c7a8e)",
   };
 
+  // Tool kinds the UI knows how to style. t.kind is agent-supplied, so anything
+  // outside this set falls back to "other" before it reaches a class attribute.
+  const TOOL_KINDS = new Set(["read", "edit", "delete", "move", "search", "execute", "think", "fetch", "switch_mode", "other"]);
+
   const S = {
     authInitialized: false,
     csrf: "",
@@ -863,6 +867,7 @@
       <div class="msg-body">
         ${messageHead(m)}
         <div class="markdown">${renderMarkdown(text)}${streaming ? `<span class="streaming-caret"></span>` : ""}</div>
+        ${attachmentsHTML(m.attachments)}
       </div>
     </div>`;
   }
@@ -913,7 +918,7 @@
     const status = String(t.status || m.status || "pending");
     const title = t.title || t.name || m.text || "Tool call";
     const iconName = toolIcon(kind);
-    const iconClass = `kind-${kind || "other"}`;
+    const iconClass = `kind-${TOOL_KINDS.has(kind) ? kind : "other"}`;
     const sections = toolSections(t, m.id);
     const preview = toolPreview(t);
     const exits = Object.values(t.terminals || {}).map((term) => term.exitStatus).filter(Boolean);

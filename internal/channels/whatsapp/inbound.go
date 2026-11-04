@@ -93,13 +93,49 @@ func (c *Channel) handleMessage(ctx context.Context, evt *events.Message) error 
 	}
 	if vid := evt.Message.GetVideoMessage(); vid != nil {
 		text = joinCaption(text, vid.GetCaption())
-		text = joinCaption(text, "[Video attachment received; download it from the web UI or ask the sender for a file.]")
+		if data, err := c.download(ctx, vid, vid.GetFileLength()); err == nil {
+			mime := vid.GetMimetype()
+			if mime == "" {
+				mime = http.DetectContentType(data)
+			}
+			attachments = append(attachments, channels.Attachment{
+				Name: "video-" + string(info.ID) + extensionForMIME(mime, ".mp4"), MIME: mime,
+				Size: int64(len(data)), Data: data,
+			})
+		} else {
+			c.log.Warn("failed to download WhatsApp video", "error", err)
+			text = joinCaption(text, "[Video could not be downloaded]")
+		}
 	}
 	if aud := evt.Message.GetAudioMessage(); aud != nil {
-		text = joinCaption(text, "[Voice note received. Ask the user to send it as a file if you need the audio.]")
+		if data, err := c.download(ctx, aud, aud.GetFileLength()); err == nil {
+			mime := aud.GetMimetype()
+			if mime == "" {
+				mime = http.DetectContentType(data)
+			}
+			attachments = append(attachments, channels.Attachment{
+				Name: "audio-" + string(info.ID) + extensionForMIME(mime, ".ogg"), MIME: mime,
+				Size: int64(len(data)), Data: data,
+			})
+		} else {
+			c.log.Warn("failed to download WhatsApp audio", "error", err)
+			text = joinCaption(text, "[Voice note could not be downloaded]")
+		}
 	}
 	if st := evt.Message.GetStickerMessage(); st != nil {
-		text = joinCaption(text, "[Sticker received]")
+		if data, err := c.download(ctx, st, st.GetFileLength()); err == nil {
+			mime := st.GetMimetype()
+			if mime == "" {
+				mime = http.DetectContentType(data)
+			}
+			attachments = append(attachments, channels.Attachment{
+				Name: "sticker-" + string(info.ID) + extensionForMIME(mime, ".webp"), MIME: mime,
+				Size: int64(len(data)), Data: data,
+			})
+		} else {
+			c.log.Warn("failed to download WhatsApp sticker", "error", err)
+			text = joinCaption(text, "[Sticker could not be downloaded]")
+		}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" && len(attachments) == 0 {
@@ -296,6 +332,26 @@ func extensionForMIME(mime, fallback string) string {
 		return ".webp"
 	case "image/gif":
 		return ".gif"
+	case "video/mp4":
+		return ".mp4"
+	case "video/quicktime":
+		return ".mov"
+	case "video/webm":
+		return ".webm"
+	case "video/3gpp":
+		return ".3gp"
+	case "audio/ogg":
+		return ".ogg"
+	case "audio/opus":
+		return ".opus"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/mp4":
+		return ".m4a"
+	case "audio/aac":
+		return ".aac"
+	case "audio/wav", "audio/x-wav":
+		return ".wav"
 	default:
 		return fallback
 	}

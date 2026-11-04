@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -293,6 +294,10 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 			blocks = append(blocks, acp.ContentBlock{
 				Type: "image", MIMEType: mime, Data: base64.StdEncoding.EncodeToString(data),
 			})
+		case strings.HasPrefix(mime, "audio/") && caps.Audio:
+			blocks = append(blocks, acp.ContentBlock{
+				Type: "audio", MIMEType: mime, Data: base64.StdEncoding.EncodeToString(data),
+			})
 		case isTextMIME(mime, u.Name):
 			body := string(data)
 			if len(body) > 180000 {
@@ -302,7 +307,7 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 				blocks = append(blocks, acp.ContentBlock{
 					Type: "resource",
 					Resource: &acp.EmbeddedResource{
-						URI: "file://" + filepath.ToSlash(u.Path), MIMEType: mime, Text: body,
+						URI: fileURI(u.Path), MIMEType: mime, Text: body,
 					},
 				})
 			} else {
@@ -311,7 +316,7 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 		default:
 			abs, _ := filepath.Abs(u.Path)
 			blocks = append(blocks, acp.ContentBlock{
-				Type: "resource_link", URI: "file://" + filepath.ToSlash(abs),
+				Type: "resource_link", URI: fileURI(abs),
 				Name: u.Name, MIMEType: mime, Size: u.Size,
 			})
 		}
@@ -327,6 +332,12 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 		})
 	}
 	return blocks
+}
+
+// fileURI builds a proper file:// URL — percent-encoding keeps paths with
+// spaces or non-ASCII names valid.
+func fileURI(path string) string {
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
 }
 
 func isTextMIME(mime, name string) bool {
@@ -447,8 +458,18 @@ func (s *Service) mirrorFinal(a *activeTurn) {
 	if strings.TrimSpace(digest) == "" {
 		return
 	}
+	var ref struct {
+		ExternalID string `json:"externalId"`
+		ThreadID   string `json:"threadId"`
+	}
+	_ = json.Unmarshal([]byte(a.turn.OriginRef), &ref)
+	digest = cleanDeliveredText(digest, a.outboundRefs())
+	if strings.TrimSpace(digest) == "" {
+		return
+	}
 	for _, l := range links {
-		if l.Channel == a.turn.OriginChannel {
+		if l.Channel == a.turn.OriginChannel && l.ExternalID == ref.ExternalID &&
+			(ref.ThreadID == "" || l.ThreadID == ref.ThreadID) {
 			continue
 		}
 		ch, ok := s.channels.Get(l.Channel)

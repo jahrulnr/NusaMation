@@ -66,6 +66,22 @@ type Delivery interface {
 	Update(ctx context.Context, text string, final bool) error
 }
 
+// OutboundMedia is a file the agent asked to deliver to a chat channel.
+// Exactly one of Data (in-memory bytes) or Path (local file) must be set.
+type OutboundMedia struct {
+	Name    string `json:"name,omitempty"`
+	MIME    string `json:"mime,omitempty"`
+	Caption string `json:"caption,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Data    []byte `json:"-"`
+}
+
+// MediaSender is implemented by channels that can deliver binary attachments
+// (WhatsApp, Telegram). The chat service probes for it after the final text.
+type MediaSender interface {
+	SendMedia(ctx context.Context, target Target, media OutboundMedia) error
+}
+
 type Channel interface {
 	Name() string
 	Label() string

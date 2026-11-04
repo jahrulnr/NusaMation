@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -63,6 +66,7 @@ type groupEntry struct {
 
 var _ channels.Channel = (*Channel)(nil)
 var _ channels.Controller = (*Channel)(nil)
+var _ channels.MediaSender = (*Channel)(nil)
 
 func New(st *appstore.Store, cfg config.Config, mgr *channels.Manager, log *slog.Logger) (*Channel, error) {
 	if log == nil {
@@ -572,6 +576,135 @@ func (c *Channel) Notify(ctx context.Context, target channels.Target, text strin
 	}
 	_, err = c.sendText(ctx, jid, text)
 	return err
+}
+
+// SendMedia uploads an image, video, audio clip or document to WhatsApp
+// servers and delivers it to the target chat.
+func (c *Channel) SendMedia(ctx context.Context, target channels.Target, media channels.OutboundMedia) error {
+	jid, err := c.parseTarget(target)
+	if err != nil {
+		return err
+	}
+	if !c.settingsSnapshot().Enabled {
+		return errors.New("WhatsApp channel is disabled")
+	}
+	data := media.Data
+	if len(data) == 0 && strings.TrimSpace(media.Path) != "" {
+		data, err = os.ReadFile(media.Path)
+		if err != nil {
+			return fmt.Errorf("read media %q: %w", media.Path, err)
+		}
+	}
+	if len(data) == 0 {
+		return errors.New("media has no data or path")
+	}
+	if len(data) > maxMediaBytes {
+		return fmt.Errorf("media exceeds the %d byte limit", maxMediaBytes)
+	}
+	mime := strings.TrimSpace(media.MIME)
+	if mime == "" {
+		mime = http.DetectContentType(data)
+	}
+	mime = strings.TrimSpace(strings.Split(mime, ";")[0])
+	caption := strings.TrimSpace(media.Caption)
+
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client == nil || !client.IsLoggedIn() {
+		return errors.New("WhatsApp is not connected")
+	}
+	mediaType := mediaTypeFor(mime)
+	up, err := client.Upload(ctx, data, mediaType)
+	if err != nil {
+		return fmt.Errorf("upload media to WhatsApp: %w", err)
+	}
+	msg := &waE2E.Message{}
+	switch mediaType {
+	case whatsmeow.MediaImage:
+		m := &waE2E.ImageMessage{
+			URL:           &up.URL,
+			DirectPath:    &up.DirectPath,
+			MediaKey:      up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256,
+			FileSHA256:    up.FileSHA256,
+			FileLength:    &up.FileLength,
+			Mimetype:      proto.String(mime),
+		}
+		if caption != "" {
+			m.Caption = proto.String(caption)
+		}
+		msg.ImageMessage = m
+	case whatsmeow.MediaVideo:
+		m := &waE2E.VideoMessage{
+			URL:              &up.URL,
+			DirectPath:       &up.DirectPath,
+			MediaKey:         up.MediaKey,
+			FileEncSHA256:    up.FileEncSHA256,
+			FileSHA256:       up.FileSHA256,
+			FileLength:       &up.FileLength,
+			Mimetype:         proto.String(mime),
+			StreamingSidecar: up.StreamingSidecar,
+		}
+		if caption != "" {
+			m.Caption = proto.String(caption)
+		}
+		msg.VideoMessage = m
+	case whatsmeow.MediaAudio:
+		m := &waE2E.AudioMessage{
+			URL:           &up.URL,
+			DirectPath:    &up.DirectPath,
+			MediaKey:      up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256,
+			FileSHA256:    up.FileSHA256,
+			FileLength:    &up.FileLength,
+			Mimetype:      proto.String(mime),
+		}
+		// OGG/OPUS clips render as push-to-talk voice-note bubbles.
+		if mime == "audio/ogg" || mime == "audio/opus" {
+			m.PTT = proto.Bool(true)
+		}
+		msg.AudioMessage = m
+	default:
+		fileName := strings.TrimSpace(media.Name)
+		if fileName != "" {
+			fileName = filepath.Base(fileName)
+		} else if p := strings.TrimSpace(media.Path); p != "" {
+			fileName = filepath.Base(p)
+		}
+		if fileName == "" {
+			fileName = "file"
+		}
+		m := &waE2E.DocumentMessage{
+			URL:           &up.URL,
+			DirectPath:    &up.DirectPath,
+			MediaKey:      up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256,
+			FileSHA256:    up.FileSHA256,
+			FileLength:    &up.FileLength,
+			Mimetype:      proto.String(mime),
+			FileName:      proto.String(fileName),
+		}
+		if caption != "" {
+			m.Caption = proto.String(caption)
+		}
+		msg.DocumentMessage = m
+	}
+	_, err = client.SendMessage(ctx, jid, msg)
+	return err
+}
+
+func mediaTypeFor(mime string) whatsmeow.MediaType {
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		return whatsmeow.MediaImage
+	case strings.HasPrefix(mime, "video/"):
+		return whatsmeow.MediaVideo
+	case strings.HasPrefix(mime, "audio/"):
+		return whatsmeow.MediaAudio
+	default:
+		return whatsmeow.MediaDocument
+	}
 }
 
 func (c *Channel) presence(jid types.JID, state types.ChatPresence) {

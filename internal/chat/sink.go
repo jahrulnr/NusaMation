@@ -56,6 +56,11 @@ func (s *Service) SessionUpdate(sess *agent.Session, u acp.SessionUpdate, raw js
 	}
 	switch u.SessionUpdate {
 	case "agent_message_chunk":
+		var block acp.ContentBlock
+		if json.Unmarshal(u.Content, &block) == nil && block.Type != "" && block.Type != "text" {
+			s.collectOutbound(a, block)
+			return
+		}
 		text := acp.DecodeTextContent(u.Content)
 		if text == "" {
 			return
@@ -210,6 +215,9 @@ func (s *Service) rotateStream(a *activeTurn, kind string) {
 		a.thoughtDirty = false
 	} else {
 		id, text = a.assistantID, a.assistant.String()
+		if id != "" {
+			a.assistantTextID = id
+		}
 		a.assistantID, a.assistantACPID = "", ""
 		a.assistant.Reset()
 		a.assistantDirty = false
@@ -286,6 +294,7 @@ func (s *Service) ensureStream(a *activeTurn, kind, acpMessageID string) {
 	} else {
 		if a.assistantID == "" {
 			a.assistantID = msg.ID
+			a.assistantTextID = msg.ID
 			if acpMessageID != "" {
 				a.assistantACPID = acpMessageID
 			}
@@ -629,6 +638,10 @@ func (s *Service) updateDelivery(a *activeTurn, final bool) {
 		if strings.TrimSpace(text) == "" {
 			text = s.finalDigest(a)
 		}
+		text = cleanDeliveredText(text, a.outboundRefs())
+		if strings.TrimSpace(text) == "" {
+			text = "Done."
+		}
 	} else {
 		text = strings.TrimSpace(text)
 		if text == "" {
@@ -654,10 +667,16 @@ func (s *Service) updateDelivery(a *activeTurn, final bool) {
 func (s *Service) finalDigest(a *activeTurn) string {
 	a.mu.Lock()
 	terminalStatus, terminalError := a.finalStatus, a.finalError
+	text := a.assistantAll.String()
 	a.mu.Unlock()
+	// assistantAll is the authoritative cumulative reply; prefer it over a
+	// windowed DB query so long turns never lose the assistant's text.
+	if strings.TrimSpace(text) != "" {
+		return textfmt.Truncate(textfmt.ChatMarkdown(text), 3500)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	msgs, err := s.store.ListMessages(ctx, a.conversationID, 0, 0, 20)
+	msgs, err := s.store.ListMessages(ctx, a.conversationID, 0, 0, 100)
 	if err != nil {
 		return "Done."
 	}
@@ -768,9 +787,10 @@ func (s *Service) finishTurn(a *activeTurn, status, stopReason string, runErr er
 	_ = s.store.FinishTurn(ctx, a.turn.ID, status, stopReason, errMsg)
 	_ = s.store.SetConversationStatus(ctx, a.conversationID, "idle")
 	s.cancelPendingApprovalsForTurn(a.turn.ID, "Turn finished.")
+	s.prepareOutbound(a)
 
 	a.mu.Lock()
-	hasOutput := a.assistantAll.Len() > 0 || a.toolCount > 0
+	hasOutput := a.assistantAll.Len() > 0 || a.toolCount > 0 || a.hasOutbound()
 	a.finalStatus = status
 	a.finalError = errMsg
 	a.mu.Unlock()
@@ -793,6 +813,7 @@ func (s *Service) finishTurn(a *activeTurn, status, stopReason string, runErr er
 	}
 
 	s.flushStreams(a, true, status)
+	go s.deliverOutbound(a)
 	s.mirrorFinal(a)
 	a.cancel()
 

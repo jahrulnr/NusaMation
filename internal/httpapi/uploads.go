@@ -33,9 +33,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, 25<<20))
+	data, err := io.ReadAll(io.LimitReader(file, (25<<20)+1))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "upload_failed", "Could not read the uploaded file.")
+		return
+	}
+	if len(data) > 25<<20 {
+		writeError(w, http.StatusBadRequest, "file_too_large", "The uploaded file exceeds the 25 MB limit.")
 		return
 	}
 	if len(data) == 0 {

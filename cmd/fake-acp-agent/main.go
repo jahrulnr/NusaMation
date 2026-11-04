@@ -255,6 +255,10 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 		s.permissionDemo(id, sessionID, cancel)
 		return
 	}
+	if strings.Contains(text, "send-media-test") {
+		s.mediaDemo(id, text)
+		return
+	}
 	s.update(map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{
 		"type": "text", "text": "The fake agent received the prompt and is checking a safe path before acting.",
 	}})
@@ -315,6 +319,22 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 	s.respond(id, map[string]any{"stopReason": "end_turn", "usage": map[string]any{
 		"totalTokens": 1280, "inputTokens": 1180, "outputTokens": 100,
 	}})
+}
+
+// mediaDemo emits a base64 image content block and, if the prompt carried a
+// file:// URI, echoes it back inside a markdown link so the bridge can test
+// both outbound media paths.
+func (s *server) mediaDemo(id json.RawMessage, text string) {
+	const pngB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+	s.chunk("Here is the media you asked for. ")
+	s.update(map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{
+		"type": "image", "mimeType": "image/png", "data": pngB64, "name": "pixel.png",
+	}})
+	if i := strings.Index(text, "file://"); i >= 0 {
+		ref := strings.TrimRight(strings.Fields(text[i:])[0], ".,;")
+		s.chunk(fmt.Sprintf("And a file: [result](%s)", ref))
+	}
+	s.respond(id, map[string]any{"stopReason": "end_turn"})
 }
 
 // toolsDemo announces tools and completes them one at a time. With

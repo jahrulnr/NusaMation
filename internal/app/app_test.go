@@ -105,15 +105,16 @@ func TestSeedDocsWritesAndSyncs(t *testing.T) {
 		t.Fatal("drifted doc not re-synced")
 	}
 
-	// Files no longer shipped are removed.
-	stale := filepath.Join(dir, "removed-doc.md")
-	if err := os.WriteFile(stale, []byte("gone"), 0o600); err != nil {
+	// Files not shipped by the binary (e.g. user notes) are preserved.
+	stale := filepath.Join(dir, "user-notes.md")
+	if err := os.WriteFile(stale, []byte("keep me"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := seedDocs(dir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Fatal("stale doc not removed")
+	b, err := os.ReadFile(stale)
+	if err != nil || string(b) != "keep me" {
+		t.Fatal("user file in docs dir was removed or modified")
 	}
 }

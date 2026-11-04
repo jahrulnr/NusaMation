@@ -16,6 +16,7 @@ import (
 	"github.com/jahrulnr/nusamation/internal/channels"
 	"github.com/jahrulnr/nusamation/internal/events"
 	"github.com/jahrulnr/nusamation/internal/ids"
+	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
 )
 
@@ -583,9 +584,21 @@ func (s *Service) DeleteConversation(ctx context.Context, id string) error {
 		}
 	}
 	s.agents.ResetConversation(ctx, id)
+	uploads, _ := s.store.ListUploadsForConversation(ctx, id)
 	if err := s.store.DeleteConversation(ctx, id); err != nil {
 		return err
 	}
+	for _, u := range uploads {
+		path, err := security.SafePath(s.uploadDir, u.Path, false)
+		if err != nil {
+			s.log.Warn("skipping upload outside upload dir", "path", u.Path, "conversation", id)
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			s.log.Warn("could not remove upload file", "path", path, "error", err)
+		}
+	}
+	_ = s.store.DeleteUploadsForConversation(ctx, id)
 	s.emit("conversation.deleted", id, map[string]any{"id": id})
 	return nil
 }

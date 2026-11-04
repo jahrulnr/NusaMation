@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/jahrulnr/nusamation/internal/agent"
 	"github.com/jahrulnr/nusamation/internal/chat"
+	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
 )
 
@@ -181,21 +183,60 @@ func (s *Server) handleDeleteAllConversations(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "confirm_required", `Send {"confirm":"DELETE"} to erase all conversations.`)
 		return
 	}
-	list, err := s.store.ListConversations(r.Context(), store.ConversationFilter{Limit: 500, Archived: true})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "list_failed", err.Error())
-		return
-	}
-	active, _ := s.store.ListConversations(r.Context(), store.ConversationFilter{Limit: 500})
-	list = append(list, active...)
-	for _, c := range list {
-		_ = s.chat.DeleteConversation(r.Context(), c.ID)
+	// Drain in pages: each deleted conversation removes its uploads, so a fixed
+	// 500-item window would orphan upload files for older conversations.
+	for {
+		list, err := s.store.ListConversations(r.Context(), store.ConversationFilter{Limit: 200, Archived: true})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "list_failed", err.Error())
+			return
+		}
+		active, err := s.store.ListConversations(r.Context(), store.ConversationFilter{Limit: 200})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "list_failed", err.Error())
+			return
+		}
+		list = append(list, active...)
+		if len(list) == 0 {
+			break
+		}
+		progressed := false
+		for _, c := range list {
+			s.removeConversationUploads(r.Context(), c.ID)
+			if err := s.chat.DeleteConversation(r.Context(), c.ID); err != nil {
+				s.log.Warn("could not delete conversation during erase", "id", c.ID, "error", err)
+				continue
+			}
+			progressed = true
+		}
+		if !progressed {
+			break
+		}
 	}
 	if err := s.store.DeleteAllConversations(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// removeConversationUploads deletes a conversation's upload records and their
+// files on disk. Missing files and paths outside the upload dir are skipped.
+func (s *Server) removeConversationUploads(ctx context.Context, conversationID string) {
+	uploads, err := s.store.ListUploadsForConversation(ctx, conversationID)
+	if err != nil {
+		return
+	}
+	for _, up := range uploads {
+		path, err := security.SafePath(s.cfg.UploadDir(), up.Path, false)
+		if err != nil {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			s.log.Warn("could not remove upload file", "path", path, "error", err)
+		}
+	}
+	_ = s.store.DeleteUploadsForConversation(ctx, conversationID)
 }
 
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {

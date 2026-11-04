@@ -153,6 +153,11 @@ func (s *Service) HandleInbound(ctx context.Context, in channels.Inbound) error 
 		OriginRef:      linkRefFromInbound(in),
 	})
 	if err != nil {
+		// Nothing was queued — release the dedupe claim so a channel retry
+		// can still be processed instead of being dropped as a duplicate.
+		if in.MessageID != "" {
+			_ = s.store.ReleaseInbound(ctx, in.Channel, in.MessageID, in.ThreadID)
+		}
 		_ = s.reply(ctx, in, "I couldn't queue that message: "+shortErr(err))
 		return err
 	}
@@ -172,10 +177,7 @@ func (s *Service) newLinkedConversation(ctx context.Context, in channels.Inbound
 	if err != nil {
 		return conv, err
 	}
-	if existing, err := s.store.FindConversationByChannel(ctx, in.Channel, in.ExternalID, in.ThreadID); err == nil {
-		_ = s.store.RemoveChannelLink(ctx, existing.ID, in.Channel, in.ExternalID, in.ThreadID)
-	}
-	link, err := s.store.AddChannelLink(ctx, store.ChannelLink{
+	link, err := s.store.MoveChannelLink(ctx, store.ChannelLink{
 		ConversationID: conv.ID, Channel: in.Channel, ExternalID: in.ExternalID,
 		ThreadID: in.ThreadID, DisplayName: display, IsGroup: in.IsGroup,
 	})
@@ -338,6 +340,18 @@ func (s *Service) commandApproval(ctx context.Context, in channels.Inbound, conv
 		_ = s.reply(ctx, in, "That approval belongs to a different conversation.")
 		return nil
 	}
+	// Only the user whose prompt created this turn may answer its approvals.
+	// Older turns without a recorded sender keep the previous behavior.
+	if turn, err := s.store.GetTurn(ctx, ap.TurnID); err == nil && turn.OriginRef != "" {
+		var ref struct {
+			SenderID string `json:"senderId"`
+		}
+		_ = json.Unmarshal([]byte(turn.OriginRef), &ref)
+		if ref.SenderID != "" && in.SenderID != "" && ref.SenderID != in.SenderID {
+			_ = s.reply(ctx, in, "Only the person who sent that request can approve it.")
+			return nil
+		}
+	}
 	optionID := ""
 	if cmd == "deny" {
 		for _, o := range ap.Options {
@@ -390,7 +404,7 @@ func parseCommand(text string) (string, []string) {
 func linkRefFromInbound(in channels.Inbound) string {
 	b, _ := json.Marshal(map[string]any{
 		"externalId": in.ExternalID, "threadId": in.ThreadID,
-		"displayName": in.ChatName, "isGroup": in.IsGroup,
+		"displayName": in.ChatName, "isGroup": in.IsGroup, "senderId": in.SenderID,
 	})
 	return string(b)
 }

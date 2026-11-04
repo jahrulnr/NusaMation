@@ -70,13 +70,17 @@ type Session struct {
 func (s *Session) AgentID() string        { return s.agentID }
 func (s *Session) ConversationID() string { return s.conversationID }
 func (s *Session) ACPID() string          { s.mu.Lock(); defer s.mu.Unlock(); return s.acpID }
-func (s *Session) Cwd() string            { return s.cwd }
+func (s *Session) Cwd() string            { s.mu.Lock(); defer s.mu.Unlock(); return s.cwd }
 func (s *Session) Config() json.RawMessage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append(json.RawMessage(nil), s.configOptions...)
 }
-func (s *Session) Roots() []string      { return append([]string(nil), s.roots...) }
+func (s *Session) Roots() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.roots...)
+}
 func (s *Session) Recovered() bool      { s.mu.Lock(); defer s.mu.Unlock(); return s.recovered }
 func (s *Session) ClearRecovered()      { s.mu.Lock(); s.recovered = false; s.mu.Unlock() }
 func (s *Session) CreatedAt() time.Time { return s.createdAt }

@@ -89,12 +89,13 @@ type activeTurn struct {
 	cancel    context.CancelFunc
 	flushStop chan struct{}
 
-	assistantID    string
-	assistantACPID string
-	assistant      strings.Builder
-	assistantAll   strings.Builder
-	assistantDirty bool
-	assistantDone  bool
+	assistantID     string
+	assistantACPID  string
+	assistantTextID string
+	assistant       strings.Builder
+	assistantAll    strings.Builder
+	assistantDirty  bool
+	assistantDone   bool
 
 	thoughtID    string
 	thought      strings.Builder
@@ -108,6 +109,10 @@ type activeTurn struct {
 	delivery     channels.Delivery
 	deliveryText string
 	deliveryAt   time.Time
+
+	outboundMu sync.Mutex
+	outbound   []channels.OutboundMedia
+	sentRefs   map[string]bool
 
 	approvals       map[string]bool
 	recapApplied    bool
@@ -293,6 +298,49 @@ func (a *activeTurn) setDelivery(d channels.Delivery) {
 	a.mu.Lock()
 	a.delivery = d
 	a.mu.Unlock()
+}
+
+const maxOutboundMediaPerTurn = 4
+
+func (a *activeTurn) addOutbound(m channels.OutboundMedia) bool {
+	a.outboundMu.Lock()
+	defer a.outboundMu.Unlock()
+	if len(a.outbound) >= maxOutboundMediaPerTurn {
+		return false
+	}
+	a.outbound = append(a.outbound, m)
+	return true
+}
+
+func (a *activeTurn) hasOutbound() bool {
+	a.outboundMu.Lock()
+	defer a.outboundMu.Unlock()
+	return len(a.outbound) > 0
+}
+
+func (a *activeTurn) outboundSnapshot() []channels.OutboundMedia {
+	a.outboundMu.Lock()
+	defer a.outboundMu.Unlock()
+	return append([]channels.OutboundMedia(nil), a.outbound...)
+}
+
+func (a *activeTurn) markOutboundRef(ref string) {
+	a.outboundMu.Lock()
+	defer a.outboundMu.Unlock()
+	if a.sentRefs == nil {
+		a.sentRefs = map[string]bool{}
+	}
+	a.sentRefs[ref] = true
+}
+
+func (a *activeTurn) outboundRefs() map[string]bool {
+	a.outboundMu.Lock()
+	defer a.outboundMu.Unlock()
+	out := make(map[string]bool, len(a.sentRefs))
+	for k, v := range a.sentRefs {
+		out[k] = v
+	}
+	return out
 }
 
 func (a *activeTurn) getTool(id string) *toolState {

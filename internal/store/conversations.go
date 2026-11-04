@@ -286,6 +286,29 @@ func (s *Store) FindConversationByChannel(ctx context.Context, channel, external
 	return c, nil
 }
 
+// MoveChannelLink atomically (re)assigns a chat to a conversation. The unique
+// (channel, external_id, thread_id) constraint makes a delete-then-insert
+// sequence lose the link entirely if the insert fails; an upsert cannot.
+func (s *Store) MoveChannelLink(ctx context.Context, l ChannelLink) (ChannelLink, error) {
+	l.CreatedAt = nowMS()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO channel_links
+		(id,conversation_id,channel,external_id,thread_id,display_name,is_group,created_at)
+		VALUES (?,?,?,?,?,?,?,?)
+		ON CONFLICT(channel,external_id,thread_id) DO UPDATE SET
+		conversation_id=excluded.conversation_id,
+		display_name=excluded.display_name,
+		is_group=excluded.is_group`,
+		ids.New("ch"), l.ConversationID, l.Channel, l.ExternalID, l.ThreadID,
+		l.DisplayName, boolInt(l.IsGroup), l.CreatedAt)
+	if err != nil {
+		return l, err
+	}
+	_ = s.db.QueryRowContext(ctx, `SELECT id FROM channel_links
+		WHERE channel=? AND external_id=? AND thread_id=?`,
+		l.Channel, l.ExternalID, l.ThreadID).Scan(&l.ID)
+	return l, nil
+}
+
 func (s *Store) RemoveChannelLink(ctx context.Context, conversationID, channel, externalID, threadID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM channel_links
 		WHERE conversation_id=? AND channel=? AND external_id=? AND thread_id=?`,
@@ -311,6 +334,14 @@ func (s *Store) ClaimInbound(ctx context.Context, channel, externalID, threadID,
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+// ReleaseInbound drops a dedupe claim so a failed message can be retried
+// instead of being silently swallowed as a duplicate.
+func (s *Store) ReleaseInbound(ctx context.Context, channel, externalID, threadID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM inbound_messages
+		WHERE channel=? AND external_id=? AND thread_id=?`, channel, externalID, threadID)
+	return err
 }
 
 func (s *Store) ConversationStats(ctx context.Context) (total, active, pending int, err error) {

@@ -109,7 +109,12 @@ func resetPassword(args []string) error {
 		return err
 	}
 	defer st.Close()
-	if err := auth.SetPassword(context.Background(), st, *password); err != nil {
+	ctx := context.Background()
+	if err := auth.SetPassword(ctx, st, *password); err != nil {
+		return err
+	}
+	// Invalidate all browser sessions so the old password cannot keep working.
+	if err := st.DeleteAllSessions(ctx); err != nil {
 		return err
 	}
 	fmt.Println("Password updated.")

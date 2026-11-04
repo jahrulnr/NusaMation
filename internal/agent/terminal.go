@@ -48,9 +48,20 @@ type TerminalUpdate struct {
 	Version    uint64                  `json:"-"`
 }
 
+// maxTerminalFull caps the cumulative stream sent with every update — noisy
+// commands can otherwise grow memory and each DB write without bound.
+const maxTerminalFull = 256 << 10
+
 func (t *terminal) append(p []byte) {
 	t.mu.Lock()
 	t.full = append(t.full, p...)
+	if len(t.full) > maxTerminalFull {
+		cut := len(t.full) - maxTerminalFull
+		for cut < len(t.full) && !utf8.RuneStart(t.full[cut]) {
+			cut++
+		}
+		t.full = append([]byte("[earlier output truncated]\n"), t.full[cut:]...)
+	}
 	t.buf = append(t.buf, p...)
 	if t.limit > 0 && len(t.buf) > t.limit {
 		extra := len(t.buf) - t.limit

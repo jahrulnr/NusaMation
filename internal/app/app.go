@@ -331,19 +331,17 @@ start. Never print secret.key or sealed env values.
 }
 
 // seedDocs syncs the embedded ops docs into the data dir: files are written
-// when missing or changed, and files no longer shipped by the binary are
-// removed so the directory always matches the running version.
+// when missing or changed. Files not shipped by the binary (e.g. user notes)
+// are left untouched.
 func seedDocs(dir string) error {
 	docs := assets.Docs()
-	shipped := map[string]bool{}
-	walkErr := fs.WalkDir(docs, ".", func(path string, d fs.DirEntry, err error) error {
+	return fs.WalkDir(docs, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
 			return nil
 		}
-		shipped[filepath.FromSlash(path)] = true
 		data, err := fs.ReadFile(docs, path)
 		if err != nil {
 			return err
@@ -357,24 +355,6 @@ func seedDocs(dir string) error {
 		}
 		return os.WriteFile(target, data, 0o600)
 	})
-	if walkErr != nil {
-		return walkErr
-	}
-	entries, err := filepath.Glob(filepath.Join(dir, "*"))
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if info, err := os.Stat(e); err == nil && info.IsDir() {
-			continue
-		}
-		if !shipped[filepath.Base(e)] {
-			if err := os.Remove(e); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func seedAgent(ctx context.Context, st *store.Store, workspace string, log *slog.Logger) error {

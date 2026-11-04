@@ -98,7 +98,7 @@ Values are normalised to digits. An empty list allows any sender who can message
 
 ### Media
 
-Images and documents are downloaded up to 25 MB and stored as app uploads. Videos and voice notes are surfaced as a text note; ask the sender for a file if the agent needs the bytes. Images are only sent to models whose ACP prompt capabilities advertise image support.
+Images, documents, videos, voice notes and stickers are downloaded up to 25 MB and stored as app uploads. Images (and stickers) are sent to models whose ACP prompt capabilities advertise image support; audio goes to models that advertise audio support and otherwise reaches the agent as a `file://` resource link, like videos and other binary documents. In the other direction, media emitted by the agent — image/audio content blocks, `file://` resource links, or `file://` URIs and markdown links to allowed local paths in its reply — is uploaded to WhatsApp as a real attachment. Paths are confined to the workspace, upload dir and conversation/agent working directories.
 
 ### Presence and read receipts
 
