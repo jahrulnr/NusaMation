@@ -54,6 +54,7 @@ type Inbound struct {
 	IsGroup     bool         `json:"isGroup"`
 	MentionsMe  bool         `json:"mentionsMe"`
 	Timestamp   int64        `json:"timestamp"`
+	PollVote    *PollVote    `json:"pollVote,omitempty"`
 	Raw         any          `json:"-"`
 }
 
@@ -88,6 +89,25 @@ type MediaSender interface {
 // the surface its reply will be delivered on.
 type ResponseStyler interface {
 	ResponseRules() string
+}
+
+// PollAsker is implemented by channels that can present a multiple-choice
+// question as a native poll (WhatsApp). The chat service uses it to turn
+// agent option questions — permission requests, single/multi-select input —
+// into a tappable vote instead of a text command. maxSelectable=1 renders a
+// single-choice poll; higher values allow picking several options. Returns
+// the channel-side message id of the sent poll so incoming votes can be
+// matched back via Inbound.PollVote.
+type PollAsker interface {
+	SendPoll(ctx context.Context, target Target, question string, options []string, maxSelectable int) (pollMessageID string, err error)
+}
+
+// PollVote carries a decoded vote on a poll the channel itself sent — e.g. an
+// approval or question the agent asked through PollAsker. Votes on polls the
+// user created arrive as regular Text instead.
+type PollVote struct {
+	PollMessageID string   `json:"pollMessageId"`
+	Selected      []string `json:"selected"`
 }
 
 type Channel interface {

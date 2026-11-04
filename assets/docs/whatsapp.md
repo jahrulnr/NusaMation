@@ -35,10 +35,18 @@ nusamation whatsapp set -stream-edits          # progressive reply edits
   allowlist allows everyone** — the CLI refuses to save one that contains no
   valid numbers.
 - **GroupPolicy**: `disabled` ignores all groups; `mention` replies only when
-  @-mentioned; `all` replies to every group message (use carefully).
+  @-mentioned or replied to; `all` replies to every group message (use
+  carefully). Poll creations, votes and added options are exempt from the
+  `mention` requirement — they cannot carry @-mentions — and reach the agent
+  as `[Poll]`, `[Poll vote: …]` and `[Poll option added: …]` text markers.
 - **ReadReceipts** blue-ticks incoming chats; **SendTyping** shows "typing…"
   while the agent works; **StreamEdits** progressively edits the ack message
   into the final answer instead of sending a new message.
+
+Pending approvals and single/multi-choice agent questions arrive as tappable
+WhatsApp polls when they fit (≤12 options); otherwise the `/approve <id>` text
+flow is used. Multi-select answers settle ~15 s after the last vote. Only the
+user who started the turn may vote — other group members' taps are ignored.
 
 ## Multiple ACP agents
 

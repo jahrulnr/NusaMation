@@ -26,6 +26,9 @@ func (s *Service) HandleInbound(ctx context.Context, in channels.Inbound) error 
 			return nil
 		}
 	}
+	if in.PollVote != nil {
+		return s.resolvePollVote(ctx, in)
+	}
 	text := strings.TrimSpace(in.Text)
 	if text == "" && len(in.Attachments) == 0 {
 		return nil
@@ -342,12 +345,8 @@ func (s *Service) commandApproval(ctx context.Context, in channels.Inbound, conv
 	}
 	// Only the user whose prompt created this turn may answer its approvals.
 	// Older turns without a recorded sender keep the previous behavior.
-	if turn, err := s.store.GetTurn(ctx, ap.TurnID); err == nil && turn.OriginRef != "" {
-		var ref struct {
-			SenderID string `json:"senderId"`
-		}
-		_ = json.Unmarshal([]byte(turn.OriginRef), &ref)
-		if ref.SenderID != "" && in.SenderID != "" && ref.SenderID != in.SenderID {
+	if turn, err := s.store.GetTurn(ctx, ap.TurnID); err == nil {
+		if ref := turnOriginSender(turn); ref != "" && in.SenderID != "" && ref != in.SenderID {
 			_ = s.reply(ctx, in, "Only the person who sent that request can approve it.")
 			return nil
 		}
@@ -383,6 +382,19 @@ func (s *Service) commandApproval(ctx context.Context, in channels.Inbound, conv
 	}
 	_ = s.reply(ctx, in, "Approval "+updated.ID+" is now "+updated.Status+".")
 	return nil
+}
+
+// turnOriginSender extracts the recorded origin sender of a turn, used to
+// gate who may answer its approvals (slash command or poll vote).
+func turnOriginSender(turn store.Turn) string {
+	if turn.OriginRef == "" {
+		return ""
+	}
+	var ref struct {
+		SenderID string `json:"senderId"`
+	}
+	_ = json.Unmarshal([]byte(turn.OriginRef), &ref)
+	return ref.SenderID
 }
 
 func parseCommand(text string) (string, []string) {

@@ -43,11 +43,13 @@ func (s *Service) Elicit(ctx context.Context, sess *agent.Session, request json.
 		s.mu.Lock()
 		delete(s.elicitations, e.ID)
 		s.mu.Unlock()
+		s.dropPollWaiters(func(w *pollWaiter) bool { return w.elicitationID == e.ID })
 		s.emit("elicitation.resolved", e.ConversationID, map[string]any{"id": e.ID, "conversationId": e.ConversationID})
 	}()
 	var turnDone <-chan struct{}
 	if active := s.activeFor(e.ConversationID); active != nil {
 		turnDone = active.ctx.Done()
+		s.notifyElicitation(active, e)
 	}
 	select {
 	case result := <-w.result:
@@ -92,6 +94,7 @@ func (s *Service) ResolveElicitation(conversationID, id string, response Elicita
 	}
 	delete(s.elicitations, id)
 	s.mu.Unlock()
+	s.dropPollWaiters(func(w *pollWaiter) bool { return w.elicitationID == id })
 	w.result <- response
 	return nil
 }

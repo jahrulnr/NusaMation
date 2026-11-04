@@ -333,21 +333,35 @@ func (r *Runtime) applyDesiredConfig(ctx context.Context, client *acp.Client, s 
 			configs = s.Config()
 		}
 	}
-	for _, choice := range req.DefaultConfig {
-		value := choice.Value
-		if override, ok := req.DesiredConfig[choice.ID]; ok {
-			value = override
-		}
-		if !configAccepts(configs, choice.ID, value) {
-			return fmt.Errorf("default option %q or its value is no longer available", choice.ID)
-		}
-		if !anyEqual(findConfigCurrent(configs, choice.ID), value) {
-			if err := r.applyConfig(ctx, client, s, choice.ID, value); err != nil {
-				return fmt.Errorf("select %s: %w", choice.ID, err)
+	// A later choice can reset an earlier one (e.g. a model id that implies an
+	// effort level), so re-apply selections whose value no longer holds until
+	// the state settles; the check below still rejects irreconcilable orders.
+	for round := 0; round <= len(req.DefaultConfig); round++ {
+		settled := true
+		for _, choice := range req.DefaultConfig {
+			value := choice.Value
+			if override, ok := req.DesiredConfig[choice.ID]; ok {
+				value = override
 			}
-			configs = s.Config()
+			if !configAccepts(configs, choice.ID, value) {
+				if round == 0 {
+					return fmt.Errorf("default option %q or its value is no longer available", choice.ID)
+				}
+				continue
+			}
+			if !anyEqual(findConfigCurrent(configs, choice.ID), value) {
+				if err := r.applyConfig(ctx, client, s, choice.ID, value); err != nil {
+					return fmt.Errorf("select %s: %w", choice.ID, err)
+				}
+				configs = s.Config()
+				settled = false
+			}
+		}
+		if settled {
+			break
 		}
 	}
+	configs = s.Config()
 	for _, choice := range req.DefaultConfig {
 		value := choice.Value
 		if override, ok := req.DesiredConfig[choice.ID]; ok {

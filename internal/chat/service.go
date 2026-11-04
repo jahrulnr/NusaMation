@@ -43,6 +43,7 @@ type Service struct {
 	kick          map[string]bool
 	waiters       map[string]chan approvalDecision
 	elicitations  map[string]*elicitationWaiter
+	pollWaiters   map[string]*pollWaiter
 	terminalTurns map[string]*activeTurn
 
 	cancelNoticeAfter time.Duration
@@ -79,6 +80,7 @@ func New(opts Options) *Service {
 		kick:              map[string]bool{},
 		waiters:           map[string]chan approvalDecision{},
 		elicitations:      map[string]*elicitationWaiter{},
+		pollWaiters:       map[string]*pollWaiter{},
 		terminalTurns:     map[string]*activeTurn{},
 		cancelNoticeAfter: defaultCancelNoticeAfter,
 		turnTimeout:       defaultTurnTimeout,

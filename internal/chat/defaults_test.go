@@ -4,8 +4,10 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jahrulnr/nusamation/internal/agent"
@@ -95,5 +97,78 @@ func TestAgentDefaultsFollowDynamicOptions(t *testing.T) {
 	}
 	if got := svc.sessionRequest(switched, ag).DefaultConfig; len(got) != 2 || got[1].Value != "high" {
 		t.Fatalf("switch defaults = %#v", got)
+	}
+}
+
+func TestAgentDefaultsSurviveLaterChoiceReset(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := filepath.Abs("../..")
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "fake-acp")
+	build := exec.Command("go", "build", "-o", bin, "./cmd/fake-acp-agent")
+	build.Dir = repo
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v: %s", err, out)
+	}
+	st, err := store.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	sealer, err := security.LoadOrCreateSealer(filepath.Join(dir, "secret.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetSealer(sealer)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mgr := agent.NewManager(st, logger)
+	defer mgr.StopAll()
+	svc := New(Options{Store: st, Agents: mgr, Events: events.Nop{}, Log: logger, Workspace: dir})
+	mgr.SetSink(svc)
+	enabled := true
+	tracePath := filepath.Join(dir, "trace.log")
+	ag, err := st.CreateAgent(ctx, store.AgentInput{Name: "Fake", Slug: "fake-reset", Command: bin, Cwd: dir, Enabled: &enabled, Env: store.SecretList{{Name: "FAKE_ACP_MODEL_RESETS_EFFORT", Value: "1"}, {Name: "FAKE_ACP_TRACE", Value: tracePath}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// effort picked before model: setting the model resets effort, so the
+	// replay must re-apply effort instead of failing the order check.
+	selections := []store.ConfigSelection{{ID: "effort", Value: "high"}, {ID: "model", Value: "fake-smart"}}
+	configs, err := mgr.PreviewDefaults(ctx, ag.ID, selections)
+	if err != nil {
+		t.Fatalf("preview with reset order: %v", err)
+	}
+	if got := modeTestCurrent(configs, "effort"); got != "high" {
+		t.Fatalf("preview effort = %q", got)
+	}
+	if got := modeTestCurrent(configs, "model"); got != "fake-smart" {
+		t.Fatalf("preview model = %q", got)
+	}
+	if err := st.SetJSONSetting(ctx, "agent.defaults", store.AgentDefaults{AgentID: ag.ID, Selections: selections}); err != nil {
+		t.Fatal(err)
+	}
+	conv, err := svc.CreateConversation(ctx, "", "reset", dir, "whatsapp", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.PrepareSession(ctx, conv.ID); err != nil {
+		t.Fatalf("prepare defaults: %v", err)
+	}
+	configs = mgr.Session(conv.ID).Config()
+	if got := modeTestCurrent(configs, "effort"); got != "high" {
+		t.Fatalf("session effort = %q", got)
+	}
+	if got := modeTestCurrent(configs, "model"); got != "fake-smart" {
+		t.Fatalf("session model = %q", got)
+	}
+	// The settle pass must visibly re-apply effort after the model set.
+	rawTrace, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelIdx := strings.LastIndex(string(rawTrace), "config model fake-smart")
+	effortIdx := strings.LastIndex(string(rawTrace), "config effort high")
+	if modelIdx < 0 || effortIdx < modelIdx {
+		t.Fatalf("effort was not re-applied after model:\n%s", rawTrace)
 	}
 }

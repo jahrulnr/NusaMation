@@ -145,6 +145,11 @@ func (s *server) handle(msg message) {
 		trace(fmt.Sprintf("config %s %v", req.ConfigID, req.Value))
 		s.mu.Lock()
 		s.values[req.ConfigID] = req.Value
+		if req.ConfigID == "model" && os.Getenv("FAKE_ACP_MODEL_RESETS_EFFORT") == "1" {
+			// Emulate agents whose model value implies an effort level (like
+			// Devin's swe-2-high): picking a model resets effort to its default.
+			s.values["effort"] = "low"
+		}
 		s.mu.Unlock()
 		s.respond(msg.ID, map[string]any{"configOptions": s.configOptions()})
 	case "session/set_mode":
@@ -179,10 +184,16 @@ func (s *server) configOptions() []any {
 			},
 		},
 	}
-	if os.Getenv("FAKE_ACP_DYNAMIC_CONFIG") == "1" {
-		effort := []any{map[string]any{"value": "low", "name": "Low"}}
-		if s.values["model"] == "fake-smart" {
-			effort = append(effort, map[string]any{"value": "high", "name": "High"})
+	if os.Getenv("FAKE_ACP_DYNAMIC_CONFIG") == "1" || os.Getenv("FAKE_ACP_MODEL_RESETS_EFFORT") == "1" {
+		effort := []any{
+			map[string]any{"value": "low", "name": "Low"},
+			map[string]any{"value": "high", "name": "High"},
+		}
+		if os.Getenv("FAKE_ACP_DYNAMIC_CONFIG") == "1" {
+			effort = effort[:1]
+			if s.values["model"] == "fake-smart" {
+				effort = append(effort, map[string]any{"value": "high", "name": "High"})
+			}
 		}
 		current := s.values["effort"]
 		if current == nil {

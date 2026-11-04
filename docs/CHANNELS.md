@@ -25,6 +25,8 @@ Controllable channels additionally implement `Controller` (`Connect`, `Disconnec
 
 Channels whose surface has its own message format implement `ResponseStyler` (`ResponseRules() string`). The chat service appends the returned text to every prompt for that surface inside a `<system-reminder>` block, so the agent writes in the format its reply will be delivered on (WhatsApp markup vs the web UI's full Markdown). Channels that skip it contribute no block.
 
+Channels with a native poll widget may implement `PollAsker` (`SendPoll(ctx, target, question, options, maxSelectable) → pollMessageID`). The chat service then delivers approvals and single-field choice questions as polls instead of text. Incoming votes on those polls must be delivered as `Inbound.PollVote{PollMessageID, Selected}` (option names, not platform hashes) so the orchestrator can resolve the pending question; votes on polls the user created stay regular `Text`. Channels without it get the `/approve <id>` text fallback.
+
 Adapters receive a `channels.InboundHandler` (the chat orchestrator) and call:
 
 ```go
@@ -95,12 +97,16 @@ Values are normalised to digits. An empty list allows any sender who can message
 ### Group policy
 
 - `disabled` — ignore all group messages.
-- `mention` (default) — only process messages that @mention the bot or reply to it.
+- `mention` (default) — only process messages that @mention the bot or reply to it. Poll traffic (creations, votes, added options) cannot carry @-mentions, so it passes as passive context and reaches the agent as `[Poll]`/`[Poll vote]`/`[Poll option added]` text markers.
 - `all` — process every group message. Use with care; this can be noisy and expensive.
+
+### Approvals and questions
+
+When `notifyApprovals` is on, pending approvals and single-choice agent questions (elicitation form fields with enum/oneOf/boolean/array options) are delivered as **native WhatsApp polls** — tap to vote, single-select resolves immediately, multi-select resolves after a ~15 s quiet window. Channels without poll support (or option lists over 12) fall back to the `/approve <id>` text flow, and non-choice input still points at the web UI. Votes on the bot's own polls are routed to the pending question; votes on user-created polls arrive as `[Poll vote: …]` text.
 
 ### Media
 
-Images, documents, videos, voice notes and stickers are downloaded up to 25 MB and stored as app uploads. Images (and stickers) are sent to models whose ACP prompt capabilities advertise image support; audio goes to models that advertise audio support and otherwise reaches the agent as a `file://` resource link, like videos and other binary documents. In the other direction, media emitted by the agent — image/audio content blocks, `file://` resource links, or `file://` URIs and markdown links to allowed local paths in its reply — is uploaded to WhatsApp as a real attachment. Paths are confined to the workspace, upload dir and conversation/agent working directories.
+Images, documents, videos, video notes, voice notes and stickers are downloaded up to 25 MB and stored as app uploads. Locations, live locations, contact cards (single or multi), events, group invites, Flow/form responses, orders and product cards arrive as `[Type: …]` text markers. Images (and stickers) are sent to models whose ACP prompt capabilities advertise image support; audio goes to models that advertise audio support and otherwise reaches the agent as a `file://` resource link, like videos and other binary documents. In the other direction, media emitted by the agent — image/audio content blocks, `file://` resource links, or `file://` URIs and markdown links to allowed local paths in its reply — is uploaded to WhatsApp as a real attachment. Paths are confined to the workspace, upload dir and conversation/agent working directories.
 
 ### Presence and read receipts
 
@@ -127,7 +133,8 @@ The chat layer converts markdown to WhatsApp-friendly text (bold, italic, headin
    chanMgr.Register(ch)
    ```
 6. Implement `ResponseStyler` when the platform has its own message format — the rules are appended to each prompt so the agent writes for that surface.
-7. Add a settings card to `web/static/app.js` (optional; plain channels still show status).
-8. Add tests for allowlist, dedupe and target parsing.
+7. Implement `PollAsker` when the platform has a native poll widget — approvals and choice questions become tappable; report votes back via `Inbound.PollVote`.
+8. Add a settings card to `web/static/app.js` (optional; plain channels still show status).
+9. Add tests for allowlist, dedupe and target parsing.
 
 The orchestrator and web UI do not need channel-specific code for text delivery.

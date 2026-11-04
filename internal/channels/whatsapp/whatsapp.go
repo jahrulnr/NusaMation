@@ -57,6 +57,9 @@ type Channel struct {
 
 	groupMu    sync.Mutex
 	groupCache map[string]groupEntry
+
+	pollMu sync.Mutex
+	polls  map[string][]string
 }
 
 type groupEntry struct {
@@ -89,7 +92,7 @@ func New(st *appstore.Store, cfg config.Config, mgr *channels.Manager, log *slog
 	c := &Channel{
 		cfg: cfg, store: st, mgr: mgr, log: log.With("component", "whatsapp"),
 		container: container, settings: DefaultSettings(), state: "unpaired", lifeCtx: ctx, lifeStop: cancel,
-		sem: make(chan struct{}, 4), groupCache: map[string]groupEntry{},
+		sem: make(chan struct{}, 4), groupCache: map[string]groupEntry{}, polls: map[string][]string{},
 	}
 	c.settings = c.loadSettings(context.Background())
 	return c, nil
@@ -591,6 +594,43 @@ func (c *Channel) Notify(ctx context.Context, target channels.Target, text strin
 	}
 	_, err = c.sendText(ctx, jid, text)
 	return err
+}
+
+// SendPoll delivers a native WhatsApp poll so agent option questions
+// (approvals, single/multi-select input) become tappable votes. The sent
+// poll's options are cached so inbound votes decode back to names.
+func (c *Channel) SendPoll(ctx context.Context, target channels.Target, question string, options []string, maxSelectable int) (string, error) {
+	jid, err := c.parseTarget(target)
+	if err != nil {
+		return "", err
+	}
+	if !c.settingsSnapshot().Enabled {
+		return "", errors.New("WhatsApp channel is disabled")
+	}
+	if len(options) == 0 {
+		return "", errors.New("poll needs at least one option")
+	}
+	client := c.clientCopy()
+	if client == nil || !client.IsLoggedIn() {
+		return "", errors.New("WhatsApp is not connected")
+	}
+	// Trim once so the wire options match the names we cache for vote
+	// hash-matching exactly.
+	names := make([]string, 0, len(options))
+	for _, o := range options {
+		if o = strings.TrimSpace(o); o != "" {
+			names = append(names, o)
+		}
+	}
+	if len(names) == 0 {
+		return "", errors.New("poll options are all empty")
+	}
+	resp, err := client.SendMessage(ctx, jid, client.BuildPollCreation(question, names, maxSelectable))
+	if err != nil {
+		return "", err
+	}
+	c.cachePollOptions(jid.String(), resp.ID, names)
+	return resp.ID, nil
 }
 
 // SendMedia uploads an image, video, audio clip or document to WhatsApp

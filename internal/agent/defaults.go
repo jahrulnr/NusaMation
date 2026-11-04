@@ -110,26 +110,54 @@ func (m *Manager) PreviewDefaults(ctx context.Context, agentID string, selection
 		}
 		configs, legacy = mergeLegacyModes(result.ConfigOptions, session.Modes)
 	}
+	apply := func(choice store.ConfigSelection) error {
+		if legacy && choice.ID == legacyModeID {
+			modeID, ok := choice.Value.(string)
+			if !ok {
+				return fmt.Errorf("option %q expects a string value", choice.ID)
+			}
+			if err := client.SetMode(ctx, session.SessionID, modeID); err != nil {
+				return err
+			}
+			configs, _ = setModeValue(configs, modeID)
+			if session.Modes != nil {
+				session.Modes.CurrentModeID = modeID
+			}
+			return nil
+		}
+		result, err := client.SetConfig(ctx, session.SessionID, choice.ID, choice.Value)
+		if err != nil {
+			return fmt.Errorf("set %s: %w", choice.ID, err)
+		}
+		configs, legacy = mergeLegacyModes(result.ConfigOptions, session.Modes)
+		return nil
+	}
 	seen := make(map[string]bool)
 	for _, choice := range selections {
 		if seen[choice.ID] || !configAccepts(configs, choice.ID, choice.Value) {
 			return nil, fmt.Errorf("option %q or its value is not available in the current configuration", choice.ID)
 		}
 		seen[choice.ID] = true
-		if legacy && choice.ID == legacyModeID {
-			if err := client.SetMode(ctx, session.SessionID, choice.Value.(string)); err != nil {
+		if err := apply(choice); err != nil {
+			return nil, err
+		}
+	}
+	// A later choice can reset an earlier one (e.g. a model id that implies an
+	// effort level). Re-apply selections whose value no longer holds until the
+	// state settles; the check below still rejects irreconcilable orders.
+	for round := 0; round <= len(selections); round++ {
+		settled := true
+		for _, choice := range selections {
+			if !configAccepts(configs, choice.ID, choice.Value) || anyEqual(findConfigCurrent(configs, choice.ID), choice.Value) {
+				continue
+			}
+			if err := apply(choice); err != nil {
 				return nil, err
 			}
-			configs, _ = setModeValue(configs, choice.Value.(string))
-			if session.Modes != nil {
-				session.Modes.CurrentModeID = choice.Value.(string)
-			}
-		} else {
-			result, err := client.SetConfig(ctx, session.SessionID, choice.ID, choice.Value)
-			if err != nil {
-				return nil, fmt.Errorf("set %s: %w", choice.ID, err)
-			}
-			configs, legacy = mergeLegacyModes(result.ConfigOptions, session.Modes)
+			settled = false
+		}
+		if settled {
+			break
 		}
 	}
 	for _, choice := range selections {

@@ -211,6 +211,9 @@ func (s *Service) notifyApproval(a *activeTurn, ap store.Approval) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
+		if s.notifyApprovalPoll(ctx, ch, target, ap) {
+			return
+		}
 		if err := ch.Notify(ctx, target, text); err != nil {
 			s.log.Warn("failed to notify approval", "channel", ch.Name(), "error", err)
 		}
@@ -242,6 +245,7 @@ func (s *Service) ResolveApproval(ctx context.Context, approvalID, optionID stri
 	if err != nil {
 		return updated, err
 	}
+	s.dropPollWaiters(func(w *pollWaiter) bool { return w.approvalID == approvalID })
 	s.mu.Lock()
 	ch := s.waiters[approvalID]
 	delete(s.waiters, approvalID)
@@ -277,6 +281,7 @@ func (s *Service) cancelPendingApprovals(conversationID, reason string) {
 			continue
 		}
 		updated, _ := s.store.ResolveApproval(ctx, ap.ID, "", "cancelled")
+		s.dropPollWaiters(func(w *pollWaiter) bool { return w.approvalID == ap.ID })
 		s.mu.Lock()
 		ch := s.waiters[ap.ID]
 		delete(s.waiters, ap.ID)
@@ -305,6 +310,7 @@ func (s *Service) cancelPendingApprovalsForTurn(turnID, reason string) {
 	}
 	for _, ap := range list {
 		updated, _ := s.store.ResolveApproval(ctx, ap.ID, "", "cancelled")
+		s.dropPollWaiters(func(w *pollWaiter) bool { return w.approvalID == ap.ID })
 		s.mu.Lock()
 		ch := s.waiters[ap.ID]
 		delete(s.waiters, ap.ID)
