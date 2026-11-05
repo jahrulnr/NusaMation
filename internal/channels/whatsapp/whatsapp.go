@@ -579,17 +579,9 @@ func (c *Channel) Begin(ctx context.Context, target channels.Target, text string
 	if !settings.Enabled {
 		return nil, errors.New("WhatsApp channel is disabled")
 	}
-	d := &delivery{ch: c, chat: jid, stream: settings.StreamEdits}
-	if !settings.StreamEdits {
-		return d, nil
-	}
-	id, err := c.sendText(ctx, jid, text)
-	if err != nil {
-		return nil, err
-	}
-	d.id = id
+	d := &delivery{ch: c, chat: jid}
 	if settings.SendTyping {
-		go c.presence(jid, types.ChatPresenceComposing)
+		d.startTyping()
 	}
 	return d, nil
 }
@@ -786,60 +778,70 @@ func (c *Channel) presence(jid types.JID, state types.ChatPresence) {
 	_ = client.SendChatPresence(ctx, jid, state, types.ChatPresenceMediaText)
 }
 
+// whatsAppTypingTTL is how long a composing presence stays on screen before
+// WhatsApp clears it. The delivery refreshes inside that window.
+const whatsAppTypingTTL = 10 * time.Second
+
 type delivery struct {
-	ch     *Channel
-	chat   types.JID
-	id     types.MessageID
-	stream bool
+	ch         *Channel
+	chat       types.JID
+	typingMu   sync.Mutex
+	typingStop context.CancelFunc
 }
 
-func (d *delivery) ID() string { return string(d.id) }
+// startTyping shows composing for as long as this delivery is open. WhatsApp
+// drops the indicator on its own, so it is refreshed until pauseTyping.
+func (d *delivery) startTyping() {
+	ctx, cancel := context.WithCancel(context.Background())
+	d.typingMu.Lock()
+	d.typingStop = cancel
+	d.typingMu.Unlock()
+	go keepTyping(ctx, whatsAppTypingTTL, func(state types.ChatPresence) {
+		d.ch.presence(d.chat, state)
+	})
+}
+
+func (d *delivery) pauseTyping() {
+	d.typingMu.Lock()
+	stop := d.typingStop
+	d.typingStop = nil
+	d.typingMu.Unlock()
+	if stop != nil {
+		stop()
+	}
+}
+
+func keepTyping(ctx context.Context, every time.Duration, beat func(types.ChatPresence)) {
+	if every <= 0 {
+		every = whatsAppTypingTTL
+	}
+	beat(types.ChatPresenceComposing)
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			beat(types.ChatPresencePaused)
+			return
+		case <-t.C:
+			if ctx.Err() != nil {
+				beat(types.ChatPresencePaused)
+				return
+			}
+			beat(types.ChatPresenceComposing)
+		}
+	}
+}
+
+func (d *delivery) ID() string { return "" }
 
 func (d *delivery) Update(ctx context.Context, text string, final bool) error {
-	if !d.stream {
-		if !final {
-			return nil
-		}
-		_, err := d.ch.sendText(ctx, d.chat, text)
-		return err
-	}
-	if strings.TrimSpace(text) == "" {
-		text = "Done."
-	}
-	text = textfmt.Truncate(text, 30000)
-	d.ch.mu.Lock()
-	client := d.ch.client
-	d.ch.mu.Unlock()
-	if client == nil || !client.IsLoggedIn() {
-		return errors.New("WhatsApp is not connected")
-	}
-	if d.id == "" {
-		id, err := d.ch.sendText(ctx, d.chat, text)
-		if err != nil {
-			return err
-		}
-		d.id = id
+	if !final {
 		return nil
 	}
-	msg := &waE2E.Message{Conversation: proto.String(text)}
-	resp, err := client.SendMessage(ctx, d.chat, client.BuildEdit(d.chat, d.id, msg))
-	if err == nil {
-		d.ch.indexSent(ctx, d.chat, resp, msg, d.id)
-	}
-	if err != nil && final {
-		// Editing can fail on older clients or after a message is too old.
-		// Sending a fresh final message is better than leaving "On it…".
-		_, sendErr := d.ch.sendText(ctx, d.chat, text)
-		if sendErr == nil {
-			d.ch.presence(d.chat, types.ChatPresencePaused)
-			return nil
-		}
-		return err
-	}
-	if final {
-		d.ch.presence(d.chat, types.ChatPresencePaused)
-	}
-	return nil
+	defer d.pauseTyping()
+	_, err := d.ch.sendText(ctx, d.chat, text)
+	return err
 }
 
 var _ channels.Delivery = (*delivery)(nil)

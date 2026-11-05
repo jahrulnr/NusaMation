@@ -10,7 +10,6 @@ import (
 
 	"github.com/jahrulnr/nusamation/internal/acp"
 	"github.com/jahrulnr/nusamation/internal/agent"
-	"github.com/jahrulnr/nusamation/internal/channels"
 	"github.com/jahrulnr/nusamation/internal/store"
 	"github.com/jahrulnr/nusamation/internal/textfmt"
 )
@@ -223,9 +222,6 @@ func (s *Service) rotateStream(a *activeTurn, kind string) {
 		}
 		if strings.TrimSpace(text) != "" {
 			a.assistantGap = true
-			if a.deliverToChannel {
-				a.closedSegments = append(a.closedSegments, text)
-			}
 		}
 		a.assistantID, a.assistantACPID = "", ""
 		a.assistant.Reset()
@@ -633,111 +629,40 @@ func (s *Service) flushStreams(a *activeTurn, final bool, status string) {
 }
 
 func (s *Service) updateDelivery(a *activeTurn, final bool) {
+	if !final {
+		return
+	}
 	a.deliveryMu.Lock()
 	defer a.deliveryMu.Unlock()
 
 	a.mu.Lock()
-	if !a.deliverToChannel && a.delivery == nil {
-		a.mu.Unlock()
-		return
-	}
-	if !final && len(a.closedSegments) == 0 && time.Since(a.deliveryAt) < 1200*time.Millisecond {
-		a.mu.Unlock()
-		return
-	}
 	d := a.delivery
-	pending := a.closedSegments
-	a.closedSegments = nil
-	current := strings.TrimSpace(a.assistant.String())
-	sent := a.segmentsSent
+	deliver := a.deliverToChannel
+	text := strings.TrimSpace(a.assistantAll.String())
+	a.delivery = nil
 	a.mu.Unlock()
-
-	for _, seg := range pending {
-		d = s.emitSegment(a, d, seg, true)
-		sent++
+	if !deliver && d == nil {
+		return
 	}
-	switch {
-	case current != "":
-		d = s.emitSegment(a, d, current, final)
-		if final {
-			sent++
-			d = nil
-		}
-	case final && sent == 0:
-		text := s.finalDigest(a)
-		text = cleanDeliveredText(text, a.outboundRefs())
-		if strings.TrimSpace(text) == "" {
-			text = "Done."
-		}
-		d = s.emitSegment(a, d, text, true)
-		d = nil
-	case final:
-		d = nil
-	}
-
-	a.mu.Lock()
-	a.delivery = d
-	a.segmentsSent = sent
-	if sent > 0 || current != "" {
-		a.deliveryAt = time.Now()
-		a.deliveryText = current
-	}
-	a.mu.Unlock()
-}
-
-// emitSegment writes one assistant reply to the origin channel. A final
-// segment closes the delivery so the next reply starts a new message instead
-// of being edited into the first one. The returned delivery is what the next
-// segment should keep editing, or nil when this segment is finished.
-func (s *Service) emitSegment(a *activeTurn, d channels.Delivery, text string, final bool) channels.Delivery {
-	text = s.prepareDelivered(a, text, final)
 	if text == "" {
-		if final {
-			return nil
-		}
-		return d
+		text = s.finalDigest(a)
+	} else {
+		s.collectOutboundFromText(a)
+		text = strings.TrimSpace(cleanDeliveredText(textfmt.ChatMarkdown(text), a.outboundRefs()))
+	}
+	if strings.TrimSpace(text) == "" {
+		text = "Done."
 	}
 	if d == nil {
-		opened := s.openDelivery(a, text)
-		if opened == nil {
-			s.notifyOrigin(a, text)
-			return nil
-		}
-		if final {
-			return nil
-		}
-		return opened
+		s.notifyOrigin(a, text)
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if err := d.Update(ctx, text, final); err != nil {
-		s.log.Warn("failed to update channel delivery", "conversation", a.conversationID, "error", err)
-		if final {
-			s.notifyOrigin(a, text)
-			return nil
-		}
-		return d
+	if err := d.Update(ctx, text, true); err != nil {
+		s.log.Warn("failed to send channel reply", "conversation", a.conversationID, "error", err)
+		s.notifyOrigin(a, text)
 	}
-	if final {
-		return nil
-	}
-	return d
-}
-
-func (s *Service) prepareDelivered(a *activeTurn, text string, final bool) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-	if final {
-		s.collectOutboundFromText(a)
-		text = strings.TrimSpace(cleanDeliveredText(text, a.outboundRefs()))
-	}
-	text = strings.TrimSpace(textfmt.ChatMarkdown(text))
-	if !final {
-		text = textfmt.Truncate(text, 3500)
-	}
-	return text
 }
 
 func (s *Service) finalDigest(a *activeTurn) string {

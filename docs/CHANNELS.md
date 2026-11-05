@@ -112,9 +112,9 @@ Images, documents, videos, video notes, voice notes and stickers are downloaded 
 
 When enabled, allowed messages are marked read after the orchestrator accepts them. `Begin` sends a composing presence, and final updates pause it.
 
-### Streaming edits
+### One message per turn
 
-WhatsApp supports message edits. With `streamEdits=true`, NusaMation sends an “On it…” message and edits it with the assistant's current reply. Each reply the agent finishes is its own WhatsApp message, so a later reply is not left inside the first edit. If editing fails, that reply is sent as a new message. Disable streaming edits for strict clients.
+WhatsApp receives a single message when the turn finishes. Partial replies are not sent and existing messages are not edited. While the turn runs, typing presence is refreshed if that setting is on.
 
 ### Outbound digest
 

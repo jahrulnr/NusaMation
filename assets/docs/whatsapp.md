@@ -27,7 +27,6 @@ nusamation whatsapp set -group-policy mention  # disabled | mention | all
 nusamation whatsapp set -allow '+628123456789,+15550100'   # replace allowlist
 nusamation whatsapp set -allow-add +628… -allow-remove 999… # edit allowlist
 nusamation whatsapp set -read-receipts=false -send-typing=false
-nusamation whatsapp set -stream-edits          # progressive reply edits
 ```
 
 - **AllowedNumbers**: who may talk to the bot in private chats. Numbers are
@@ -41,8 +40,8 @@ nusamation whatsapp set -stream-edits          # progressive reply edits
   polls reach the agent as `[Poll]`, `[Poll vote: …]` and `[Poll option added: …]`
   text markers; votes on approval/question polls resolve the pending request.
 - **ReadReceipts** blue-ticks incoming chats; **SendTyping** shows "typing…"
-  while the agent works; **StreamEdits** progressively edits the ack message
-  into the final answer instead of sending a new message.
+  while the agent works. A turn finishes as one WhatsApp message. Partial
+  replies are not sent and messages are not edited.
 
 Pending approvals and single/multi-choice agent questions arrive as tappable
 WhatsApp polls when they fit (≤12 options); otherwise approvals use the

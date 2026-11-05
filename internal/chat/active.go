@@ -108,11 +108,7 @@ type activeTurn struct {
 
 	deliveryMu       sync.Mutex
 	delivery         channels.Delivery
-	deliveryText     string
-	deliveryAt       time.Time
 	deliverToChannel bool
-	closedSegments   []string
-	segmentsSent     int
 	assistantGap     bool
 
 	outboundMu sync.Mutex

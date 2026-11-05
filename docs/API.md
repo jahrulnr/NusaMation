@@ -125,7 +125,7 @@ WhatsApp settings:
   "groupPolicy": "mention",
   "readReceipts": true,
   "sendTyping": true,
-  "streamEdits": true
+  "streamEdits": false
 }
 ```
 

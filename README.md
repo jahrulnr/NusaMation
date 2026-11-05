@@ -150,7 +150,7 @@ It streams a thought, a plan, a tool call, a **permission request**, a tool resu
 ### Channels
 
 - **Web** is native and always available.
-- **WhatsApp** via [whatsmeow](https://github.com/tulir/whatsmeow): QR pairing, reconnect, read receipts, typing indicator, progressive message edits, allowlist, group policy (`disabled` / `mention` / `all`), media download and approval notifications.
+- **WhatsApp** via [whatsmeow](https://github.com/tulir/whatsmeow): QR pairing, reconnect, read receipts, typing indicator, one message per finished turn, allowlist, group policy (`disabled` / `mention` / `all`), media download and approval notifications.
 - Channel manager is modular. Future Telegram, Discord or Slack adapters implement the same `Channel` / `Controller` interfaces.
 - Routing is per conversation:
   - `replyToOrigin` — answer the chat where the prompt came from.

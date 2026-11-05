@@ -19,13 +19,13 @@ type Settings struct {
 	GroupPolicy    string   `json:"groupPolicy"` // disabled, mention, all
 	ReadReceipts   bool     `json:"readReceipts"`
 	SendTyping     bool     `json:"sendTyping"`
-	StreamEdits    bool     `json:"streamEdits"`
+	StreamEdits    bool     `json:"streamEdits"` // stored only; replies are never edited
 }
 
 func DefaultSettings() Settings {
 	return Settings{
 		Enabled: true, AutoStart: true, AllowedNumbers: []string{},
-		GroupPolicy: "mention", ReadReceipts: true, SendTyping: true, StreamEdits: true,
+		GroupPolicy: "mention", ReadReceipts: true, SendTyping: true, StreamEdits: false,
 	}
 }
 

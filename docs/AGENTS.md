@@ -115,7 +115,7 @@ Sending while a turn runs can steer, queue, or cancel-and-resend. The composer's
 - **Add to queue**: the input runs after the current turn finishes.
 - **Send after tools**: cancel-and-resend, not steering. Once the running turn's reported tools are all `completed` or `failed` (or right away if it reported none), NusaMation sends `session/cancel`. It then waits for the agent's answer to the cancelled prompt before the queued input starts, so no two prompts overlap. Late updates from the old prompt still belong to the old turn.
 
-Limits: tool states are best-effort reports, so the agent may start a new tool before the cancel lands. A pending approval is not skipped: the cancel waits until the user resolves it. If the agent does not answer within 15 seconds, the conversation shows one notice and the queue keeps waiting. Chat channels receive each finished assistant reply as its own message; thoughts and raw tool output stay on the web.
+Limits: tool states are best-effort reports, so the agent may start a new tool before the cancel lands. A pending approval is not skipped: the cancel waits until the user resolves it. If the agent does not answer within 15 seconds, the conversation shows one notice and the queue keeps waiting. Chat channels receive one message when the turn finishes; thoughts and raw tool output stay on the web.
 
 ## MCP servers
 

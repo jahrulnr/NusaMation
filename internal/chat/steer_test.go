@@ -146,14 +146,11 @@ func (c *recChannel) Notify(_ context.Context, _ channels.Target, text string) e
 	c.mu.Unlock()
 	return nil
 }
-func (c *recChannel) texts() []string {
+func (c *recChannel) finals() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []string
 	for _, ev := range c.events {
-		if ev.begin && ev.text != "On it…" {
-			out = append(out, ev.text)
-		}
 		if ev.final {
 			out = append(out, ev.text)
 		}
@@ -220,31 +217,22 @@ func TestChannelDeliversEveryReason(t *testing.T) {
 	}
 	waitFor(t, func() bool {
 		got, err := st.GetTurn(context.Background(), turn.ID)
-		if err != nil || got.Status != "completed" {
-			return false
-		}
-		texts := rec.texts()
-		return strings.Contains(strings.Join(texts, "\n"), "reason one") &&
-			strings.Contains(strings.Join(texts, "\n"), "reason two") &&
-			strings.Contains(strings.Join(texts, "\n"), "reason three")
-	}, "three reasons on the channel")
-	joined := strings.Join(rec.texts(), "\n")
-	one := strings.Index(joined, "reason one")
-	two := strings.Index(joined, "reason two")
-	three := strings.Index(joined, "reason three")
-	if one < 0 || two < 0 || three < 0 || !(one < two && two < three) {
-		t.Fatalf("channel texts = %q", joined)
+		return err == nil && got.Status == "completed" && len(rec.finals()) == 1
+	}, "one final channel message")
+	finals := rec.finals()
+	if len(finals) != 1 {
+		t.Fatalf("final messages = %#v", rec.events)
 	}
-	// Each completed reply is its own send, not one growing edit of the first.
-	committed := 0
+	for _, part := range []string{"reason one", "reason two", "reason three"} {
+		if !strings.Contains(finals[0], part) {
+			t.Fatalf("final message = %q", finals[0])
+		}
+	}
 	rec.mu.Lock()
+	defer rec.mu.Unlock()
 	for _, ev := range rec.events {
-		if ev.final || (ev.begin && ev.text != "On it…") {
-			committed++
+		if !ev.final && strings.TrimSpace(ev.text) != "" && ev.text != "On it…" {
+			t.Fatalf("text left the channel before the turn finished: %#v", rec.events)
 		}
-	}
-	rec.mu.Unlock()
-	if committed < 3 {
-		t.Fatalf("committed channel messages = %d, events %#v", committed, rec.events)
 	}
 }
