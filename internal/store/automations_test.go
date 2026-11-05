@@ -53,6 +53,37 @@ func TestAutomationClaimsMissedRunOnceAndExpires(t *testing.T) {
 	}
 }
 
+func TestListDueAutomationsFilters(t *testing.T) {
+	ctx := context.Background()
+	st := testStore(t)
+	ag := testAgent(t, st)
+	now := time.Now()
+	due, err := st.SaveAutomation(ctx, Automation{Name: "due", Prompt: "x", AgentID: ag.ID, Schedule: "once", RunAt: now.Add(-time.Minute).UnixMilli(), Timezone: "UTC", SessionMode: "isolated", Enabled: true}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	future, err := st.SaveAutomation(ctx, Automation{Name: "future", Prompt: "x", AgentID: ag.ID, Schedule: "once", RunAt: now.Add(time.Hour).UnixMilli(), Timezone: "UTC", SessionMode: "isolated", Enabled: true}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveAutomation(ctx, Automation{Name: "off", Prompt: "x", AgentID: ag.ID, Schedule: "once", RunAt: now.Add(-time.Minute).UnixMilli(), Timezone: "UTC", SessionMode: "isolated", Enabled: false}, now); err != nil {
+		t.Fatal(err)
+	}
+	expired, err := st.SaveAutomation(ctx, Automation{Name: "expired", Prompt: "x", AgentID: ag.ID, Schedule: "once", RunAt: now.Add(-2 * time.Hour).UnixMilli(), Timezone: "UTC", SessionMode: "isolated", Enabled: true, ExpiresAt: now.Add(-time.Hour).UnixMilli()}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListDueAutomations(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != due.ID {
+		t.Fatalf("due automations = %#v, want only %s", got, due.ID)
+	}
+	_ = future
+	_ = expired
+}
+
 func TestAutomationClaimRejectsStaleJobSnapshot(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(filepath.Join(t.TempDir(), "test.db"))

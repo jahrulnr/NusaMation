@@ -51,22 +51,49 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) DB() *sql.DB { return s.db }
 
+// migrations is the versioned schema history. user_version records the last
+// applied entry, so an upgrade only runs the statements it has not seen.
+type migration struct {
+	version int
+	stmts   []string
+}
+
+var migrations = []migration{
+	{version: 1, stmts: []string{schemaV1}},
+	{version: 2, stmts: []string{
+		`CREATE INDEX IF NOT EXISTS idx_uploads_message_id ON uploads(message_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_uploads_conversation_id ON uploads(conversation_id)`,
+	}},
+}
+
 func (s *Store) migrate(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `SELECT 1`); err != nil {
+	var version int
+	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
+	for _, m := range migrations {
+		if m.version <= version {
+			continue
+		}
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		for _, stmt := range m.stmts {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("apply schema v%d: %w", m.version, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, m.version)); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
 	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, schemaV1); err != nil {
-		return fmt.Errorf("apply schema: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 1`); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return nil
 }
 
 const schemaV1 = `

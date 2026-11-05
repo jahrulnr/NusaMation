@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/jahrulnr/nusamation/internal/ids"
 )
@@ -94,4 +95,43 @@ func (s *Store) ListUploadsForMessage(ctx context.Context, messageID string) ([]
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// uploadBatchSize stays below SQLite's variable limit (~999) for IN clauses.
+const uploadBatchSize = 500
+
+// ListUploadsForMessages hydrates a page of messages' attachments in a single
+// round trip instead of one query per message.
+func (s *Store) ListUploadsForMessages(ctx context.Context, messageIDs []string) ([]Upload, error) {
+	var out []Upload
+	for start := 0; start < len(messageIDs); start += uploadBatchSize {
+		end := start + uploadBatchSize
+		if end > len(messageIDs) {
+			end = len(messageIDs)
+		}
+		chunk := messageIDs[start:end]
+		args := make([]any, 0, len(chunk))
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,message_id,name,mime,size,path,created_at
+			FROM uploads WHERE message_id IN (`+strings.Repeat("?,", len(chunk)-1)+`?) ORDER BY created_at ASC`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var u Upload
+			if err := rows.Scan(&u.ID, &u.ConversationID, &u.MessageID, &u.Name, &u.MIME, &u.Size, &u.Path, &u.CreatedAt); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out = append(out, u)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return out, nil
 }

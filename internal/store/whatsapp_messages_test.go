@@ -38,6 +38,34 @@ func TestWhatsAppSearchPaginationAndHistoryDeduplication(t *testing.T) {
 	}
 }
 
+func TestWhatsAppMessageUpsertPreservesChatName(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	m := WhatsAppMessage{Chat: "group@g.us", ID: "m1", Sender: "123@s.whatsapp.net", ChatName: "Team", Timestamp: 10, Text: "hi", Live: true}
+	if err := st.SaveWhatsAppMessage(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	// A live upsert without a chat name must not erase the known one.
+	if err := st.SaveWhatsAppMessage(ctx, WhatsAppMessage{Chat: "group@g.us", ID: "m1", Sender: "123@s.whatsapp.net", Timestamp: 20, Text: "hi again", Live: true}); err != nil {
+		t.Fatal(err)
+	}
+	page, err := st.SearchWhatsAppMessages(ctx, WhatsAppSearch{Limit: 10})
+	if err != nil || len(page.Messages) != 1 {
+		t.Fatalf("page = %#v, %v", page, err)
+	}
+	if page.Messages[0].ChatName != "Team" {
+		t.Fatalf("chat_name = %q, want %q", page.Messages[0].ChatName, "Team")
+	}
+	// A newer non-empty name still wins.
+	if err := st.SaveWhatsAppMessage(ctx, WhatsAppMessage{Chat: "group@g.us", ID: "m1", ChatName: "Team Renamed", Timestamp: 30, Text: "hi again", Live: true}); err != nil {
+		t.Fatal(err)
+	}
+	page, err = st.SearchWhatsAppMessages(ctx, WhatsAppSearch{Limit: 10})
+	if err != nil || len(page.Messages) != 1 || page.Messages[0].ChatName != "Team Renamed" {
+		t.Fatalf("page = %#v, %v", page, err)
+	}
+}
+
 func TestWhatsAppMessageUpdatesKeepNewestLiveContent(t *testing.T) {
 	st := testStore(t)
 	ctx := context.Background()

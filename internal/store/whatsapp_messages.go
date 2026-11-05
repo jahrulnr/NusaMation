@@ -29,7 +29,8 @@ func (s *Store) SaveWhatsAppMessage(ctx context.Context, m WhatsAppMessage) erro
 	_, err := s.db.ExecContext(ctx, `INSERT INTO whatsapp_messages
 		(chat_jid,message_id,sender_jid,sender_name,chat_name,timestamp_ms,from_me,is_group,text,raw_json,is_live)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(chat_jid,message_id) DO UPDATE SET
-		sender_jid=excluded.sender_jid,sender_name=excluded.sender_name,chat_name=excluded.chat_name,
+		sender_jid=excluded.sender_jid,sender_name=excluded.sender_name,
+		chat_name=CASE WHEN excluded.chat_name <> '' THEN excluded.chat_name ELSE whatsapp_messages.chat_name END,
 		timestamp_ms=excluded.timestamp_ms,from_me=excluded.from_me,is_group=excluded.is_group,
 		text=excluded.text,raw_json=excluded.raw_json,is_live=excluded.is_live
 		WHERE excluded.is_live > whatsapp_messages.is_live OR

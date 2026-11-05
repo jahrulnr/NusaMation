@@ -79,6 +79,16 @@ func (s *Service) Permission(ctx context.Context, sess *agent.Session, req acp.P
 	s.waiters[ap.ID] = ch
 	s.mu.Unlock()
 
+	// A resolve landing between the approval commit and the waiter
+	// registration found no waiter and would be lost; re-read so a decision
+	// that already happened resolves immediately.
+	if stored, err := s.store.GetApproval(ctx, ap.ID); err == nil && stored.Status != "pending" {
+		select {
+		case ch <- approvalDecision{OptionID: stored.SelectedOption, Cancelled: stored.Status == "cancelled"}:
+		default:
+		}
+	}
+
 	_ = s.store.SetTurnWaiting(context.Background(), a.turn.ID)
 	_ = s.store.SetConversationStatus(context.Background(), a.conversationID, "waiting_approval")
 	a.mu.Lock()

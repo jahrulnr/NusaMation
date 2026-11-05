@@ -38,6 +38,7 @@ type Service struct {
 	workspace string
 
 	mu            sync.Mutex
+	metaMu        sync.Mutex
 	active        map[string]*activeTurn
 	running       map[string]bool
 	kick          map[string]bool
@@ -326,7 +327,10 @@ func (s *Service) Cancel(ctx context.Context, conversationID string) error {
 		a.mu.Unlock()
 		return ErrNoActiveTurn
 	}
-	if a.afterTools {
+	// The first cancel on an after_tools-armed turn asks the agent to stop
+	// gracefully; a second explicit cancel escalates to the hard cancel below
+	// so a turn whose agent ignores session/cancel is not stuck.
+	if a.afterTools && !a.cancelRequested {
 		a.mu.Unlock()
 		s.requestGracefulCancel(a)
 		return nil
@@ -485,12 +489,7 @@ func (s *Service) CreateConversation(ctx context.Context, agentID, title, cwd, c
 		return conv, err
 	}
 	if agentID == defaults.AgentID && len(defaults.Selections) > 0 {
-		meta, _ := s.metaMap(conv)
-		meta["defaultConfig"] = defaults.Selections
-		if err := s.store.UpdateConversationMetadata(ctx, conv.ID, mustJSON(meta)); err != nil {
-			return conv, err
-		}
-		conv, err = s.store.GetConversation(ctx, conv.ID)
+		conv, err = s.patchMeta(ctx, conv.ID, map[string]any{"defaultConfig": defaults.Selections})
 		if err != nil {
 			return conv, err
 		}
@@ -521,9 +520,7 @@ func (s *Service) UpdateConversation(ctx context.Context, id string, patch Conve
 			title = title[:200]
 		}
 		if title != "" {
-			meta, _ := s.metaMap(conv)
-			meta["titleSource"] = "user"
-			_ = s.store.UpdateConversationMetadata(ctx, id, mustJSON(meta))
+			_, _ = s.patchMeta(ctx, id, map[string]any{"titleSource": "user"})
 		}
 	}
 	if patch.Archived != nil && *patch.Archived {
@@ -580,16 +577,14 @@ func (s *Service) SwitchAgent(ctx context.Context, conversationID, agentID strin
 	if conv.Cwd == "" || conv.Cwd == oldAgent.Cwd {
 		_ = s.store.SetConversationCwd(ctx, conversationID, newAgent.Cwd)
 	}
-	meta, _ := s.metaMap(conv)
-	meta["handoff"] = true
-	delete(meta, "desiredConfig")
-	delete(meta, "defaultConfig")
+	patch := map[string]any{
+		"handoff": true, "desiredConfig": nil, "defaultConfig": nil, "titleSource": "agent",
+	}
 	var defaults store.AgentDefaults
 	if s.store.GetJSONSetting(ctx, "agent.defaults", &defaults) == nil && defaults.AgentID == agentID && len(defaults.Selections) > 0 {
-		meta["defaultConfig"] = defaults.Selections
+		patch["defaultConfig"] = defaults.Selections
 	}
-	meta["titleSource"] = "agent"
-	_ = s.store.UpdateConversationMetadata(ctx, conversationID, mustJSON(meta))
+	_, _ = s.patchMeta(ctx, conversationID, patch)
 	s.agents.ResetConversation(ctx, conversationID)
 
 	sys := store.Message{
@@ -744,7 +739,12 @@ func (s *Service) metaMap(conv store.Conversation) (map[string]any, error) {
 	return meta, nil
 }
 
+// patchMeta merges patch into the conversation metadata. metaMu serializes
+// the read-modify-write so concurrent patches cannot lose each other's keys.
+// A nil value deletes the key.
 func (s *Service) patchMeta(ctx context.Context, conversationID string, patch map[string]any) (store.Conversation, error) {
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
 	conv, err := s.store.GetConversation(ctx, conversationID)
 	if err != nil {
 		return conv, err

@@ -97,10 +97,15 @@ func (s *Service) queueStoredMessage(ctx context.Context, conversationID, messag
 }
 
 // injectable reports whether a prompt is on the wire and can receive a steer.
+// promptSent must have completed or the injected prompt could overtake the
+// original one on the wire.
 func (a *activeTurn) injectable() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.finished || a.session == nil || a.cancelRequested || !a.promptStarting {
+		return false
+	}
+	if !isClosed(a.promptSent) {
 		return false
 	}
 	return !isClosed(a.promptDone)

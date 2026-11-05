@@ -6,13 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/jahrulnr/nusamation/internal/agent"
 	"github.com/jahrulnr/nusamation/internal/chat"
-	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
 )
 
@@ -56,13 +54,19 @@ type messageView struct {
 }
 
 func (s *Server) hydrateMessages(r *http.Request, msgs []store.Message) []messageView {
+	ids := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		ids = append(ids, m.ID)
+	}
+	byMessage := map[string][]store.Upload{}
+	if ups, err := s.store.ListUploadsForMessages(r.Context(), ids); err == nil {
+		for _, u := range ups {
+			byMessage[u.MessageID] = append(byMessage[u.MessageID], u)
+		}
+	}
 	out := make([]messageView, 0, len(msgs))
 	for _, m := range msgs {
-		v := messageView{Message: m}
-		if ups, err := s.store.ListUploadsForMessage(r.Context(), m.ID); err == nil {
-			v.Attachments = ups
-		}
-		out = append(out, v)
+		out = append(out, messageView{Message: m, Attachments: byMessage[m.ID]})
 	}
 	return out
 }
@@ -213,7 +217,8 @@ func (s *Server) handleDeleteAllConversations(w http.ResponseWriter, r *http.Req
 		}
 		progressed := false
 		for _, c := range list {
-			s.removeConversationUploads(r.Context(), c.ID)
+			// DeleteConversation removes the conversation's uploads only after
+			// the delete succeeds, so a failed delete keeps its files.
 			if err := s.chat.DeleteConversation(r.Context(), c.ID); err != nil {
 				s.log.Warn("could not delete conversation during erase", "id", c.ID, "error", err)
 				continue
@@ -229,25 +234,6 @@ func (s *Server) handleDeleteAllConversations(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-// removeConversationUploads deletes a conversation's upload records and their
-// files on disk. Missing files and paths outside the upload dir are skipped.
-func (s *Server) removeConversationUploads(ctx context.Context, conversationID string) {
-	uploads, err := s.store.ListUploadsForConversation(ctx, conversationID)
-	if err != nil {
-		return
-	}
-	for _, up := range uploads {
-		path, err := security.SafePath(s.cfg.UploadDir(), up.Path, false)
-		if err != nil {
-			continue
-		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			s.log.Warn("could not remove upload file", "path", path, "error", err)
-		}
-	}
-	_ = s.store.DeleteUploadsForConversation(ctx, conversationID)
 }
 
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {

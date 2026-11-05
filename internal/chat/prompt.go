@@ -45,7 +45,21 @@ func (s *Service) processTurn(turn store.Turn) {
 	s.setActive(a)
 	go s.watchTurn(a)
 
-	_ = s.store.StartTurn(ctx, turn.ID)
+	started, err := s.store.StartTurn(ctx, turn.ID)
+	if err != nil {
+		s.log.Warn("failed to mark turn running", "turn", turn.ID, "error", err)
+	}
+	if err == nil && !started {
+		// The turn left 'queued' before this worker claimed it — a cancel
+		// won the race and already emitted the turn's terminal event.
+		a.mu.Lock()
+		a.finished = true
+		close(a.flushStop)
+		close(a.finishedCh)
+		a.mu.Unlock()
+		s.clearActive(a)
+		return
+	}
 	turn.Status = "running"
 	turn.StartedAt = time.Now().UnixMilli()
 	a.mu.Lock()
@@ -89,8 +103,11 @@ func (s *Service) runPrompt(a *activeTurn) (status, stopReason string, runErr er
 		}
 	}()
 
-	req := s.sessionRequest(a.conv, a.agent)
-	meta, _ := s.metaMap(a.conv)
+	a.mu.Lock()
+	conv := a.conv
+	a.mu.Unlock()
+	req := s.sessionRequest(conv, a.agent)
+	meta, _ := s.metaMap(conv)
 
 	session, err := s.agents.EnsureSession(a.ctx, req)
 	if err != nil {
@@ -510,7 +527,10 @@ func (s *Service) originChannel(a *activeTurn) (channels.Channel, channels.Targe
 		IsGroup     bool   `json:"isGroup"`
 	}
 	_ = json.Unmarshal([]byte(a.turn.OriginRef), &ref)
-	for _, l := range a.conv.Links {
+	a.mu.Lock()
+	links := append([]store.ChannelLink(nil), a.conv.Links...)
+	a.mu.Unlock()
+	for _, l := range links {
 		if l.Channel != a.turn.OriginChannel {
 			continue
 		}

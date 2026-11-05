@@ -7,14 +7,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/jahrulnr/nusamation/internal/app"
 	"github.com/jahrulnr/nusamation/internal/auth"
 	"github.com/jahrulnr/nusamation/internal/config"
 	"github.com/jahrulnr/nusamation/internal/security"
-	"github.com/jahrulnr/nusamation/internal/store"
 )
 
 func main() {
@@ -104,7 +102,7 @@ func resetPassword(args []string) error {
 	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
 		return err
 	}
-	st, err := store.Open(filepath.Join(*dataDir, "nusamation.db"))
+	st, err := openStore(*dataDir)
 	if err != nil {
 		return err
 	}

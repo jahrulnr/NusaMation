@@ -29,8 +29,8 @@ func TestListQueuedTurnsForConversationOnlyReturnsRequestedQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.StartTurn(ctx, queuedA.ID); err != nil {
-		t.Fatal(err)
+	if started, err := st.StartTurn(ctx, queuedA.ID); err != nil || !started {
+		t.Fatalf("StartTurn = %v, %v", started, err)
 	}
 
 	got, err := st.ListQueuedTurnsForConversation(ctx, a.ID)
@@ -54,4 +54,32 @@ func TestListQueuedTurnsForConversationOnlyReturnsRequestedQueue(t *testing.T) {
 		t.Fatalf("global queue = %d turns, want 2 (A2 and B1)", len(all))
 	}
 	_ = queuedB
+}
+
+func TestStartTurnDoesNotResurrectCancelledTurn(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	ag := testAgent(t, st)
+	conv, err := st.CreateConversation(ctx, ag.ID, "A", ag.Cwd, "web", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := st.CreateTurn(ctx, conv.ID, "msg-1", "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CancelQueuedTurn(ctx, conv.ID); err != nil {
+		t.Fatal(err)
+	}
+	started, err := st.StartTurn(ctx, turn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started {
+		t.Fatal("cancelled turn was resurrected")
+	}
+	got, err := st.GetTurn(ctx, turn.ID)
+	if err != nil || got.Status != "cancelled" {
+		t.Fatalf("turn = %#v, %v", got, err)
+	}
 }

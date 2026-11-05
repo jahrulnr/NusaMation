@@ -102,6 +102,7 @@ type Process struct {
 	exitErr error
 
 	done       chan struct{}
+	stdoutDone chan struct{}
 	stderrDone chan struct{}
 	exitOnce   sync.Once
 
@@ -131,6 +132,7 @@ func NewProcess(cfg ProcessConfig, handler Handler) *Process {
 		done:       make(chan struct{}),
 		notifCh:    make(chan notifMsg, 2048),
 		notifDone:  make(chan struct{}),
+		stdoutDone: make(chan struct{}),
 		stderrDone: make(chan struct{}),
 		ring:       NewRing(400),
 	}
@@ -156,25 +158,51 @@ func (p *Process) Start(ctx context.Context) error {
 	if runtime.GOOS != "windows" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
-	stdin, err := cmd.StdinPipe()
+	// Create the pipes by hand instead of using the StdinPipe/StdoutPipe/
+	// StderrPipe helpers: cmd.Wait() closes the helper pipes' parent ends as
+	// soon as the child exits, while the writer and the scanner goroutines
+	// can still be using them. With plain os.Pipe files the parent keeps
+	// ownership and closes its ends only after the readers drained whatever
+	// the child wrote right up to the exit.
+	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
 		return err
 	}
-	stdout, err := cmd.StdoutPipe()
+	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
 		return err
 	}
-	stderr, err := cmd.StderrPipe()
+	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
 		return err
 	}
+	cmd.Stdin = stdinR
+	cmd.Stdout = stdoutW
+	cmd.Stderr = stderrW
 	if err := cmd.Start(); err != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		_ = stderrR.Close()
+		_ = stderrW.Close()
 		return fmt.Errorf("start ACP agent: %w", err)
 	}
+	// The child inherited its side of each pipe; closing the parent's copies
+	// is what lets the readers see EOF once the process exits.
+	_ = stdinR.Close()
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
 	p.cmd = cmd
-	p.stdin = stdin
-	p.stdout = stdout
-	p.stderr = stderr
+	p.stdin = stdinW
+	p.stdout = stdoutR
+	p.stderr = stderrR
 	p.pid = cmd.Process.Pid
 	p.startedAt = time.Now()
 	p.log.Info("agent process started", "pid", p.pid, "command", p.cfg.Command, "dir", p.cfg.Dir)
@@ -196,6 +224,7 @@ func hasEnv(env []string, key string) bool {
 }
 
 func (p *Process) readStdout() {
+	defer close(p.stdoutDone)
 	scanner := bufio.NewScanner(p.stdout)
 	scanner.Buffer(make([]byte, 256*1024), maxMessageSize)
 	for scanner.Scan() {
@@ -376,13 +405,6 @@ func (p *Process) readStderr() {
 
 func (p *Process) wait() {
 	err := p.cmd.Wait()
-	// cmd.Wait returns as soon as the process exits. The stderr reader can still
-	// be copying the last lines, and that text is the only explanation for an
-	// agent that dies before initialize.
-	select {
-	case <-p.stderrDone:
-	case <-time.After(2 * time.Second):
-	}
 	p.exitOnce.Do(func() {
 		p.mu.Lock()
 		p.closed = true
@@ -395,6 +417,32 @@ func (p *Process) wait() {
 		p.mu.Unlock()
 		if err == nil {
 			err = ErrProcessExited
+		}
+		// The parent owns the pipe ends now, so nothing closes them under the
+		// scanners: they keep draining whatever the process wrote right up to
+		// the exit. That trailing stderr is usually the only explanation for
+		// an agent that dies before initialize, and callers read StderrLog
+		// once their Call fails, so the drain finishes before pending calls
+		// and done are released.
+		deadline := time.After(2 * time.Second)
+		select {
+		case <-p.stderrDone:
+		case <-deadline:
+		}
+		select {
+		case <-p.stdoutDone:
+		case <-deadline:
+		}
+		p.writeMu.Lock()
+		if p.stdin != nil {
+			_ = p.stdin.Close()
+		}
+		p.writeMu.Unlock()
+		if p.stdout != nil {
+			_ = p.stdout.Close()
+		}
+		if p.stderr != nil {
+			_ = p.stderr.Close()
 		}
 		for _, c := range pending {
 			select {
@@ -482,8 +530,19 @@ func (p *Process) writeJSON(v any) error {
 	if p.stdin == nil {
 		return ErrClosed
 	}
-	_, err = p.stdin.Write(b)
-	return err
+	if p.isClosed() {
+		return ErrProcessExited
+	}
+	if _, err := p.stdin.Write(b); err != nil {
+		// A write to the agent's stdin only fails once the far end is gone:
+		// either the process died (EPIPE) or shutdown closed the pipe under
+		// the writer. Surface the stable exit error, not the raw pipe error.
+		if p.isClosed() || errors.Is(err, os.ErrClosed) || errors.Is(err, syscall.EPIPE) {
+			return ErrProcessExited
+		}
+		return err
+	}
+	return nil
 }
 
 func (p *Process) isClosed() bool {
@@ -495,7 +554,16 @@ func (p *Process) isClosed() bool {
 func (p *Process) Done() <-chan struct{} { return p.done }
 func (p *Process) PID() int              { return p.pid }
 func (p *Process) StartedAt() time.Time  { return p.startedAt }
-func (p *Process) StderrLog() []string   { return p.ring.Lines() }
+func (p *Process) StderrLog() []string {
+	// When the process is gone the exit path may still be draining the last
+	// lines the agent wrote; wait for it so callers diagnosing a dead agent
+	// never see a truncated log. done is the bounded wait: it closes after
+	// the drain or its timeout, even if an OnStderr handler is wedged.
+	if p.isClosed() {
+		<-p.done
+	}
+	return p.ring.Lines()
+}
 
 func (p *Process) ExitError() error {
 	p.mu.Lock()

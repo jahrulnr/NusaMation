@@ -94,7 +94,7 @@ func New(st *appstore.Store, cfg config.Config, mgr *channels.Manager, log *slog
 		container: container, settings: DefaultSettings(), state: "unpaired", lifeCtx: ctx, lifeStop: cancel,
 		sem: make(chan struct{}, 4), groupCache: map[string]groupEntry{}, polls: map[string][]string{},
 	}
-	c.settings = c.loadSettings(context.Background())
+	c.settings = c.loadSettings(context.Background(), failClosedSettings())
 	return c, nil
 }
 
@@ -124,7 +124,7 @@ func (c *Channel) Start(ctx context.Context) error {
 		return nil
 	}
 	c.started = true
-	c.settings = c.loadSettings(ctx)
+	c.settings = c.loadSettings(ctx, c.settings)
 	deviceErr := c.ensureClientLocked(ctx)
 	c.mu.Unlock()
 	if deviceErr != nil {

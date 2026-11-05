@@ -172,14 +172,22 @@ func (s *Service) SetConfig(ctx context.Context, conversationID, configID string
 		}
 	}
 
-	meta, _ := s.metaMap(conv)
-	desired, _ := meta["desiredConfig"].(map[string]any)
-	if desired == nil {
-		desired = map[string]any{}
+	// Nested merge, so it cannot go through patchMeta; hold metaMu across the
+	// read-modify-write like patchMeta does.
+	s.metaMu.Lock()
+	if fresh, err := s.store.GetConversation(ctx, conv.ID); err == nil {
+		meta, _ := s.metaMap(fresh)
+		desired, _ := meta["desiredConfig"].(map[string]any)
+		if desired == nil {
+			desired = map[string]any{}
+		}
+		desired[configID] = value
+		meta["desiredConfig"] = desired
+		if err := s.store.UpdateConversationMetadata(ctx, conv.ID, mustJSON(meta)); err != nil {
+			s.log.Warn("failed to persist desired config", "conversation", conv.ID, "error", err)
+		}
 	}
-	desired[configID] = value
-	meta["desiredConfig"] = desired
-	_ = s.store.UpdateConversationMetadata(ctx, conv.ID, mustJSON(meta))
+	s.metaMu.Unlock()
 
 	if !applied {
 		model := conv.Model

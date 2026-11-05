@@ -17,7 +17,6 @@
   }
   const activityState = readActivityState();
 
-  const ICONS = {};
   function icon(name, cls = "") {
     return `<svg class="icon ${cls}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
   }
@@ -54,7 +53,6 @@
     turns: {},
     configs: [],
     active: null,
-    commands: [],
     unread: new Map(),
     openThoughts: new Set(activityState.thoughts || []),
     openTools: new Set(activityState.tools || []),
@@ -112,7 +110,6 @@
     slowTimer: null,
     authTerminal: null,
     lastNotice: "",
-    channelsRefreshTimer: null,
   };
 
   // Composer state belongs to a conversation; the empty key is the welcome draft.
@@ -168,19 +165,11 @@
     s = String(s || "");
     return s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s;
   }
-  function debounce(fn, ms) {
-    let t;
-    return (...args) => {
-      clearTimeout(t);
-      t = setTimeout(() => fn(...args), ms);
-    };
-  }
-
   function initials(name) {
     const s = String(name || "?").trim();
     if (!s) return "?";
     const parts = s.split(/\s+/).slice(0, 2);
-    return parts.map((p) => p[0]).join("").toUpperCase();
+    return parts.map((p) => Array.from(p)[0]).join("").toUpperCase();
   }
   function agentOrb(agent, cls = "agent-orb") {
     const color = AGENT_COLORS[(agent && agent.color) || "amber"] || AGENT_COLORS.amber;
@@ -265,8 +254,50 @@
 
   /* ---------------- markdown ---------------- */
   const markdownCache = new Map();
+  // CommonMark lazy continuation glues a top-level line following a list into
+  // the last <li>. In chat the line is its own paragraph, so close the list
+  // with a blank line before it reaches marked.
+  function relaxListEndings(src) {
+    const quoteIndent = /^((?:[ \t]*>[ \t]*)*)([ \t]*)/;
+    const bullet = /^(?:[-*+]|\d{1,9}[.)])(?=[ \t]|$)/;
+    const lines = src.split("\n");
+    const out = [];
+    let fence = "", inList = false;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (fence) {
+        if (trimmed.startsWith(fence)) fence = "";
+        out.push(line);
+        continue;
+      }
+      if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+        fence = trimmed.slice(0, 3);
+        inList = false;
+        out.push(line);
+        continue;
+      }
+      const m = line.match(quoteIndent);
+      const quote = m[1], indent = m[2];
+      const content = line.slice(quote.length + indent.length);
+      if (!content.trim()) {
+        inList = false;
+        out.push(line);
+        continue;
+      }
+      if (indent.length <= 3 && bullet.test(content)) {
+        inList = true;
+        out.push(line);
+        continue;
+      }
+      if (inList && indent.length === 0) out.push(quote.trimEnd());
+      if (indent.length === 0) inList = false;
+      out.push(line);
+    }
+    return out.join("\n");
+  }
+
   function renderMarkdown(text, scope = "preview") {
-    const source = String(text || "");
+    const source = relaxListEndings(String(text || ""));
     const cached = markdownCache.get(scope);
     if (cached?.source === source) return cached.html;
     if (window.marked && window.DOMPurify) {
@@ -285,10 +316,17 @@
     return `<p>${esc(text).replace(/\n/g, "<br>")}</p>`;
   }
 
+  const plainCache = new Map();
   function plainMarkdown(text) {
+    const key = String(text || "");
+    const hit = plainCache.get(key);
+    if (hit !== undefined) return hit;
     const el = document.createElement("div");
     el.innerHTML = renderMarkdown(text);
-    return (el.textContent || "").replace(/\s+/g, " ").trim();
+    const out = (el.textContent || "").replace(/\s+/g, " ").trim();
+    if (plainCache.size >= 500) plainCache.delete(plainCache.keys().next().value);
+    plainCache.set(key, out);
+    return out;
   }
 
   let mermaidModule;
@@ -562,7 +600,6 @@
     S.approvals = [];
     S.approvalsById = new Map();
     const app = $("#app");
-    app.className;
     app.className = "";
     app.innerHTML = bootSkeletonHTML();
     try {
@@ -572,7 +609,6 @@
       renderShell();
       connectWS();
       await selectInitialConversation();
-      if (S.whatsappNeedRefresh) refreshChannels();
     } catch (e) {
       if (e.status === 401) return;
       renderBootError(e.message || "Could not load NusaMation.");
@@ -614,7 +650,8 @@
     const m = location.pathname.match(/^\/c\/([^/]+)/);
     let id = m ? decodeURIComponent(m[1]) : "";
     if (!id) {
-      const last = localStorage.getItem("nusamation:lastConversation");
+      let last = "";
+      try { last = localStorage.getItem("nusamation:lastConversation") || ""; } catch {}
       if (last && S.conversations.some((c) => c.id === last)) id = last;
     }
     if (!id && S.conversations.length && !isMobile()) id = S.conversations[0].id;
@@ -640,6 +677,7 @@
   async function loadConversation(id, push = true) {
     const seq = ++S.loadSeq;
     S.loadingConversation = true;
+    S.loadingId = id;
     S.loadingDeltas = [];
     S.loadError = "";
     S.historyHasMore = false;
@@ -689,7 +727,7 @@
       S.elicitations = data.elicitations || [];
       S.unread.delete(id);
       S.loadingConversation = false;
-      localStorage.setItem("nusamation:lastConversation", id);
+      try { localStorage.setItem("nusamation:lastConversation", id); } catch {}
       upsertConversation(data.conversation, false);
       if (push) setRoute(id);
       renderSidebar();
@@ -762,7 +800,6 @@
   function setRoute(id) {
     const path = id ? `/c/${encodeURIComponent(id)}` : "/";
     if (location.pathname !== path) window.history.pushState({ id }, "", path);
-    S.route = path;
   }
 
   function upsertConversation(conv, render = true) {
@@ -836,6 +873,7 @@
   function renderSidebar() {
     const el = $("#sidebar");
     if (!el) return;
+    closeDetachedPopovers();
     const convs = S.conversations.filter((c) => !c.archived);
     const pinned = convs.filter((c) => c.pinned);
     const rest = convs.filter((c) => !c.pinned);
@@ -853,6 +891,13 @@
     if (gToday.length) groups.push(["Today", gToday]);
     if (gYesterday.length) groups.push(["Yesterday", gYesterday]);
     if (gEarlier.length) groups.push(["Earlier", gEarlier]);
+
+    const prevList = $("#conv-list", el);
+    const prevScroll = prevList ? prevList.scrollTop : 0;
+    const prevSearch = $("#conv-search", el);
+    const searchFocused = document.activeElement === prevSearch;
+    const selStart = searchFocused ? prevSearch.selectionStart : 0;
+    const selEnd = searchFocused ? prevSearch.selectionEnd : 0;
 
     el.innerHTML = `
       <div class="sidebar-top">
@@ -880,6 +925,13 @@
         </div>
 
       </div>`;
+    const list = $("#conv-list", el);
+    if (list) list.scrollTop = prevScroll;
+    if (searchFocused) {
+      const next = $("#conv-search", el);
+      next?.focus();
+      try { next?.setSelectionRange(selStart, selEnd); } catch {}
+    }
     filterSidebar();
   }
 
@@ -890,7 +942,7 @@
     const channel = external ? external.channel : (c.originChannel && c.originChannel !== "web" ? c.originChannel : "");
     const unread = S.unread.get(c.id) || 0;
     const preview = c.lastMessage ? truncate(c.lastMessage.replace(/\s+/g, " "), 70) : "No messages yet";
-    return `<div class="conv-item ${S.current && S.current.id === c.id ? "active" : ""}" data-action="select-conv" data-id="${esc(c.id)}" data-title="${esc((c.title || "").toLowerCase())}" data-preview="${esc((c.lastMessage || "").toLowerCase())}">
+    return `<div class="conv-item ${S.current && S.current.id === c.id ? "active" : ""}" role="button" tabindex="0" data-action="select-conv" data-id="${esc(c.id)}" data-title="${esc((c.title || "").toLowerCase())}" data-preview="${esc((c.lastMessage || "").toLowerCase())}">
       <div class="conv-title-row">
         ${c.pinned ? icon("pin", "conv-pin") : ""}
         <span class="conv-title">${esc(c.title || "Untitled")}</span>
@@ -906,7 +958,10 @@
 
   function filterSidebar() {
     const q = S.query.trim().toLowerCase();
-    $$(".conv-section", $("#conv-list")).forEach((group) => {
+    const list = $("#conv-list");
+    if (!list) return;
+    $$(".sidebar-empty", list).forEach((e) => e.remove());
+    $$(".conv-section", list).forEach((group) => {
       let visible = 0;
       $$(".conv-item", group).forEach((item) => {
         const hit = !q || (item.dataset.title || "").includes(q) || (item.dataset.preview || "").includes(q);
@@ -915,8 +970,7 @@
       });
       group.classList.toggle("hidden", !visible);
     });
-    const list = $("#conv-list");
-    if (list && !$(".conv-section:not(.hidden)", list) && q && !$(".sidebar-empty", list)) {
+    if (!$(".conv-section:not(.hidden)", list) && q) {
       list.insertAdjacentHTML("beforeend", `<div class="sidebar-empty">No conversations match “${esc(q)}”.</div>`);
     }
   }
@@ -934,6 +988,7 @@
   function renderTopbar() {
     const el = $("#topbar");
     if (!el) return;
+    closeDetachedPopovers();
     const c = S.current;
     const agent = currentAgent();
     const model = modelLabel(c, agent);
@@ -976,6 +1031,7 @@
   function renderChat(skeleton = false) {
     const chat = $("#chat");
     if (!chat) return;
+    closeDetachedPopovers();
     const sc = $("#chat-scroll");
     const wasPinned = S.scrollPinned || S.messages.length === 0;
     const focused = document.activeElement?.closest?.("[data-action][data-id]");
@@ -1520,12 +1576,6 @@
     });
   }
 
-  function scrollToBottom(force = false) {
-    const sc = $("#chat-scroll");
-    if (!sc) return;
-    if (force || S.scrollPinned) sc.scrollTop = sc.scrollHeight;
-  }
-
   /* ---------------- composer ---------------- */
   function renderComposer() {
     const wrap = $("#composer-wrap");
@@ -1598,7 +1648,7 @@
       try { ta.setSelectionRange(selStart, selEnd); } catch {}
     }
     autoGrow();
-    $("#file-input").onchange = (e) => uploadFiles(e.target.files);
+    $("#file-input").onchange = (e) => { uploadFiles(e.target.files); e.target.value = ""; };
     wrap.onpointerdown = (e) => {
       if (isMobile() && document.activeElement === ta && e.target.closest('[data-action="prepare-composer"]')) e.preventDefault();
     };
@@ -1892,9 +1942,9 @@
     m = normalizeMessage(m);
     const i = S.messages.findIndex((x) => x.id === m.id);
     if (i >= 0) {
-      S.messages[i] = { ...S.messages[i], ...m };
+      const previous = S.messages[i];
+      S.messages[i] = { ...previous, ...m, attachments: m.attachments || previous.attachments };
       delete S.messages[i]._streamBytes;
-      if (!m.attachments) m.attachments = S.messages[i].attachments;
     } else {
       S.messages.push(m);
       S.messages.sort((a, b) => (a.seq || 0) - (b.seq || 0));
@@ -2036,8 +2086,8 @@
         break;
       }
       case "message.delta": {
+        if (S.loadingConversation) { if (data.conversationId === S.loadingId) S.loadingDeltas.push(data); break; }
         if (!S.current || data.conversationId !== S.current.id) break;
-        if (S.loadingConversation) { S.loadingDeltas.push(data); break; }
         let m = S.messages.find((x) => x.id === data.messageId);
         if (!m) {
           m = normalizeMessage({
@@ -2090,13 +2140,8 @@
         if (data.configOptions) { S.configs = parseConfigs(data.configOptions); S.current.configOptions = data.configOptions; }
         if (data.model) S.current.model = data.model;
         renderTopbar(); renderComposer();
-        if (S.modal?.type === "settings" && S.settingsTab === "channels") { /* noop */ }
         if (S.modal?.type === "approval") refreshApprovalModal();
         if (currentApprovals().length) scheduleChatRender();
-        break;
-      }
-      case "commands.updated": {
-        if (S.current && convId === S.current.id) S.commands = data.commands || [];
         break;
       }
       case "plan.updated": {
@@ -2127,6 +2172,7 @@
       case "turn.status": {
         if (!S.current || convId !== S.current.id) break;
         if (!S.active) S.active = { turnId: data.turnId, running: true };
+        else if (data.turnId && S.active.turnId !== data.turnId) break;
         S.active.status = data.status;
         S.active.running = data.status !== "queued";
         if (data.status === "waiting_approval") S.active.running = true;
@@ -2210,7 +2256,7 @@
           ag.status = data.status;
           ag.lastError = data.lastError || "";
           renderTopbar();
-          if (S.modal?.type === "settings" && S.settingsTab === "agents") renderSettings();
+          if (S.modal?.type === "settings" && S.settingsTab === "agents" && !S.agentForm && !S.mcpForm) renderSettings();
         }
         break;
       }
@@ -2237,7 +2283,6 @@
     if (!c.lastMessageAt || (m.createdAt || 0) >= (c.lastMessageAt || 0)) {
       c.lastMessage = m.text || c.lastMessage;
       c.lastMessageAt = m.createdAt || c.lastMessageAt || now();
-      c.lastMessageRole = m.role;
     }
     scheduleSidebarRender();
   }
@@ -2259,6 +2304,12 @@
     });
     document.querySelectorAll("[data-popover-anchor]").forEach((e) => e.removeAttribute("data-popover-anchor"));
     document.querySelectorAll('[aria-haspopup][aria-expanded="true"]').forEach((e) => e.setAttribute("aria-expanded", "false"));
+  }
+
+  function closeDetachedPopovers() {
+    for (const e of document.querySelectorAll(".popover")) {
+      if (e._anchor && !e._anchor.isConnected) { closePopover(); return; }
+    }
   }
 
   function toolPreFor(target) {
@@ -2283,9 +2334,11 @@
     el.innerHTML = html;
     document.body.appendChild(el);
     anchor.setAttribute("data-popover-anchor", "1");
+    el._anchor = anchor;
     el._setAnchor = (next) => {
       anchor.removeAttribute("data-popover-anchor");
       anchor = next;
+      el._anchor = next;
       anchor.setAttribute("data-popover-anchor", "1");
       el._reposition();
     };
@@ -2352,7 +2405,7 @@
     const type = String(o.type || "").toLowerCase();
     if (type === "boolean") {
       const on = current === true || current === "true";
-      return `<div class="config-row"><div class="config-label">${label}<small>${esc(o.description || "")}</small></div><button class="switch ${on ? "on" : ""}" data-action="set-config-toggle" data-id="${id}" data-value="${on ? "false" : "true"}"></button></div>`;
+      return `<div class="config-row"><div class="config-label">${label}<small>${esc(o.description || "")}</small></div><button role="switch" aria-checked="${on}" class="switch ${on ? "on" : ""}" data-action="set-config-toggle" data-id="${id}" data-value="${on ? "false" : "true"}"></button></div>`;
     }
     return `<div class="config-row"><div class="config-label">${label}<small>${esc(o.description || "")}</small></div>
       <select class="select config-select" data-change="set-config" data-id="${id}">
@@ -2514,7 +2567,7 @@
     const agent = currentAgent();
     const methods = error.data?.authMethods?.length ? error.data.authMethods : (agent?.authMethods || []);
     S.modal = { type: "agent-blocker" };
-    openModal(`${modalHead("Agent needs attention", agentName(agent))}<div class="modal-body" style="padding:18px"><p class="muted">${esc(error.message)}</p>${methods.length ? `<div class="settings-title">Choose how to continue</div><div class="blocker-actions">${methods.map((m) => `<button class="btn btn-secondary" data-action="blocker-auth" data-id="${esc(agent.id)}" data-method="${esc(m.id)}" data-auth-type="${esc(m.type || "agent")}">${esc(m.name || m.id)}</button>`).join("")}</div>` : ""}</div><div class="modal-foot"><button class="btn btn-secondary" data-action="agent-logs" data-id="${esc(agent?.id || "")}">View agent details</button><button class="btn btn-primary" data-action="retry-prepare">Try again</button></div>`, { size: "md" });
+    openModal(`${modalHead("Agent needs attention", agentName(agent))}<div class="modal-body" style="padding:18px"><p class="muted">${esc(error.message)}</p>${methods.length ? `<div class="settings-title">Choose how to continue</div><div class="blocker-actions">${methods.map((m) => `<button class="btn btn-secondary" data-action="blocker-auth" data-id="${esc(agent?.id || "")}" data-method="${esc(m.id)}" data-auth-type="${esc(m.type || "agent")}">${esc(m.name || m.id)}</button>`).join("")}</div>` : ""}</div><div class="modal-foot"><button class="btn btn-secondary" data-action="agent-logs" data-id="${esc(agent?.id || "")}">View agent details</button><button class="btn btn-primary" data-action="retry-prepare">Try again</button></div>`, { size: "md" });
   }
 
   async function setConfig(id, value) {
@@ -2579,9 +2632,9 @@
     const links = (S.current.links || []).filter((l) => l.channel !== "web");
     openPopover(anchor, `<div class="popover-title">Channel routing</div>
       <div class="popover-note">The web always receives the full stream. WhatsApp receives one message when the turn finishes.</div>
-      <div class="settings-row"><div><div class="label">Reply to origin</div><div class="desc">Send assistant replies back to the chat where the turn started.</div></div><button class="switch ${r.replyToOrigin ? "on" : ""}" data-action="toggle-routing" data-key="replyToOrigin"></button></div>
-      <div class="settings-row"><div><div class="label">Mirror final answers</div><div class="desc">Copy the final answer to every linked chat.</div></div><button class="switch ${r.mirrorFinal ? "on" : ""}" data-action="toggle-routing" data-key="mirrorFinal"></button></div>
-      <div class="settings-row"><div><div class="label">Approval notifications</div><div class="desc">Ping the origin chat when a tool needs a decision.</div></div><button class="switch ${r.notifyApprovals ? "on" : ""}" data-action="toggle-routing" data-key="notifyApprovals"></button></div>
+      <div class="settings-row"><div><div class="label">Reply to origin</div><div class="desc">Send assistant replies back to the chat where the turn started.</div></div><button role="switch" aria-checked="${r.replyToOrigin}" class="switch ${r.replyToOrigin ? "on" : ""}" data-action="toggle-routing" data-key="replyToOrigin"></button></div>
+      <div class="settings-row"><div><div class="label">Mirror final answers</div><div class="desc">Copy the final answer to every linked chat.</div></div><button role="switch" aria-checked="${r.mirrorFinal}" class="switch ${r.mirrorFinal ? "on" : ""}" data-action="toggle-routing" data-key="mirrorFinal"></button></div>
+      <div class="settings-row"><div><div class="label">Approval notifications</div><div class="desc">Ping the origin chat when a tool needs a decision.</div></div><button role="switch" aria-checked="${r.notifyApprovals}" class="switch ${r.notifyApprovals ? "on" : ""}" data-action="toggle-routing" data-key="notifyApprovals"></button></div>
       <div class="popover-note" style="margin-top:8px">${links.length ? "Linked: " + links.map((l) => esc(l.channel + (l.displayName ? " · " + l.displayName : ""))).join(", ") : "No external chats linked yet."}</div>`, { width: 340 });
   }
 
@@ -2672,7 +2725,6 @@
       S.authTerminal = null;
     }
     if (S.qrTimer) { clearInterval(S.qrTimer); S.qrTimer = null; }
-    if (S.channelsRefreshTimer) { clearInterval(S.channelsRefreshTimer); S.channelsRefreshTimer = null; }
     S.modal = null;
     S.confirmAction = null;
     const root = $("#modal-root");
@@ -3117,7 +3169,7 @@
     if (!ch) {
       return `<div class="empty-settings">WhatsApp is disabled for this process.<br>Remove <code class="mono">NUSAMATION_NO_WHATSAPP</code> and restart to enable it.</div>`;
     }
-    const settings = S.whatsappSettings || { enabled: ch.enabled, autoStart: true, groupPolicy: "mention", readReceipts: true, sendTyping: true, streamEdits: true, allowedNumbers: [] };
+    const settings = S.whatsappSettings || { enabled: ch.enabled, autoStart: true, groupPolicy: "mention", readReceipts: true, sendTyping: true, allowedNumbers: [] };
     const paired = ch.stats && ch.stats.paired;
     const pairing = ch.state === "pairing";
     const connecting = ch.state === "connecting";
@@ -3132,10 +3184,10 @@
       ${qr ? (pairing ? `<div class="qr-box"><img class="qr-img" src="/api/channels/whatsapp/qr?t=${Date.now()}" alt="WhatsApp pairing QR"><div class="qr-info"><h4>Scan this code</h4><p>Open WhatsApp on your phone → Linked devices → Link a device. The QR refreshes automatically.</p><div class="muted" style="font-size:10.5px">The web control center always receives the full stream. WhatsApp receives one message when the turn finishes. Thoughts stay on the web.</div></div></div>` : `<div class="qr-box"><div class="qr-placeholder"><span class="spinner" style="margin-bottom:8px"></span>Preparing a fresh QR code…</div><div class="qr-info"><h4>Connecting</h4><p>NusaMation is opening a secure WhatsApp web session. A QR code will appear in a moment.</p></div></div>`) : (ch.loggedIn || paired) ? `<div class="qr-box"><div class="tool-icon kind-execute" style="width:44px;height:44px">${icon("message")}</div><div class="grow"><h4 style="margin:0 0 4px">${ch.selfID ? esc(ch.selfID) : "WhatsApp linked"}</h4><p style="margin:0;color:var(--muted);font-size:11.5px">Inbound messages are gatewayed through the routing layer. The agent's full thoughts stay on web.</p></div></div>` : `<div class="qr-box"><div class="tool-icon" style="width:44px;height:44px">${icon("message")}</div><div class="grow"><h4 style="margin:0 0 4px">Not linked</h4><p style="margin:0;color:var(--muted);font-size:11.5px">Press Connect to generate a pairing QR. Already linked? Press Connect to resume.</p></div></div>`}
       <div class="settings-section" style="margin-top:20px">
         <div class="settings-title">Behaviour</div>
-        <div class="settings-row"><div><div class="label">Enabled</div><div class="desc">Accept inbound messages and send replies.</div></div><button class="switch ${settings.enabled ? "on" : ""}" data-action="wa-toggle" data-key="enabled"></button></div>
-        <div class="settings-row"><div><div class="label">Auto-connect on boot</div><div class="desc">Only when a device is already linked.</div></div><button class="switch ${settings.autoStart ? "on" : ""}" data-action="wa-toggle" data-key="autoStart"></button></div>
-        <div class="settings-row"><div><div class="label">Read receipts</div><div class="desc">Mark allowed messages as read.</div></div><button class="switch ${settings.readReceipts ? "on" : ""}" data-action="wa-toggle" data-key="readReceipts"></button></div>
-        <div class="settings-row"><div><div class="label">Typing indicator</div><div class="desc">Show composing while the agent works.</div></div><button class="switch ${settings.sendTyping ? "on" : ""}" data-action="wa-toggle" data-key="sendTyping"></button></div>
+        <div class="settings-row"><div><div class="label">Enabled</div><div class="desc">Accept inbound messages and send replies.</div></div><button role="switch" aria-checked="${settings.enabled}" class="switch ${settings.enabled ? "on" : ""}" data-action="wa-toggle" data-key="enabled"></button></div>
+        <div class="settings-row"><div><div class="label">Auto-connect on boot</div><div class="desc">Only when a device is already linked.</div></div><button role="switch" aria-checked="${settings.autoStart}" class="switch ${settings.autoStart ? "on" : ""}" data-action="wa-toggle" data-key="autoStart"></button></div>
+        <div class="settings-row"><div><div class="label">Read receipts</div><div class="desc">Mark allowed messages as read.</div></div><button role="switch" aria-checked="${settings.readReceipts}" class="switch ${settings.readReceipts ? "on" : ""}" data-action="wa-toggle" data-key="readReceipts"></button></div>
+        <div class="settings-row"><div><div class="label">Typing indicator</div><div class="desc">Show composing while the agent works.</div></div><button role="switch" aria-checked="${settings.sendTyping}" class="switch ${settings.sendTyping ? "on" : ""}" data-action="wa-toggle" data-key="sendTyping"></button></div>
         <div class="settings-row"><div><div class="label">Group policy</div><div class="desc">Mention requires a direct @mention or a reply to the bot.</div></div><select class="select" style="width:150px" data-change="wa-group"><option value="mention" ${settings.groupPolicy === "mention" ? "selected" : ""}>mention only</option><option value="all" ${settings.groupPolicy === "all" ? "selected" : ""}>all messages</option><option value="disabled" ${settings.groupPolicy === "disabled" ? "selected" : ""}>disabled</option></select></div>
       </div>
       <div class="settings-section">
@@ -3149,9 +3201,9 @@
   function routingSettings() {
     const r = S.routingDefaults || (S.bootstrap && S.bootstrap.routingDefaults) || { replyToOrigin: true, mirrorFinal: false, notifyApprovals: true };
     return `${settingsHead("Routing defaults", "These apply to new conversations. Each conversation can override them from the top bar.")}
-      <div class="settings-row"><div><div class="label">Reply to origin</div><div class="desc">Send assistant replies back to the chat where the prompt came from.</div></div><button class="switch ${r.replyToOrigin ? "on" : ""}" data-action="default-routing" data-key="replyToOrigin"></button></div>
-      <div class="settings-row"><div><div class="label">Mirror final answers</div><div class="desc">Copy final answers to every linked channel. Off by default to avoid noise.</div></div><button class="switch ${r.mirrorFinal ? "on" : ""}" data-action="default-routing" data-key="mirrorFinal"></button></div>
-      <div class="settings-row"><div><div class="label">Notify approvals</div><div class="desc">Ping the origin chat when a tool needs a decision.</div></div><button class="switch ${r.notifyApprovals ? "on" : ""}" data-action="default-routing" data-key="notifyApprovals"></button></div>
+      <div class="settings-row"><div><div class="label">Reply to origin</div><div class="desc">Send assistant replies back to the chat where the prompt came from.</div></div><button role="switch" aria-checked="${r.replyToOrigin}" class="switch ${r.replyToOrigin ? "on" : ""}" data-action="default-routing" data-key="replyToOrigin"></button></div>
+      <div class="settings-row"><div><div class="label">Mirror final answers</div><div class="desc">Copy final answers to every linked channel. Off by default to avoid noise.</div></div><button role="switch" aria-checked="${r.mirrorFinal}" class="switch ${r.mirrorFinal ? "on" : ""}" data-action="default-routing" data-key="mirrorFinal"></button></div>
+      <div class="settings-row"><div><div class="label">Notify approvals</div><div class="desc">Ping the origin chat when a tool needs a decision.</div></div><button role="switch" aria-checked="${r.notifyApprovals}" class="switch ${r.notifyApprovals ? "on" : ""}" data-action="default-routing" data-key="notifyApprovals"></button></div>
       <div class="settings-section" style="margin-top:26px"><div class="settings-title">How it works</div><div class="settings-card" style="border:1px solid var(--border);border-radius:11px;padding:12px 14px;color:var(--muted);font-size:12px;line-height:1.7">
         <div><b style="color:var(--text-soft)">Web</b> receives every message, thought, tool call, plan, approval and usage update in real time.</div>
         <div><b style="color:var(--text-soft)">External channels</b> receive one message when the turn finishes. Thoughts and raw tool output stay on the web.</div>
@@ -3217,7 +3269,7 @@
   }
 
   async function saveWaSettings(patch) {
-    const current = S.whatsappSettings || { enabled: true, autoStart: true, groupPolicy: "mention", readReceipts: true, sendTyping: true, streamEdits: true, allowedNumbers: [] };
+    const current = S.whatsappSettings || { enabled: true, autoStart: true, groupPolicy: "mention", readReceipts: true, sendTyping: true, allowedNumbers: [] };
     const next = { ...current, ...patch };
     try {
       const d = await api("/channels/whatsapp/settings", { method: "PUT", body: next });
@@ -3302,7 +3354,7 @@
       const m = await api("/mcp");
       S.mcp = m.servers || S.mcp;
       toast("Agent is ready", "Capabilities and model list refreshed.", "success");
-      if (S.modal?.type === "settings") renderSettings();
+      if (S.modal?.type === "settings" && !S.agentForm && !S.mcpForm) renderSettings();
       renderTopbar();
     } catch (e) {
       toast("Probe failed", e.message, "error");
@@ -3596,6 +3648,7 @@
       case "open-account": openSettings("account"); break;
       case "settings-tab":
         S.settingsTab = target.dataset.tab; S.agentForm = null; S.mcpForm = null;
+        if (S.qrTimer && S.settingsTab !== "channels") { clearInterval(S.qrTimer); S.qrTimer = null; }
         if (S.settingsTab === "automations") loadAutomations();
         else if (S.settingsTab === "defaults") {
           S.defaultDraft = { agentId: S.agentDefaults.agentId || "", selections: (S.agentDefaults.selections || []).map((s) => ({ ...s })) };
@@ -3692,7 +3745,6 @@
       case "attach": $("#file-input")?.click(); break;
       case "reply-toggle": S.replyToChannel = !S.replyToChannel; renderComposer(); focusComposer(); break;
       case "remove-attachment": S.attachments = S.attachments.filter((a) => (a.upload || a).id !== id); renderPendingAttachments(); break;
-      case "convert": break;
       case "resolve-approval": await resolveApproval(id, target.dataset.option, target.closest(".approval-card")); break;
       case "toggle-thought": {
         const mid = target.dataset.id;
@@ -3850,6 +3902,10 @@
     if (e.target?.id === "prompt-modal-input" && e.key === "Enter") {
       e.preventDefault();
       $("[data-action=prompt-save]")?.click();
+    }
+    if ((e.key === "Enter" || e.key === " ") && e.target?.classList?.contains("conv-item")) {
+      e.preventDefault();
+      e.target.click();
     }
   });
 

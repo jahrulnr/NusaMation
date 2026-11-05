@@ -98,6 +98,10 @@ func (r *Runtime) setState(state, lastErr string) {
 func (r *Runtime) ensureClient(ctx context.Context) (*acp.Client, error) {
 	for {
 		r.mu.Lock()
+		if r.stopping {
+			r.mu.Unlock()
+			return nil, errors.New("agent is stopped")
+		}
 		if r.client != nil && r.client.Alive() {
 			c := r.client
 			r.mu.Unlock()
@@ -124,8 +128,11 @@ func (r *Runtime) ensureClient(ctx context.Context) (*acp.Client, error) {
 			r.starting = false
 			close(r.startCh)
 			r.startCh = nil
+			stopping := r.stopping
 			r.mu.Unlock()
-			r.failStart(err)
+			if !stopping {
+				r.failStart(err)
+			}
 			return nil, err
 		}
 		startCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
@@ -137,20 +144,28 @@ func (r *Runtime) ensureClient(ctx context.Context) (*acp.Client, error) {
 
 		r.mu.Lock()
 		r.starting = false
-		if err != nil {
-			close(r.startCh)
-			r.startCh = nil
-			r.mu.Unlock()
-			r.failStart(err)
-			return nil, err
-		}
-		r.client = client
-		r.stopping = false
 		close(r.startCh)
 		r.startCh = nil
-		r.state = "ready"
-		r.lastErr = ""
+		stopping := r.stopping
+		if err == nil && !stopping {
+			r.client = client
+			r.state = "ready"
+			r.lastErr = ""
+		}
 		r.mu.Unlock()
+		if err != nil {
+			if !stopping {
+				r.failStart(err)
+			}
+			return nil, err
+		}
+		if stopping {
+			// Stop/InvalidateAgent discarded this runtime while the process
+			// was starting; shut the client down instead of installing it on
+			// a runtime nobody owns anymore.
+			_ = client.Close()
+			return nil, errors.New("agent is stopped")
+		}
 		_ = r.mgr.store.UpdateAgentStatus(context.Background(), r.agent.ID, "ready", "")
 		r.mgr.Sink().AgentState(r.agent.ID, "ready", "")
 		return client, nil

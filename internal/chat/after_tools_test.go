@@ -292,6 +292,24 @@ func TestAfterToolsIgnoredCancelKeepsQueueAndNotifiesOnce(t *testing.T) {
 	}
 }
 
+// A second /stop on an after_tools turn escalates past the graceful
+// session/cancel the agent is ignoring and drops the turn context instead.
+func TestSecondCancelOnAfterToolsTurnEscalates(t *testing.T) {
+	e := newAfterToolsEnv(t)
+	_, p1 := e.submit("after-tools-ignore-cancel one", "")
+	waitFor(t, func() bool { return e.hasToolMessage(p1.ID) }, "tool call")
+	_, p2 := e.submit("follow-up ignored", deliveryAfterTools)
+	if err := e.svc.Cancel(context.Background(), e.conv.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.Cancel(context.Background(), e.conv.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.waitStatus(p1.ID, "cancelled")
+	e.waitStatus(p2.ID, "completed")
+	waitFor(t, func() bool { return countTrace(e.trace(), "cancel") >= 2 }, "escalated session/cancel on the wire")
+}
+
 func TestDefaultQueueDoesNotCancelRunningTurn(t *testing.T) {
 	e := newAfterToolsEnv(t)
 	_, p1 := e.submit("after-tools-ignore-cancel plain", "")

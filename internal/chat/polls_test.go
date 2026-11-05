@@ -50,6 +50,12 @@ func testPollService() *Service {
 
 func TestNotifyApprovalPoll(t *testing.T) {
 	svc := testPollService()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc.store = st
 	fc := &fakePollChannel{name: "whatsapp"}
 	ap := store.Approval{
 		ID: "ap1", ConversationID: "c1", Title: "Run rm -rf",
@@ -277,6 +283,11 @@ func TestNotifyElicitationRegistersPollWaiter(t *testing.T) {
 			Routing: store.Routing{NotifyApprovals: true},
 		},
 		turn: store.Turn{ID: "t1", OriginChannel: "whatsapp", OriginRef: `{"externalId":"62@s.whatsapp.net"}`},
+	}
+	// Production registers the elicitation (Elicit) before notifying.
+	svc.elicitations["el1"] = &elicitationWaiter{
+		request: Elicitation{ID: "el1", ConversationID: "c1"},
+		result:  make(chan ElicitationResponse, 1),
 	}
 	svc.notifyElicitation(a, Elicitation{ID: "el1", ConversationID: "c1", Request: json.RawMessage(
 		`{"mode":"form","message":"pick one","requestedSchema":{"properties":{"s":{"type":"string","enum":["a","b"]}}}}`)})

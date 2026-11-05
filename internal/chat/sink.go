@@ -99,7 +99,10 @@ func (s *Service) SessionUpdate(sess *agent.Session, u acp.SessionUpdate, raw js
 		})
 	case "config_option_update":
 		if len(u.ConfigOptions) > 0 {
-			s.persistConfigs(context.Background(), a.conv, u.ConfigOptions)
+			a.mu.Lock()
+			conv := a.conv
+			a.mu.Unlock()
+			s.persistConfigs(context.Background(), conv, u.ConfigOptions)
 		}
 	case "usage_update":
 		s.applyUsage(a, u)
@@ -524,9 +527,6 @@ func (s *Service) applyCommands(a *activeTurn, commands json.RawMessage) {
 		a.conv = conv
 		a.mu.Unlock()
 	}
-	s.emit("commands.updated", a.conversationID, map[string]any{
-		"conversationId": a.conversationID, "commands": commands,
-	})
 }
 
 func (s *Service) applyAgentTitle(conversationID, title string) {
@@ -555,8 +555,7 @@ func (s *Service) applyAgentTitle(conversationID, title string) {
 	if err != nil {
 		return
 	}
-	meta["titleSource"] = "agent"
-	_ = s.store.UpdateConversationMetadata(ctx, conversationID, mustJSON(meta))
+	_, _ = s.patchMeta(ctx, conversationID, map[string]any{"titleSource": "agent"})
 	s.emit("conversation.updated", conversationID, updated)
 }
 
@@ -653,6 +652,7 @@ func (s *Service) updateDelivery(a *activeTurn, final bool) {
 	if strings.TrimSpace(text) == "" {
 		text = "Done."
 	}
+	text = textfmt.Truncate(text, 3500)
 	if d == nil {
 		s.notifyOrigin(a, text)
 		return
@@ -831,6 +831,21 @@ func (s *Service) finishTurn(a *activeTurn, status, stopReason string, runErr er
 	if conv.ID != "" {
 		s.emit("conversation.updated", a.conversationID, conv)
 	}
+	// Drop terminal mappings that already saw an exit status — including ones
+	// a post-exit update re-registered. Live terminals keep their mapping so
+	// output finishing after the turn still lands on this turn's messages.
+	a.mu.Lock()
+	for id, t := range a.terminals {
+		if t.ExitStatus == nil {
+			continue
+		}
+		s.mu.Lock()
+		if s.terminalTurns[id] == a {
+			delete(s.terminalTurns, id)
+		}
+		s.mu.Unlock()
+	}
+	a.mu.Unlock()
 	s.clearActive(a)
 	s.log.Info("turn finished", "conversation", a.conversationID, "turn", a.turn.ID, "status", status, "stop", stopReason)
 }

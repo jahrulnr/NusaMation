@@ -33,7 +33,7 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 	if err := s.Store.InterruptAutomationRuns(ctx); err != nil {
 		s.Log.Warn("automation recovery", "error", err)
 	}
-	jobs, err := s.Store.ListAutomations(ctx)
+	jobs, err := s.Store.ListDueAutomations(ctx, now)
 	if err != nil {
 		s.Log.Warn("automation list", "error", err)
 		return

@@ -124,8 +124,7 @@ WhatsApp settings:
   "allowedNumbers": [],
   "groupPolicy": "mention",
   "readReceipts": true,
-  "sendTyping": true,
-  "streamEdits": false
+  "sendTyping": true
 }
 ```
 

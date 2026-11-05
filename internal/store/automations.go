@@ -140,6 +140,28 @@ func (s *Store) ListAutomations(ctx context.Context) ([]Automation, error) {
 	}
 	return out, rows.Err()
 }
+
+// ListDueAutomations returns only the enabled jobs due at now — the same
+// predicate ClaimAutomation applies — so the scheduler tick does not load
+// every row (prompts can be large) each cycle.
+func (s *Store) ListDueAutomations(ctx context.Context, now time.Time) ([]Automation, error) {
+	rows, err := s.db.QueryContext(ctx, automationSelect+
+		` WHERE enabled=1 AND next_run_at>0 AND next_run_at<=? AND (expires_at=0 OR expires_at>=?) ORDER BY next_run_at ASC`,
+		now.UnixMilli(), now.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Automation{}
+	for rows.Next() {
+		a, err := scanAutomation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
 func (s *Store) SaveAutomation(ctx context.Context, a Automation, now time.Time) (Automation, error) {
 	if err := ValidateAutomation(&a, now); err != nil {
 		return a, err

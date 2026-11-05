@@ -44,9 +44,16 @@ func (s *Store) GetTurn(ctx context.Context, id string) (Turn, error) {
 	return t, err
 }
 
-func (s *Store) StartTurn(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE turns SET status='running',started_at=? WHERE id=?`, nowMS(), id)
-	return err
+// StartTurn claims a queued turn for processing. It reports false when the
+// turn left 'queued' first (e.g. cancelled before the worker reached it), so
+// a raced cancel is never resurrected into 'running'.
+func (s *Store) StartTurn(ctx context.Context, id string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE turns SET status='running',started_at=? WHERE id=? AND status='queued'`, nowMS(), id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func (s *Store) SetTurnWaiting(ctx context.Context, id string) error {

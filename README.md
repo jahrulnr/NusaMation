@@ -10,7 +10,7 @@ NusaMation is not another LLM wrapper. The brain is any **Agent Client Protocol 
 
 - **ACP first.** Speak the open Agent Client Protocol over stdio. No provider API keys, no bespoke model plumbing, no lock-in.
 - **Web sees everything.** Streaming markdown, collapsible thoughts, tool cards with raw input/output, plans, usage and inline approvals.
-- **Chats get the digest.** WhatsApp receives an “On it…” acknowledgement and a final answer. Reasoning and raw tool output stay private in the control center.
+- **Chats get the digest.** WhatsApp shows a typing indicator while the agent works, then receives one final answer. Reasoning and raw tool output stay private in the control center.
 - **One mesh, many surfaces.** The same conversation can span web and WhatsApp. Per-conversation routing decides where the final answer goes.
 - **Local-first.** Single binary, embedded web UI, SQLite, encrypted secrets, no build step and no cloud dependency.
 - **Built for real use.** Queueing, cancel, retry, session recovery, transcript handoff, MCP management, allowlists, approval rules and reconnect handling.
@@ -258,7 +258,7 @@ nusamation config set routing.defaults '{"replyToOrigin":true,"notifyApprovals":
 # WhatsApp channel
 nusamation whatsapp show
 nusamation whatsapp set -enabled -group-policy mention \
-    -allow-add +628123456789 -allow-remove 999 -stream-edits=false
+    -allow-add +628123456789 -allow-remove 999 -send-typing=false
 ```
 
 Agent and stored-setting mutations may require a restart. Automation changes are picked up by the running scheduler without a restart.

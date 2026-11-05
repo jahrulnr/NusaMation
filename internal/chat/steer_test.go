@@ -97,6 +97,22 @@ func TestSteerWithoutCapabilityQueues(t *testing.T) {
 	}
 }
 
+// A steer must not be injected before the original prompt reached the wire —
+// otherwise it can overtake it.
+func TestInjectableRequiresPromptSent(t *testing.T) {
+	a := newActiveTurn(store.Conversation{ID: "c"}, store.Turn{ID: "t"}, store.Agent{}, store.Message{},
+		context.Background(), func() {})
+	a.session = &agent.Session{}
+	a.promptStarting = true
+	if a.injectable() {
+		t.Fatal("injectable before the prompt was sent")
+	}
+	a.markPromptSent()
+	if !a.injectable() {
+		t.Fatal("not injectable after the prompt was sent")
+	}
+}
+
 func (e *afterToolsEnv) hasText(part string) bool {
 	msgs, err := e.st.ListMessages(context.Background(), e.conv.ID, 0, 0, 500)
 	if err != nil {

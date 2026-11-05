@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jahrulnr/nusamation/internal/channels"
+	appstore "github.com/jahrulnr/nusamation/internal/store"
 )
 
 const SettingsKey = "channel.whatsapp.settings"
@@ -19,23 +20,39 @@ type Settings struct {
 	GroupPolicy    string   `json:"groupPolicy"` // disabled, mention, all
 	ReadReceipts   bool     `json:"readReceipts"`
 	SendTyping     bool     `json:"sendTyping"`
-	StreamEdits    bool     `json:"streamEdits"` // stored only; replies are never edited
 }
 
 func DefaultSettings() Settings {
 	return Settings{
 		Enabled: true, AutoStart: true, AllowedNumbers: []string{},
-		GroupPolicy: "mention", ReadReceipts: true, SendTyping: true, StreamEdits: false,
+		GroupPolicy: "mention", ReadReceipts: true, SendTyping: true,
 	}
 }
 
-func (c *Channel) loadSettings(ctx context.Context) Settings {
+// failClosedSettings is the first-load fallback when stored settings cannot
+// be read: the channel stays disabled rather than opening to everyone.
+func failClosedSettings() Settings {
 	s := DefaultSettings()
-	if err := c.store.GetJSONSetting(ctx, SettingsKey, &s); err != nil {
-		return DefaultSettings()
-	}
-	s.Normalize()
+	s.Enabled = false
+	s.AutoStart = false
 	return s
+}
+
+// loadSettings returns the stored settings. A missing row yields defaults;
+// any other failure (corrupt JSON, DB error) keeps the fallback so the
+// channel does not silently reopen with an empty allowlist.
+func (c *Channel) loadSettings(ctx context.Context, fallback Settings) Settings {
+	s := DefaultSettings()
+	err := c.store.GetJSONSetting(ctx, SettingsKey, &s)
+	if err == nil {
+		s.Normalize()
+		return s
+	}
+	if appstore.IsNotFound(err) {
+		return s
+	}
+	c.log.Warn("could not load WhatsApp settings; keeping previous values", "error", err)
+	return fallback
 }
 
 func (s *Settings) Normalize() {
@@ -149,7 +166,7 @@ func (c *Channel) status() channels.Status {
 		Stats: map[string]any{
 			"paired": c.client != nil && c.client.Store.ID != nil,
 			"qr":     c.qrCode != "", "groupPolicy": c.settings.GroupPolicy,
-			"autoStart": c.settings.AutoStart, "streamEdits": c.settings.StreamEdits,
+			"autoStart": c.settings.AutoStart,
 			"lastError": c.lastErr,
 		},
 	}

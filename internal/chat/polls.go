@@ -102,6 +102,11 @@ func (s *Service) notifyApprovalPoll(ctx context.Context, ch channels.Channel, t
 		channel: ch.Name(), pollMessageID: pollID, conversationID: ap.ConversationID,
 		kind: "approval", approvalID: ap.ID, turnID: ap.TurnID, options: optionIDs, createdAt: time.Now(),
 	})
+	// The approval may have resolved between SendPoll and registration; a
+	// waiter for a decided question can never fire.
+	if stored, err := s.store.GetApproval(ctx, ap.ID); err == nil && stored.Status != "pending" {
+		s.dropPollWaiters(func(w *pollWaiter) bool { return w.approvalID == ap.ID })
+	}
 	return true
 }
 
@@ -149,6 +154,14 @@ func (s *Service) notifyElicitation(a *activeTurn, e Elicitation) {
 						kind: "elicitation", elicitationID: e.ID, turnID: turnID, field: spec.field, options: options,
 						multi: spec.array, arrayField: spec.array, boolField: spec.boolean, createdAt: time.Now(),
 					})
+					// The elicitation may have resolved between SendPoll and
+					// registration; drop the dead waiter.
+					s.mu.Lock()
+					_, live := s.elicitations[e.ID]
+					s.mu.Unlock()
+					if !live {
+						s.dropPollWaiters(func(w *pollWaiter) bool { return w.elicitationID == e.ID })
+					}
 					return
 				}
 				s.log.Warn("failed to send elicitation poll", "channel", ch.Name(), "error", err)

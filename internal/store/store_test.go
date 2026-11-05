@@ -97,8 +97,8 @@ func TestMessagesTurnsAndApprovals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.StartTurn(ctx, turn.ID); err != nil {
-		t.Fatal(err)
+	if started, err := st.StartTurn(ctx, turn.ID); err != nil || !started {
+		t.Fatalf("StartTurn = %v, %v", started, err)
 	}
 	active, err := st.ActiveTurn(ctx, conv.ID)
 	if err != nil || active.ID != turn.ID {
@@ -173,6 +173,51 @@ func TestChannelLinkAndInboundDedupe(t *testing.T) {
 		t.Fatalf("link was not removed: %v", err)
 	}
 	_ = link
+}
+
+func TestMigrateAppliesVersionedUpgrades(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := migrations[len(migrations)-1].version
+	var version int
+	if err := st.DB().QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != latest {
+		t.Fatalf("user_version = %d, want %d", version, latest)
+	}
+	// Simulate a v1 install: drop the v2 index and rewind the version.
+	if _, err := st.DB().Exec(`DROP INDEX idx_uploads_message_id`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().Exec(`PRAGMA user_version = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.DB().QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != latest {
+		t.Fatalf("user_version after upgrade = %d, want %d", version, latest)
+	}
+	for _, name := range []string{"idx_uploads_message_id", "idx_uploads_conversation_id"} {
+		var got string
+		err := st.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, name).Scan(&got)
+		if err != nil || got != name {
+			t.Fatalf("index %s missing after upgrade: %v", name, err)
+		}
+	}
 }
 
 func TestSettingsKV(t *testing.T) {

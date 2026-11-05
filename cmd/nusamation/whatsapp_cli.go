@@ -31,7 +31,6 @@ Set flags:
   -allow-remove N     Remove a number from the allowlist (repeatable)
   -read-receipts=B    Send read receipts
   -send-typing=B      Send typing indicators
-  -stream-edits=B     Edit the ack message instead of sending a final one
 
 Numbers may include +, spaces or JID suffixes; they are normalized to digits.
 An empty allowlist allows anyone who can message the linked account.
@@ -98,7 +97,7 @@ func whatsappShow(args []string) error {
 
 func whatsappSet(args []string) error {
 	fs, dataDir := subFlagSet("whatsapp set", whatsappUsage)
-	var enabled, autoStart, readReceipts, sendTyping, streamEdits bool
+	var enabled, autoStart, readReceipts, sendTyping bool
 	var groupPolicy, allow string
 	var allowAdd, allowRemove stringList
 	fs.BoolVar(&enabled, "enabled", false, "enable channel")
@@ -109,7 +108,6 @@ func whatsappSet(args []string) error {
 	fs.Var(&allowRemove, "allow-remove", "remove number from allowlist (repeatable)")
 	fs.BoolVar(&readReceipts, "read-receipts", false, "send read receipts")
 	fs.BoolVar(&sendTyping, "send-typing", false, "send typing indicators")
-	fs.BoolVar(&streamEdits, "stream-edits", false, "edit ack message for final answer")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -121,7 +119,7 @@ func whatsappSet(args []string) error {
 	mutating := false
 	for _, name := range []string{
 		"enabled", "auto-start", "group-policy", "allow",
-		"allow-add", "allow-remove", "read-receipts", "send-typing", "stream-edits",
+		"allow-add", "allow-remove", "read-receipts", "send-typing",
 	} {
 		mutating = mutating || changed[name]
 	}
@@ -155,9 +153,6 @@ func whatsappSet(args []string) error {
 	}
 	if changed["send-typing"] {
 		s.SendTyping = sendTyping
-	}
-	if changed["stream-edits"] {
-		s.StreamEdits = streamEdits
 	}
 	if changed["allow"] {
 		nums := splitNumbers(allow)

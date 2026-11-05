@@ -88,7 +88,7 @@ whatsmeow integration:
 - QR pairing via `GetQRChannel`, server-side QR PNG with `skip2/go-qrcode`;
 - inbound text/image/document with size limits, sender/group mention detection and group info name cache;
 - allowlist and group policy enforcement before the message reaches the orchestrator;
-- streaming outbound edits (`BuildEdit`) plus final fallback send;
+- composing presence while a turn runs, then a single outbound message when it finishes;
 - read receipts, composing presence, logout/unlink and auto-reconnect.
 
 ### `internal/realtime`
