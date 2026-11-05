@@ -106,9 +106,14 @@ type activeTurn struct {
 	terminals map[string]agent.TerminalUpdate
 	toolCount int
 
-	delivery     channels.Delivery
-	deliveryText string
-	deliveryAt   time.Time
+	deliveryMu       sync.Mutex
+	delivery         channels.Delivery
+	deliveryText     string
+	deliveryAt       time.Time
+	deliverToChannel bool
+	closedSegments   []string
+	segmentsSent     int
+	assistantGap     bool
 
 	outboundMu sync.Mutex
 	outbound   []channels.OutboundMedia
@@ -261,6 +266,12 @@ func (a *activeTurn) appendAssistant(delta string) (text string, first bool, off
 	}
 	offset = a.assistant.Len()
 	first = a.assistant.Len() == 0
+	if a.assistantGap && a.assistant.Len() == 0 {
+		if a.assistantAll.Len() > 0 {
+			a.assistantAll.WriteString("\n\n")
+		}
+		a.assistantGap = false
+	}
 	a.assistant.WriteString(delta)
 	a.assistantAll.WriteString(delta)
 	a.assistantDirty = true

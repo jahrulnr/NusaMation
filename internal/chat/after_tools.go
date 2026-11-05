@@ -12,12 +12,13 @@ import (
 const (
 	deliveryQueue      = "queue"
 	deliveryAfterTools = "after_tools"
+	deliverySteer      = "steer"
 
 	defaultCancelNoticeAfter = 15 * time.Second
 	defaultTurnTimeout       = 6 * time.Hour
 )
 
-var ErrInvalidDelivery = errors.New("delivery must be queue or after_tools")
+var ErrInvalidDelivery = errors.New("delivery must be queue, after_tools, or steer")
 
 // watchTurn re-checks the after_tools boundary whenever the turn changes.
 func (s *Service) watchTurn(a *activeTurn) {

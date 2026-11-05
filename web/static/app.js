@@ -95,7 +95,7 @@
     qrTimer: null,
     renderTimer: null,
     sending: false,
-    sendDelivery: "queue",
+    sendDelivery: "steer",
     scrollPinned: true,
     draftSelections: [],
     draftPreviewSeq: 0,
@@ -119,7 +119,7 @@
   const composers = new Map();
   let composerKey = "";
   function composerFor(key) {
-    if (!composers.has(key)) composers.set(key, { draft: "", attachments: [], sendDelivery: "queue", replyToChannel: false, sending: false });
+    if (!composers.has(key)) composers.set(key, { draft: "", attachments: [], sendDelivery: "steer", replyToChannel: false, sending: false });
     return composers.get(key);
   }
   for (const field of ["draft", "attachments", "sendDelivery", "replyToChannel", "sending"]) {
@@ -1690,14 +1690,16 @@
 
   function sendTitle() {
     if (!isBusyTurn()) return "Send";
-    return S.sendDelivery === "after_tools" ? "Send after tools" : "Add to queue";
+    if (S.sendDelivery === "after_tools") return "Send after tools";
+    if (S.sendDelivery === "queue") return "Add to queue";
+    return "Steer";
   }
 
   function openSendMenu(anchor) {
     if (!isBusyTurn()) return;
     if ($(".send-menu-popover")) { closePopover(); return; }
     const choice = (mode, label, help) => `<button class="menu-item" role="menuitemradio" aria-checked="${S.sendDelivery === mode}" data-action="send-mode" data-mode="${mode}"><span class="popover-main"><b>${label}</b><small>${help}</small></span>${S.sendDelivery === mode ? icon("check", "sm") : ""}</button>`;
-    openPopover(anchor, `<div class="popover-list send-menu" role="menu" aria-label="Send mode">${choice("queue", "Add to queue", "Runs after the current turn finishes")}${choice("after_tools", "Send after tools", "Finish current tools, cancel, then send")}</div>`, { width: 260, class: "composer-popover send-menu-popover" });
+    openPopover(anchor, `<div class="popover-list send-menu" role="menu" aria-label="Send mode">${choice("steer", "Steer", "The agent sees this while it is working")}${choice("queue", "Add to queue", "Runs after the current turn finishes")}${choice("after_tools", "Send after tools", "Finish current tools, cancel, then send")}</div>`, { width: 280, class: "composer-popover send-menu-popover" });
     anchor.setAttribute("aria-expanded", "true");
     const el = $(".send-menu-popover");
     el.addEventListener("keydown", (e) => sendMenuKeys(e, anchor, el));
@@ -2576,8 +2578,8 @@
     const r = S.current.routing || { replyToOrigin: true, mirrorFinal: false, notifyApprovals: true };
     const links = (S.current.links || []).filter((l) => l.channel !== "web");
     openPopover(anchor, `<div class="popover-title">Channel routing</div>
-      <div class="popover-note">The web always receives the full stream. External channels get a concise final answer.</div>
-      <div class="settings-row"><div><div class="label">Reply to origin</div><div class="desc">Send the final answer back to the chat where the turn started.</div></div><button class="switch ${r.replyToOrigin ? "on" : ""}" data-action="toggle-routing" data-key="replyToOrigin"></button></div>
+      <div class="popover-note">The web always receives the full stream. External channels receive each assistant reply.</div>
+      <div class="settings-row"><div><div class="label">Reply to origin</div><div class="desc">Send assistant replies back to the chat where the turn started.</div></div><button class="switch ${r.replyToOrigin ? "on" : ""}" data-action="toggle-routing" data-key="replyToOrigin"></button></div>
       <div class="settings-row"><div><div class="label">Mirror final answers</div><div class="desc">Copy the final answer to every linked chat.</div></div><button class="switch ${r.mirrorFinal ? "on" : ""}" data-action="toggle-routing" data-key="mirrorFinal"></button></div>
       <div class="settings-row"><div><div class="label">Approval notifications</div><div class="desc">Ping the origin chat when a tool needs a decision.</div></div><button class="switch ${r.notifyApprovals ? "on" : ""}" data-action="toggle-routing" data-key="notifyApprovals"></button></div>
       <div class="popover-note" style="margin-top:8px">${links.length ? "Linked: " + links.map((l) => esc(l.channel + (l.displayName ? " · " + l.displayName : ""))).join(", ") : "No external chats linked yet."}</div>`, { width: 340 });
@@ -3100,7 +3102,7 @@
   }
 
   function channelsSettings() {
-    return `${settingsHead("Channels", "Web always sees everything. External channels receive a concise final answer and approval pings.")}
+    return `${settingsHead("Channels", "Web always sees everything. External channels receive each assistant reply, plus approval pings.")}
       <div class="agent-list" id="channel-cards">${S.channels.map(channelCard).join("")}</div>
       <div id="wa-panel" style="margin-top:20px">${whatsappPanel()}</div>`;
   }
@@ -3127,14 +3129,14 @@
       <button class="btn btn-ghost btn-xs" data-action="wa-disconnect" ${!ch.connected && ch.state !== "pairing" ? "disabled" : ""}>Disconnect</button>
       <button class="btn btn-danger btn-xs" data-action="wa-logout" ${!paired ? "disabled" : ""}>Unlink</button></div>
       <div class="settings-desc" style="margin:6px 0 14px">${esc(ch.detail || (paired ? "Linked and ready." : "Link this device to let NusaMation answer WhatsApp messages."))}</div>
-      ${qr ? (pairing ? `<div class="qr-box"><img class="qr-img" src="/api/channels/whatsapp/qr?t=${Date.now()}" alt="WhatsApp pairing QR"><div class="qr-info"><h4>Scan this code</h4><p>Open WhatsApp on your phone → Linked devices → Link a device. The QR refreshes automatically.</p><div class="muted" style="font-size:10.5px">The web control center always receives the full stream. WhatsApp receives only the final digest.</div></div></div>` : `<div class="qr-box"><div class="qr-placeholder"><span class="spinner" style="margin-bottom:8px"></span>Preparing a fresh QR code…</div><div class="qr-info"><h4>Connecting</h4><p>NusaMation is opening a secure WhatsApp web session. A QR code will appear in a moment.</p></div></div>`) : (ch.loggedIn || paired) ? `<div class="qr-box"><div class="tool-icon kind-execute" style="width:44px;height:44px">${icon("message")}</div><div class="grow"><h4 style="margin:0 0 4px">${ch.selfID ? esc(ch.selfID) : "WhatsApp linked"}</h4><p style="margin:0;color:var(--muted);font-size:11.5px">Inbound messages are gatewayed through the routing layer. The agent's full thoughts stay on web.</p></div></div>` : `<div class="qr-box"><div class="tool-icon" style="width:44px;height:44px">${icon("message")}</div><div class="grow"><h4 style="margin:0 0 4px">Not linked</h4><p style="margin:0;color:var(--muted);font-size:11.5px">Press Connect to generate a pairing QR. Already linked? Press Connect to resume.</p></div></div>`}
+      ${qr ? (pairing ? `<div class="qr-box"><img class="qr-img" src="/api/channels/whatsapp/qr?t=${Date.now()}" alt="WhatsApp pairing QR"><div class="qr-info"><h4>Scan this code</h4><p>Open WhatsApp on your phone → Linked devices → Link a device. The QR refreshes automatically.</p><div class="muted" style="font-size:10.5px">The web control center always receives the full stream. WhatsApp receives each assistant reply. Thoughts stay on the web.</div></div></div>` : `<div class="qr-box"><div class="qr-placeholder"><span class="spinner" style="margin-bottom:8px"></span>Preparing a fresh QR code…</div><div class="qr-info"><h4>Connecting</h4><p>NusaMation is opening a secure WhatsApp web session. A QR code will appear in a moment.</p></div></div>`) : (ch.loggedIn || paired) ? `<div class="qr-box"><div class="tool-icon kind-execute" style="width:44px;height:44px">${icon("message")}</div><div class="grow"><h4 style="margin:0 0 4px">${ch.selfID ? esc(ch.selfID) : "WhatsApp linked"}</h4><p style="margin:0;color:var(--muted);font-size:11.5px">Inbound messages are gatewayed through the routing layer. The agent's full thoughts stay on web.</p></div></div>` : `<div class="qr-box"><div class="tool-icon" style="width:44px;height:44px">${icon("message")}</div><div class="grow"><h4 style="margin:0 0 4px">Not linked</h4><p style="margin:0;color:var(--muted);font-size:11.5px">Press Connect to generate a pairing QR. Already linked? Press Connect to resume.</p></div></div>`}
       <div class="settings-section" style="margin-top:20px">
         <div class="settings-title">Behaviour</div>
         <div class="settings-row"><div><div class="label">Enabled</div><div class="desc">Accept inbound messages and send replies.</div></div><button class="switch ${settings.enabled ? "on" : ""}" data-action="wa-toggle" data-key="enabled"></button></div>
         <div class="settings-row"><div><div class="label">Auto-connect on boot</div><div class="desc">Only when a device is already linked.</div></div><button class="switch ${settings.autoStart ? "on" : ""}" data-action="wa-toggle" data-key="autoStart"></button></div>
         <div class="settings-row"><div><div class="label">Read receipts</div><div class="desc">Mark allowed messages as read.</div></div><button class="switch ${settings.readReceipts ? "on" : ""}" data-action="wa-toggle" data-key="readReceipts"></button></div>
         <div class="settings-row"><div><div class="label">Typing indicator</div><div class="desc">Show composing while the agent works.</div></div><button class="switch ${settings.sendTyping ? "on" : ""}" data-action="wa-toggle" data-key="sendTyping"></button></div>
-        <div class="settings-row"><div><div class="label">Progressive edits</div><div class="desc">Edit the “On it…” message as the final answer streams. Disable for strict clients.</div></div><button class="switch ${settings.streamEdits ? "on" : ""}" data-action="wa-toggle" data-key="streamEdits"></button></div>
+        <div class="settings-row"><div><div class="label">Progressive edits</div><div class="desc">Edit the current reply as it streams. Each finished reply is its own message. Disable for strict clients.</div></div><button class="switch ${settings.streamEdits ? "on" : ""}" data-action="wa-toggle" data-key="streamEdits"></button></div>
         <div class="settings-row"><div><div class="label">Group policy</div><div class="desc">Mention requires a direct @mention or a reply to the bot.</div></div><select class="select" style="width:150px" data-change="wa-group"><option value="mention" ${settings.groupPolicy === "mention" ? "selected" : ""}>mention only</option><option value="all" ${settings.groupPolicy === "all" ? "selected" : ""}>all messages</option><option value="disabled" ${settings.groupPolicy === "disabled" ? "selected" : ""}>disabled</option></select></div>
       </div>
       <div class="settings-section">
@@ -3148,12 +3150,12 @@
   function routingSettings() {
     const r = S.routingDefaults || (S.bootstrap && S.bootstrap.routingDefaults) || { replyToOrigin: true, mirrorFinal: false, notifyApprovals: true };
     return `${settingsHead("Routing defaults", "These apply to new conversations. Each conversation can override them from the top bar.")}
-      <div class="settings-row"><div><div class="label">Reply to origin</div><div class="desc">Send the final digest back to the chat where the prompt came from.</div></div><button class="switch ${r.replyToOrigin ? "on" : ""}" data-action="default-routing" data-key="replyToOrigin"></button></div>
+      <div class="settings-row"><div><div class="label">Reply to origin</div><div class="desc">Send assistant replies back to the chat where the prompt came from.</div></div><button class="switch ${r.replyToOrigin ? "on" : ""}" data-action="default-routing" data-key="replyToOrigin"></button></div>
       <div class="settings-row"><div><div class="label">Mirror final answers</div><div class="desc">Copy final answers to every linked channel. Off by default to avoid noise.</div></div><button class="switch ${r.mirrorFinal ? "on" : ""}" data-action="default-routing" data-key="mirrorFinal"></button></div>
       <div class="settings-row"><div><div class="label">Notify approvals</div><div class="desc">Ping the origin chat when a tool needs a decision.</div></div><button class="switch ${r.notifyApprovals ? "on" : ""}" data-action="default-routing" data-key="notifyApprovals"></button></div>
       <div class="settings-section" style="margin-top:26px"><div class="settings-title">How it works</div><div class="settings-card" style="border:1px solid var(--border);border-radius:11px;padding:12px 14px;color:var(--muted);font-size:12px;line-height:1.7">
         <div><b style="color:var(--text-soft)">Web</b> receives every message, thought, tool call, plan, approval and usage update in real time.</div>
-        <div><b style="color:var(--text-soft)">External channels</b> receive an “On it…” message and a final answer. Intermediate reasoning and raw tool output stay private.</div>
+        <div><b style="color:var(--text-soft)">External channels</b> receive each assistant reply as its own message. Thoughts and raw tool output stay on the web.</div>
         <div><b style="color:var(--text-soft)">Approvals</b> are always required in web unless the agent policy or a remembered rule allows the call.</div>
       </div></div>`;
   }
@@ -3888,7 +3890,7 @@
     closeModal(); closeWS();
     S.csrf = ""; S.current = null; S.messages = []; S.conversations = []; S.approvals = []; S.approvalsById.clear();
     composers.clear(); switchComposer("");
-    S.sendDelivery = "queue"; S.turns = {};
+    S.sendDelivery = "steer"; S.turns = {};
     renderLogin();
   }
 

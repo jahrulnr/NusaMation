@@ -79,6 +79,52 @@ func (r InitializeResult) SupportsLogout() bool {
 	return hasRaw(r.AgentCapabilities.Auth.Logout)
 }
 
+// SupportsMidTurn reports Devin's cognition.ai/midTurnPrompts capability:
+// a second session/prompt while a turn is running is injected into that turn.
+func (r InitializeResult) SupportsMidTurn() bool {
+	return metaBool(r.AgentCapabilities.Meta, "cognition.ai/midTurnPrompts")
+}
+
+// SupportsSteering reports the _session/steering extension, advertised either
+// on agentCapabilities._meta or the initialize result's top-level _meta.
+func (r InitializeResult) SupportsSteering() bool {
+	return steeringSupported(r.AgentCapabilities.Meta) || steeringSupported(r.Meta)
+}
+
+func metaBool(raw json.RawMessage, key string) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return false
+	}
+	b, _ := m[key].(bool)
+	return b
+}
+
+func steeringSupported(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return false
+	}
+	body, ok := m["steering"]
+	if !ok {
+		return false
+	}
+	var flag struct {
+		Supported bool `json:"supported"`
+	}
+	if json.Unmarshal(body, &flag) == nil && flag.Supported {
+		return true
+	}
+	var on bool
+	return json.Unmarshal(body, &on) == nil && on
+}
+
 func hasRaw(v json.RawMessage) bool {
 	if len(v) == 0 {
 		return false
@@ -143,6 +189,17 @@ type SessionState struct {
 type PromptRequest struct {
 	SessionID string         `json:"sessionId"`
 	Prompt    []ContentBlock `json:"prompt"`
+}
+
+// SteerResult is the _session/steering response. Outcome is injected,
+// startedNewTurn, promptRequired, or failed.
+type SteerResult struct {
+	Outcome string `json:"outcome"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+func (r SteerResult) Accepted() bool {
+	return r.Outcome == "injected" || r.Outcome == "startedNewTurn"
 }
 
 type PromptResult struct {

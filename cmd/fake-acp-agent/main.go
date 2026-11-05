@@ -30,6 +30,7 @@ type server struct {
 	cancel  chan struct{}
 	values  map[string]any
 	legacy  bool
+	busy    bool
 }
 
 func main() {
@@ -69,7 +70,16 @@ func main() {
 		// cancel always targets the prompt written before it.
 		switch msg.Method {
 		case "session/prompt":
-			go s.handlePrompt(msg, s.newPromptCancel())
+			if os.Getenv("FAKE_ACP_MIDTURN") == "1" && s.isBusy() {
+				go s.steerPrompt(msg)
+				break
+			}
+			s.setBusy(true)
+			cancel := s.newPromptCancel()
+			go func() {
+				defer s.setBusy(false)
+				s.handlePrompt(msg, cancel)
+			}()
 		case "session/cancel":
 			s.closeCancel()
 		default:
@@ -83,6 +93,36 @@ func (s *server) newPromptCancel() chan struct{} {
 	defer s.mu.Unlock()
 	s.cancel = make(chan struct{})
 	return s.cancel
+}
+
+func (s *server) isBusy() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.busy
+}
+
+func (s *server) setBusy(v bool) {
+	s.mu.Lock()
+	s.busy = v
+	s.mu.Unlock()
+}
+
+func (s *server) steerPrompt(msg message) {
+	var p struct {
+		Prompt []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"prompt"`
+	}
+	_ = json.Unmarshal(msg.Params, &p)
+	text := strings.TrimSpace(promptText(p.Prompt))
+	trace("steer " + text)
+	s.update(map[string]any{
+		"sessionUpdate": "agent_message_chunk",
+		"messageId":     "steer",
+		"content":       map[string]any{"type": "text", "text": "saw-steer: " + text},
+	})
+	s.respond(msg.ID, map[string]any{"stopReason": "end_turn"})
 }
 
 func (s *server) closeCancel() {
@@ -99,23 +139,27 @@ func (s *server) closeCancel() {
 func (s *server) handle(msg message) {
 	switch msg.Method {
 	case "initialize":
-		s.respond(msg.ID, map[string]any{
-			"protocolVersion": 1,
-			"agentCapabilities": map[string]any{
-				"loadSession": true,
-				"promptCapabilities": map[string]any{
-					"image": true, "audio": false, "embeddedContext": true,
-				},
-				"mcpCapabilities": map[string]any{"http": true, "sse": true},
-				"sessionCapabilities": map[string]any{
-					"list":   map[string]any{},
-					"delete": map[string]any{},
-					"close":  map[string]any{},
-				},
-				"auth": map[string]any{},
+		caps := map[string]any{
+			"loadSession": true,
+			"promptCapabilities": map[string]any{
+				"image": true, "audio": false, "embeddedContext": true,
 			},
-			"authMethods": []any{},
-			"agentInfo":   map[string]any{"name": "fake-acp", "title": "Fake ACP Agent", "version": "0.1.0"},
+			"mcpCapabilities": map[string]any{"http": true, "sse": true},
+			"sessionCapabilities": map[string]any{
+				"list":   map[string]any{},
+				"delete": map[string]any{},
+				"close":  map[string]any{},
+			},
+			"auth": map[string]any{},
+		}
+		if os.Getenv("FAKE_ACP_MIDTURN") == "1" {
+			caps["_meta"] = map[string]any{"cognition.ai/midTurnPrompts": true}
+		}
+		s.respond(msg.ID, map[string]any{
+			"protocolVersion":   1,
+			"agentCapabilities": caps,
+			"authMethods":       []any{},
+			"agentInfo":         map[string]any{"name": "fake-acp", "title": "Fake ACP Agent", "version": "0.1.0"},
 		})
 	case "session/new":
 		trace("session_new")
@@ -270,6 +314,21 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 	}
 	if strings.Contains(text, "send-media-test") {
 		s.mediaDemo(id, text)
+		return
+	}
+	if strings.Contains(text, "steer-hold") {
+		s.chunk("working ")
+		select {
+		case <-cancel:
+			s.respond(id, map[string]any{"stopReason": "cancelled"})
+		case <-time.After(4 * time.Second):
+			s.chunk("finished ")
+			s.respond(id, map[string]any{"stopReason": "end_turn"})
+		}
+		return
+	}
+	if strings.Contains(text, "segment-reasons-test") {
+		s.reasonsDemo(id)
 		return
 	}
 	s.update(map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{
@@ -577,6 +636,28 @@ func (s *server) askPermission(sessionID string, tool fakeTool) string {
 	case <-time.After(10 * time.Minute):
 		return ""
 	}
+}
+
+func (s *server) reasonsDemo(id json.RawMessage) {
+	reasons := []string{"reason one", "reason two", "reason three"}
+	for i, reason := range reasons {
+		s.update(map[string]any{
+			"sessionUpdate": "agent_message_chunk",
+			"messageId":     fmt.Sprintf("reason-%d", i+1),
+			"content":       map[string]any{"type": "text", "text": reason},
+		})
+		if i < len(reasons)-1 {
+			s.update(map[string]any{
+				"sessionUpdate": "tool_call",
+				"toolCallId":    fmt.Sprintf("seg-tool-%d", i+1),
+				"title":         "Step",
+				"name":          "read",
+				"kind":          "read",
+				"status":        "completed",
+			})
+		}
+	}
+	s.respond(id, map[string]any{"stopReason": "end_turn"})
 }
 
 func (s *server) update(update map[string]any) {

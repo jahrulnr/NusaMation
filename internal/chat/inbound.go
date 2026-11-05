@@ -154,6 +154,9 @@ func (s *Service) HandleInbound(ctx context.Context, in channels.Inbound) error 
 		Attachments:    attachments,
 		Channel:        in.Channel,
 		OriginRef:      linkRefFromInbound(in),
+		// A message while a turn is running has to reach the agent now.
+		// Queueing hides a correction until the turn finishes.
+		Delivery: deliverySteer,
 	})
 	if err != nil {
 		// Nothing was queued — release the dedupe claim so a channel retry
@@ -451,7 +454,7 @@ Commands:
 /approve <id> — allow a pending tool call
 /deny <id> — reject a pending tool call
 
-Plain messages are sent to the agent. In groups, mention the bot based on the channel's group policy. The web control center always shows the complete stream, including thoughts and tool calls; chat channels receive the final answer only.`
+Plain messages are sent to the agent. A message sent while the agent is working is steered into that turn, so a correction is visible immediately. In groups, mention the bot based on the channel's group policy. The web control center shows thoughts and tool calls; chat channels receive each assistant reply as it finishes.`
 }
 
 func shortErr(err error) string {

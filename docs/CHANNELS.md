@@ -114,7 +114,7 @@ When enabled, allowed messages are marked read after the orchestrator accepts th
 
 ### Streaming edits
 
-WhatsApp supports message edits. With `streamEdits=true`, NusaMation sends an “On it…” message and progressively edits it with the final answer. If editing fails (old client, message age), it sends a fresh final message. Disable this for strict clients.
+WhatsApp supports message edits. With `streamEdits=true`, NusaMation sends an “On it…” message and edits it with the assistant's current reply. Each reply the agent finishes is its own WhatsApp message, so a later reply is not left inside the first edit. If editing fails, that reply is sent as a new message. Disable streaming edits for strict clients.
 
 ### Outbound digest
 

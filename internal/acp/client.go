@@ -142,6 +142,22 @@ func (c *Client) Prompt(ctx context.Context, sessionID string, prompt []ContentB
 	return res, err
 }
 
+// Steer injects prompt into the running turn via the _session/steering extension.
+// idleBehavior promptRequired leaves the input with the caller when no turn can
+// accept it, instead of the adapter starting a turn of its own.
+func (c *Client) Steer(ctx context.Context, sessionID string, prompt []ContentBlock) (SteerResult, error) {
+	var res SteerResult
+	params := map[string]any{
+		"sessionId": sessionID,
+		"prompt":    prompt,
+		"_meta": map[string]any{
+			"steering": map[string]any{"idleBehavior": "promptRequired"},
+		},
+	}
+	err := c.proc.Call(ctx, "_session/steering", params, &res)
+	return res, err
+}
+
 func (c *Client) Cancel(sessionID string) error {
 	return c.proc.Notify("session/cancel", map[string]any{"sessionId": sessionID})
 }

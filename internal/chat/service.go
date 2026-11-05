@@ -143,7 +143,10 @@ type SubmitInput struct {
 	OriginRef      string                  `json:"originRef,omitempty"`
 	ReplyToChannel bool                    `json:"replyToChannel,omitempty"`
 	ReplyChannel   string                  `json:"replyChannel,omitempty"`
-	// Delivery is "" or "queue" (default FIFO) or "after_tools".
+	// Delivery is "" or "queue" (FIFO), "after_tools", or "steer".
+	// steer injects the text into the running turn when the agent accepts
+	// mid-turn input. A channel message that cannot be steered waits until
+	// the running turn's tools finish, then cancels that turn and sends.
 	Delivery        string `json:"delivery,omitempty"`
 	AutomationRunID string `json:"-"`
 }
@@ -155,7 +158,7 @@ type messagePayload struct {
 
 func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, store.Turn, error) {
 	switch in.Delivery {
-	case "", deliveryQueue, deliveryAfterTools:
+	case "", deliveryQueue, deliveryAfterTools, deliverySteer:
 	default:
 		return store.Message{}, store.Turn{}, ErrInvalidDelivery
 	}
@@ -180,11 +183,6 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 	if !ag.Enabled {
 		return store.Message{}, store.Turn{}, fmt.Errorf("agent %q is disabled", ag.Name)
 	}
-	var target *activeTurn
-	if in.Delivery == deliveryAfterTools {
-		target = s.activeFor(conv.ID)
-	}
-
 	channel := strings.TrimSpace(in.Channel)
 	if channel == "" {
 		channel = "web"
@@ -202,6 +200,18 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 	uploads, err := s.loadUploads(ctx, conv.ID, in.Attachments)
 	if err != nil {
 		return store.Message{}, store.Turn{}, err
+	}
+	if in.Delivery == deliverySteer && len(uploads) == 0 {
+		if msg, turn, handled, err := s.trySteer(ctx, conv, text, channel, originChannel, originRef); err != nil || handled {
+			return msg, turn, err
+		}
+	}
+	if in.Delivery == deliverySteer && channel != "web" && s.activeFor(conv.ID) != nil {
+		in.Delivery = deliveryAfterTools
+	}
+	var target *activeTurn
+	if in.Delivery == deliveryAfterTools {
+		target = s.activeFor(conv.ID)
 	}
 	meta := map[string]any{}
 	if len(uploads) > 0 {

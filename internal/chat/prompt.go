@@ -459,18 +459,40 @@ func (s *Service) startDelivery(a *activeTurn) {
 	if s.deliveryChannel(a) == "web" {
 		return
 	}
+	a.mu.Lock()
+	a.deliverToChannel = true
+	a.mu.Unlock()
+	d := s.openDelivery(a, "On it…")
+	if d != nil {
+		a.setDelivery(d)
+	}
+}
+
+func (s *Service) openDelivery(a *activeTurn, text string) channels.Delivery {
+	ch, target, ok := s.originChannel(a)
+	if !ok {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	d, err := ch.Begin(ctx, target, text)
+	if err != nil {
+		s.log.Warn("failed to start channel delivery", "channel", ch.Name(), "error", err)
+		return nil
+	}
+	return d
+}
+
+func (s *Service) notifyOrigin(a *activeTurn, text string) {
 	ch, target, ok := s.originChannel(a)
 	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	d, err := ch.Begin(ctx, target, "On it…")
-	if err != nil {
-		s.log.Warn("failed to start channel delivery", "channel", ch.Name(), "error", err)
-		return
+	if err := ch.Notify(ctx, target, text); err != nil {
+		s.log.Warn("failed to send channel message", "channel", ch.Name(), "error", err)
 	}
-	a.setDelivery(d)
 }
 
 func (s *Service) originChannel(a *activeTurn) (channels.Channel, channels.Target, bool) {

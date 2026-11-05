@@ -315,7 +315,7 @@ func TestUnknownDeliveryRejectedBeforeWrites(t *testing.T) {
 	}
 	before := count()
 	_, _, err := e.svc.Submit(context.Background(), SubmitInput{
-		ConversationID: e.conv.ID, Text: "hello", Channel: "web", Delivery: "steer",
+		ConversationID: e.conv.ID, Text: "hello", Channel: "web", Delivery: "sideways",
 	})
 	if err != ErrInvalidDelivery {
 		t.Fatalf("err = %v", err)

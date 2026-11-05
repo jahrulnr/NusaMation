@@ -245,6 +245,38 @@ func (m *Manager) Prompt(ctx context.Context, s *Session, blocks []acp.ContentBl
 	return r.Prompt(ctx, s, blocks)
 }
 
+// InjectionMode reports how a live agent accepts input during a running turn.
+// midTurn means a second session/prompt is injected (Devin). steering means
+// the _session/steering extension is advertised (Codex, Claude).
+func (m *Manager) InjectionMode(agentID string) (midTurn, steering bool) {
+	r := m.runtimeFor(agentID)
+	if r == nil {
+		return false, false
+	}
+	r.mu.Lock()
+	c := r.client
+	r.mu.Unlock()
+	if c == nil || !c.Alive() {
+		return false, false
+	}
+	init := c.InitializeResult()
+	return init.SupportsMidTurn(), init.SupportsSteering()
+}
+
+func (m *Manager) Steer(ctx context.Context, s *Session, blocks []acp.ContentBlock) (acp.SteerResult, error) {
+	r := m.runtimeFor(s.agentID)
+	if r == nil {
+		return acp.SteerResult{}, errors.New("agent runtime is not running")
+	}
+	r.mu.Lock()
+	c := r.client
+	r.mu.Unlock()
+	if c == nil || !c.Alive() {
+		return acp.SteerResult{}, errors.New("agent is not running")
+	}
+	return c.Steer(ctx, s.ACPID(), blocks)
+}
+
 func (m *Manager) Cancel(ctx context.Context, s *Session) error {
 	r := m.runtimeFor(s.agentID)
 	if r == nil {

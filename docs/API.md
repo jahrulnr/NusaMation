@@ -53,7 +53,7 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | `DELETE` | `/conversations/{id}` | cancels a live turn, then deletes |
 | `DELETE` | `/conversations` | `{confirm:"DELETE"}` erases all conversations |
 | `GET` | `/conversations/{id}/messages?after=&before=&limit=` | pagination by `seq` |
-| `POST` | `/conversations/{id}/messages` | `{text, attachments:[{uploadId}], replyToChannel?, replyChannel?, delivery?: "queue" \| "after_tools"}` → `{message, turn}`; `delivery` defaults to `queue`, unknown values return 400 before anything is written |
+| `POST` | `/conversations/{id}/messages` | `{text, attachments:[{uploadId}], replyToChannel?, replyChannel?, delivery?: "queue" \| "after_tools" \| "steer"}` → `{message, turn}`; `delivery` defaults to `queue`, unknown values return 400 before anything is written |
 | `POST` | `/conversations/{id}/cancel` | cancels running or first queued turn |
 | `POST` | `/conversations/{id}/retry` | re-queues the last user message |
 | `POST` | `/conversations/{id}/prepare` | starts or resumes the ACP session and returns live configuration options |
@@ -162,6 +162,6 @@ The socket sends protocol pings every 25s. Clients may send `{"type":"ping"}` fo
 
 ## Idempotency and queues
 
-`POST /messages` always creates a new turn. While a turn is running, prompts are queued; the response includes `turn.queuePosition`. `cancel` cancels the running turn or the first queued turn when idle. `retry` reuses the last user message rather than duplicating a bubble.
+`POST /messages` creates a new turn, except `delivery: "steer"` while a turn is running and the agent accepts mid-turn input: that message is injected into the running turn and the response's `turn` is the one already running. A web steer the agent cannot accept waits in the queue. A channel steer the agent cannot accept, while a turn is running, waits until that turn's tools finish, cancels it, then sends. `cancel` cancels the running turn or the first queued turn when idle. `retry` reuses the last user message rather than duplicating a bubble.
 
 Queued inputs run in strict FIFO order; no input is reordered. `delivery: "after_tools"` only changes the running turn: if the new input is the queue head and a turn is running, that turn is cancel-and-resend, not native steering. The running turn is asked to stop once every reported tool is `completed` or `failed` (or immediately if it reported no tools), and only after the agent answers the cancelled prompt does the queue advance. Pending approvals are not skipped. The input's message metadata carries `delivery: "after_tools"` and, when armed, `interruptTurnId`. If the agent does not answer within 15 seconds, the conversation shows one notice and the queue keeps waiting. Tool states are best-effort reports from the agent, so the agent may start a new tool between a report and the cancel.
