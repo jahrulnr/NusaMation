@@ -169,6 +169,17 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(archived, pinned DESC, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_conversations_agent ON conversations(agent_id);
 
+CREATE TABLE IF NOT EXISTS conversation_acp_sessions (
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL,
+  agent_slug TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  PRIMARY KEY (conversation_id, agent_id, session_id)
+);
+INSERT OR IGNORE INTO conversation_acp_sessions (conversation_id, agent_id, agent_slug, session_id)
+SELECT c.id, c.agent_id, a.slug, c.acp_session_id FROM conversations c
+JOIN agents a ON a.id = c.agent_id WHERE c.acp_session_id <> '';
+
 CREATE TABLE IF NOT EXISTS channel_links (
   id TEXT PRIMARY KEY,
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -266,6 +277,22 @@ CREATE TABLE IF NOT EXISTS inbound_messages (
   created_at INTEGER NOT NULL,
   PRIMARY KEY(channel, external_id, thread_id)
 );
+
+CREATE TABLE IF NOT EXISTS whatsapp_messages (
+  chat_jid TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  sender_jid TEXT NOT NULL DEFAULT '',
+  sender_name TEXT NOT NULL DEFAULT '',
+  chat_name TEXT NOT NULL DEFAULT '',
+  timestamp_ms INTEGER NOT NULL,
+  from_me INTEGER NOT NULL DEFAULT 0,
+  is_group INTEGER NOT NULL DEFAULT 0,
+  text TEXT NOT NULL DEFAULT '',
+  raw_json TEXT NOT NULL DEFAULT '{}',
+  is_live INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (chat_jid, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_time ON whatsapp_messages(timestamp_ms DESC);
 
 CREATE TABLE IF NOT EXISTS uploads (
   id TEXT PRIMARY KEY,

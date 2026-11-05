@@ -8,13 +8,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/jahrulnr/nusamation"
 )
 
 const (
 	DefaultAddr = "127.0.0.1:8787"
 	AppName     = "NusaMation"
-	Version     = "0.1.0"
 )
+
+var Version = nusamation.Version
 
 type Config struct {
 	Addr            string

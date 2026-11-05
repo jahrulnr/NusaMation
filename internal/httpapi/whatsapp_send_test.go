@@ -23,6 +23,10 @@ type structuredFake struct {
 	err error
 }
 
+func (f *structuredFake) UserInfo(_ context.Context, jid string) (map[string]any, error) {
+	return map[string]any{"jid": jid, "found": true}, f.err
+}
+
 func (*structuredFake) Name() string                { return "whatsapp" }
 func (*structuredFake) Label() string               { return "WhatsApp" }
 func (*structuredFake) Start(context.Context) error { return nil }
@@ -30,6 +34,37 @@ func (*structuredFake) Stop() error                 { return nil }
 func (*structuredFake) Status() channels.Status     { return channels.Status{} }
 func (*structuredFake) Begin(context.Context, channels.Target, string) (channels.Delivery, error) {
 	return nil, errors.New("not implemented")
+}
+
+func TestWhatsAppUserEndpoint(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	mgr := channels.NewManager(nil, nil)
+	mgr.Register(&structuredFake{})
+	s, err := New(Options{Store: st, Channels: mgr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := auth.CreateSession(context.Background(), st, "test", "test", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/channels/whatsapp/user?jid=123%40s.whatsapp.net", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	response := httptest.NewRecorder()
+	s.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"jid":"123@s.whatsapp.net"`) {
+		t.Fatalf("status %d body %s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/channels/whatsapp/user?jid=123%40s.whatsapp.net", nil)
+	response = httptest.NewRecorder()
+	s.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status %d", response.Code)
+	}
 }
 func (*structuredFake) Notify(context.Context, channels.Target, string) error { return nil }
 func (f *structuredFake) SendStructured(_ context.Context, req whatsapp.OutboundRequest) (string, error) {

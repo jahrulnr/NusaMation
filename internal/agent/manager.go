@@ -279,6 +279,29 @@ func (m *Manager) ResetConversation(ctx context.Context, conversationID string) 
 	m.mu.Unlock()
 }
 
+// DeleteStoredSession uses the original agent, or a reconnected agent with the
+// same slug if the original configuration has been removed.
+func (m *Manager) DeleteStoredSession(ctx context.Context, session store.ConversationACPSession) error {
+	ag, err := m.store.GetAgent(ctx, session.AgentID)
+	if store.IsNotFound(err) {
+		ag, err = m.store.GetAgentBySlug(ctx, session.AgentSlug)
+	}
+	if err != nil {
+		return err
+	}
+	if !ag.Enabled {
+		return fmt.Errorf("agent %q is disabled", ag.Name)
+	}
+	client, err := m.ensureRuntime(ag).ensureClient(ctx)
+	if err != nil {
+		return err
+	}
+	if !client.Capabilities().SupportsDelete() {
+		return fmt.Errorf("agent %q does not support session/delete", ag.Name)
+	}
+	return client.DeleteSession(ctx, session.SessionID)
+}
+
 func (m *Manager) runtimeFor(agentID string) *Runtime {
 	m.mu.Lock()
 	defer m.mu.Unlock()

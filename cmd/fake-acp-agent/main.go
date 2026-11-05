@@ -163,10 +163,12 @@ func (s *server) handle(msg message) {
 		s.respond(msg.ID, map[string]any{})
 		s.update(map[string]any{"sessionUpdate": "current_mode_update", "currentModeId": req.ModeID})
 	case "session/close":
+		trace("session_close")
 		s.respond(msg.ID, map[string]any{})
 	case "session/list":
 		s.respond(msg.ID, map[string]any{"sessions": []any{map[string]any{"sessionId": "fake-session", "title": "Fake session"}}})
 	case "session/delete":
+		trace("session_delete")
 		s.respond(msg.ID, map[string]any{})
 
 	}

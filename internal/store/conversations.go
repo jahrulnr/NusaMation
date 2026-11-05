@@ -148,8 +148,41 @@ func (s *Store) EnsureConversationForAgent(ctx context.Context, agentID, cwd str
 }
 
 func (s *Store) SetConversationACPSession(ctx context.Context, id, sessionID string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE conversations SET acp_session_id=?,updated_at=? WHERE id=?`, sessionID, nowMS(), id)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if sessionID != "" {
+		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO conversation_acp_sessions (conversation_id,agent_id,agent_slug,session_id)
+			SELECT c.id,c.agent_id,a.slug,? FROM conversations c JOIN agents a ON a.id=c.agent_id WHERE c.id=?`, sessionID, id)
+		if err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE conversations SET acp_session_id=?,updated_at=? WHERE id=?`, sessionID, nowMS(), id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type ConversationACPSession struct{ AgentID, AgentSlug, SessionID string }
+
+func (s *Store) ListConversationACPSessions(ctx context.Context, id string) ([]ConversationACPSession, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT agent_id,agent_slug,session_id FROM conversation_acp_sessions WHERE conversation_id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sessions []ConversationACPSession
+	for rows.Next() {
+		var session ConversationACPSession
+		if err := rows.Scan(&session.AgentID, &session.AgentSlug, &session.SessionID); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, rows.Err()
 }
 
 func (s *Store) SetConversationStatus(ctx context.Context, id, status string) error {

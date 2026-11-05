@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/jahrulnr/nusamation/internal/config"
 	"github.com/jahrulnr/nusamation/internal/events"
 )
 
@@ -105,7 +106,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 
 	hello, _ := json.Marshal(events.New("hello", "", map[string]any{
-		"version": "0.1.0", "connectedAt": time.Now().UnixMilli(),
+		"version": config.Version, "connectedAt": time.Now().UnixMilli(),
 	}))
 	c.send <- hello
 

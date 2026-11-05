@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/jahrulnr/nusamation/internal/config"
 )
 
 type ClientConfig struct {
@@ -29,7 +31,7 @@ func Start(ctx context.Context, cfg ClientConfig, handler Handler) (*Client, err
 		cfg.Log = slog.Default()
 	}
 	if cfg.ClientInfo.Name == "" {
-		cfg.ClientInfo = Implementation{Name: "nusamation", Title: "NusaMation", Version: "0.1.0"}
+		cfg.ClientInfo = Implementation{Name: "nusamation", Title: "NusaMation", Version: config.Version}
 	}
 	c := &Client{cfg: cfg, log: cfg.Log.With("acp", "client"), start: time.Now()}
 	c.proc = NewProcess(cfg.ProcessConfig, handler)

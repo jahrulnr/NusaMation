@@ -18,6 +18,9 @@ Subcommands:
   show                        Print current settings (JSON, merged over defaults)
   set [flags]                 Update settings; only given flags are changed
   send [-addr HOST:PORT]       Send a JSON request read from stdin via the running server
+  search [flags] [text]       Search indexed messages (newest first, JSON)
+  contacts [flags] [text]     Search locally synced WhatsApp contacts (JSON)
+  user [flags] JID            Get user information via the running server
 
 Set flags:
   -enabled=B          Enable the WhatsApp channel
@@ -49,6 +52,12 @@ func whatsappCmd(args []string) error {
 		return whatsappSet(args[1:])
 	case "send":
 		return whatsappSend(args[1:])
+	case "search":
+		return whatsappSearch(args[1:])
+	case "contacts":
+		return whatsappContacts(args[1:])
+	case "user":
+		return whatsappUser(args[1:])
 	case "-h", "--help", "-help", "help":
 		fmt.Print(whatsappUsage)
 		return flag.ErrHelp

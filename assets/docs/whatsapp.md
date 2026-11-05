@@ -49,6 +49,37 @@ WhatsApp polls when they fit (≤12 options); otherwise approvals use the
 `/approve <id>` text flow and questions point to the web UI. Multi-select answers settle ~15 s after the last vote. Only the
 user who started the turn may vote — other group members' taps are ignored.
 
+## Searching messages and contacts
+
+Use the CLI for WhatsApp lookup, including when the request originates in the
+web chat. Commands return JSON and work without ACP tool injection. Add
+`-data-dir DIR` if this instance does not use the default data directory.
+
+```sh
+nusamation whatsapp search 'upgrade php'
+nusamation whatsapp search -n 50 -chat '123@g.us' 'upgrade php'
+nusamation whatsapp search -n 50 -cursor 'TIMESTAMP:ROWID' 'upgrade php'
+nusamation whatsapp contacts 'Alice'
+nusamation whatsapp contacts -n 50 -page 2 'Alice'
+nusamation whatsapp user '123@s.whatsapp.net'
+```
+
+Search is a case-insensitive substring match over indexed message text, newest
+first. Reuse the exact `nextCursor` from the previous JSON result together with
+the same query and filters to fetch the next page. A missing `nextCursor` means
+there are no more results. `-raw` includes the stored message payload. Contacts
+searches the locally synced WhatsApp contact cache; `user` asks WhatsApp via the
+running NusaMation connection and includes the cached contact entry. User info
+depends on WhatsApp availability and what the account can access.
+
+The index captures messages from all chats independently of the allow list and
+group response settings. It also imports history sync received from WhatsApp;
+historical messages never start agent turns. WhatsApp may not send older history
+to an already linked device, so search results are not a complete historical
+archive. The index includes text, metadata and the message payload, but does not
+download media merely to make it searchable. Reconnecting does not guarantee
+that WhatsApp will resend earlier history.
+
 ## Multiple ACP agents
 
 In a WhatsApp chat, send `/agent` to list enabled agents and their slugs, then

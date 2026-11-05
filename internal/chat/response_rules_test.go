@@ -23,6 +23,23 @@ type fakePlainChannel struct{ fakeMediaChannel }
 
 func (c *fakePlainChannel) Name() string { return "fakeplain" }
 
+type fakeWhatsAppLookupChannel struct{ fakeMediaChannel }
+
+func (c *fakeWhatsAppLookupChannel) Name() string { return "whatsapp" }
+
+func TestWhatsAppLookupGuidanceInWebTurns(t *testing.T) {
+	svc := rulesTestService(t)
+	svc.channels.Register(&fakeWhatsAppLookupChannel{})
+	a := rulesTurn("web", true)
+	blocks := svc.withChannelRules(a, svc.buildPrompt(a, ""))
+	for _, block := range blocks {
+		if strings.Contains(block.Text, "WhatsApp message search") && strings.Contains(block.Text, "AGENTS.md") {
+			return
+		}
+	}
+	t.Fatal("web turn missing WhatsApp lookup guidance")
+}
+
 func rulesTestService(t *testing.T) *Service {
 	t.Helper()
 	dir := t.TempDir()

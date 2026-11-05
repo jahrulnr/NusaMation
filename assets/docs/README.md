@@ -16,7 +16,7 @@ resolved paths for this install.
 
 | Path | Purpose |
 |---|---|
-| `nusamation.db` | SQLite: agents, conversations, approvals, automation jobs and run history, settings |
+| `nusamation.db` | SQLite: agents, conversations, WhatsApp message index, approvals, automation jobs and run history, settings |
 | `whatsapp.db` | whatsmeow device/session store |
 | `secret.key` | AES-GCM key protecting agent/MCP env secrets |
 | `workspace/` | Shared agent working directory (default session cwd) |
@@ -30,7 +30,7 @@ resolved paths for this install.
 |---|---|
 | Add/configure/remove agent CLIs, auth, policies, models | [agents.md](agents.md) |
 | Schedule prompts, inspect runs, pause or edit automations | [automations.md](automations.md) |
-| Pair WhatsApp, set allowlist/group policy/behavior | [whatsapp.md](whatsapp.md) |
+| Pair WhatsApp, search messages or contacts, set channel behavior | [whatsapp.md](whatsapp.md) |
 | Read or change any stored setting key | [settings.md](settings.md) |
 | Drive NusaMation over HTTP instead of the CLI | [api.md](api.md) |
 | Something is broken — logs, common failures | [troubleshooting.md](troubleshooting.md) |

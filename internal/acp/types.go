@@ -68,7 +68,12 @@ func (r InitializeResult) SupportsResume() bool {
 	return hasRaw(r.AgentCapabilities.SessionCapabilities.Resume)
 }
 func (r InitializeResult) SupportsClose() bool {
-	return hasRaw(r.AgentCapabilities.SessionCapabilities.Close)
+	v := r.AgentCapabilities.SessionCapabilities.Close
+	return len(v) > 0 && string(v) != "null" && string(v) != "false"
+}
+func (r InitializeResult) SupportsDelete() bool {
+	v := r.AgentCapabilities.SessionCapabilities.Delete
+	return len(v) > 0 && string(v) != "null" && string(v) != "false"
 }
 func (r InitializeResult) SupportsLogout() bool {
 	return hasRaw(r.AgentCapabilities.Auth.Logout)

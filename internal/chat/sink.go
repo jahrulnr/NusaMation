@@ -28,7 +28,9 @@ func (s *Service) SessionCreated(sess *agent.Session, configs json.RawMessage, r
 		return
 	}
 	if sess.ACPID() != "" {
-		_ = s.store.SetConversationACPSession(ctx, conv.ID, sess.ACPID())
+		if err := s.store.SetConversationACPSession(ctx, conv.ID, sess.ACPID()); err != nil {
+			s.log.Error("could not record ACP session", "conversation", conv.ID, "agent", sess.AgentID(), "session", sess.ACPID(), "error", err)
+		}
 	}
 	if len(configs) > 0 {
 		s.persistConfigs(ctx, conv, configs)

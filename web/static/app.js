@@ -37,6 +37,7 @@
 
   const S = {
     authInitialized: false,
+    appVersion: "",
     csrf: "",
     me: null,
     bootstrap: null,
@@ -462,6 +463,7 @@
     try {
       const st = await api("/auth/status");
       S.authInitialized = !!st.initialized;
+      S.appVersion = st.version || "";
       if (st.authenticated && st.csrf) {
         S.csrf = st.csrf;
         await startApp();
@@ -513,7 +515,7 @@
               </div>
               <button class="btn btn-primary btn-block" type="submit" data-login-submit>Sign in ${icon("chevron-right", "sm")}</button>
             </form>
-            <div class="login-foot">NusaMation ${esc((S.bootstrap && S.bootstrap.app && S.bootstrap.app.version) || "0.1.0")} · local-first · your data stays here</div>
+            <div class="login-foot">NusaMation${S.appVersion ? ` ${esc(S.appVersion)}` : ""} · local-first · your data stays here</div>
           </div>
         </div>
       </div>`;
@@ -583,6 +585,7 @@
 
   function applyBootstrap(data) {
     S.bootstrap = data;
+    S.appVersion = data.app?.version || S.appVersion;
     S.agents = data.agents || [];
     S.mcp = data.mcp || {};
     S.channels = data.channels || [];
@@ -3159,7 +3162,7 @@
     const app = (S.bootstrap && S.bootstrap.app) || {};
     return `${settingsHead("Account", "Single-admin local control center.")}
       <div class="about-grid">
-        <div class="about-item"><div class="k">Version</div><div class="v">${esc(app.version || "0.1.0")}</div></div>
+        <div class="about-item"><div class="k">Version</div><div class="v">${esc(app.version || S.appVersion || "unknown")}</div></div>
         <div class="about-item"><div class="k">Mode</div><div class="v">${app.dev ? "Development" : "Local-first"}</div></div>
         <div class="about-item"><div class="k">Public URL</div><div class="v">${esc(app.publicUrl || "not configured")}</div></div>
         <div class="about-item"><div class="k">WhatsApp</div><div class="v">${app.whatsappDisabled ? "disabled" : "available"}</div></div>
@@ -3431,7 +3434,7 @@
 
   async function deleteAgent(id) {
     const a = agentById(id);
-    confirmModal("Delete agent?", `Remove ${a?.name || "this agent"} from NusaMation. Its conversations must be deleted first.`, async () => {
+    confirmModal("Delete agent?", `Remove ${a?.name || "this agent"} from NusaMation. Its current conversations must be deleted first. Sessions in conversations that switched agents may remain in ACP storage when those conversations are archived or deleted. Reconnecting an agent with the same slug allows NusaMation to attempt their deletion.`, async () => {
       try {
         await api(`/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
         const d = await api("/agents");

@@ -526,6 +526,10 @@ func (s *Service) UpdateConversation(ctx context.Context, id string, patch Conve
 				time.Sleep(100 * time.Millisecond)
 			}
 		}
+		if s.activeFor(id) != nil {
+			return conv, ErrBusy
+		}
+		s.agents.ResetConversation(ctx, id)
 	}
 	conv, err = s.store.UpdateConversation(ctx, id, store.ConversationUpdate{
 		Title: patch.Title, Pinned: patch.Pinned, Archived: patch.Archived, Routing: patch.Routing,
@@ -592,6 +596,9 @@ func (s *Service) SwitchAgent(ctx context.Context, conversationID, agentID strin
 }
 
 func (s *Service) DeleteConversation(ctx context.Context, id string) error {
+	if _, err := s.store.GetConversation(ctx, id); err != nil {
+		return err
+	}
 	if a := s.activeFor(id); a != nil {
 		_ = s.Cancel(ctx, id)
 		for i := 0; i < 100; i++ {
@@ -605,6 +612,18 @@ func (s *Service) DeleteConversation(ctx context.Context, id string) error {
 		}
 	}
 	s.agents.ResetConversation(ctx, id)
+	sessions, err := s.store.ListConversationACPSessions(ctx, id)
+	if err != nil {
+		return err
+	}
+	for _, session := range sessions {
+		deleteCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		err := s.agents.DeleteStoredSession(deleteCtx, session)
+		cancel()
+		if err != nil {
+			s.log.Warn("could not delete ACP session", "conversation", id, "agent", session.AgentID, "agent_slug", session.AgentSlug, "session", session.SessionID, "error", err)
+		}
+	}
 	uploads, _ := s.store.ListUploadsForConversation(ctx, id)
 	if err := s.store.DeleteConversation(ctx, id); err != nil {
 		return err

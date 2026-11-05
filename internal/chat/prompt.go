@@ -338,6 +338,12 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 // withChannelRules appends the delivery surface's formatting rules as the
 // last prompt block so it is the freshest instruction in the turn.
 func (s *Service) withChannelRules(a *activeTurn, blocks []acp.ContentBlock) []acp.ContentBlock {
+	if s.channels != nil {
+		if _, ok := s.channels.Get("whatsapp"); ok && s.workspace != "" {
+			guide := filepath.Join(s.workspace, "AGENTS.md")
+			blocks = append(blocks, acp.ContentBlock{Type: "text", Text: "<system-reminder>\nFor WhatsApp message search or contact lookup, use the NusaMation CLI described in " + guide + ". Search is paginated and covers captured messages and available history.\n</system-reminder>"})
+		}
+	}
 	if a.turn.OriginChannel == "whatsapp" {
 		var origin struct {
 			ExternalID string `json:"externalId"`

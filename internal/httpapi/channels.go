@@ -41,6 +41,27 @@ func (s *Server) handleWhatsAppSend(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"messageId": id})
 }
 
+func (s *Server) handleWhatsAppUser(w http.ResponseWriter, r *http.Request) {
+	ch, ok := s.channelByName("whatsapp")
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "WhatsApp channel not found.")
+		return
+	}
+	lookup, ok := ch.(interface {
+		UserInfo(context.Context, string) (map[string]any, error)
+	})
+	if !ok {
+		writeError(w, http.StatusBadRequest, "not_supported", "WhatsApp user lookup is unavailable.")
+		return
+	}
+	result, err := lookup.UserInfo(r.Context(), r.URL.Query().Get("jid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "lookup_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"channels": s.channelStatuses()})
 }

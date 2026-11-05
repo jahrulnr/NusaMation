@@ -458,7 +458,12 @@ func (c *Channel) publish() {
 func (c *Channel) handleEvent(evt any) {
 	switch v := evt.(type) {
 	case *events.Message:
+		if err := c.indexMessage(context.Background(), v, "", true); err != nil {
+			c.log.Warn("could not index WhatsApp message", "error", err)
+		}
 		c.enqueueMessage(v)
+	case *events.HistorySync:
+		go c.indexHistory(v)
 	case *events.Connected:
 		c.mu.Lock()
 		c.state = "connected"
@@ -541,10 +546,12 @@ func (c *Channel) sendText(ctx context.Context, chat types.JID, text string) (ty
 	if client == nil || !client.IsLoggedIn() {
 		return "", errors.New("WhatsApp is not connected")
 	}
-	resp, err := client.SendMessage(ctx, chat, &waE2E.Message{Conversation: proto.String(text)})
+	msg := &waE2E.Message{Conversation: proto.String(text)}
+	resp, err := client.SendMessage(ctx, chat, msg)
 	if err != nil {
 		return "", err
 	}
+	c.indexSent(ctx, chat, resp, msg, "")
 	return resp.ID, nil
 }
 
@@ -625,10 +632,12 @@ func (c *Channel) SendPoll(ctx context.Context, target channels.Target, question
 	if len(names) == 0 {
 		return "", errors.New("poll options are all empty")
 	}
-	resp, err := client.SendMessage(ctx, jid, client.BuildPollCreation(question, names, maxSelectable))
+	msg := client.BuildPollCreation(question, names, maxSelectable)
+	resp, err := client.SendMessage(ctx, jid, msg)
 	if err != nil {
 		return "", err
 	}
+	c.indexSent(ctx, jid, resp, msg, "")
 	c.cachePollOptions(jid.String(), resp.ID, names)
 	return resp.ID, nil
 }
@@ -745,7 +754,10 @@ func (c *Channel) SendMedia(ctx context.Context, target channels.Target, media c
 		}
 		msg.DocumentMessage = m
 	}
-	_, err = client.SendMessage(ctx, jid, msg)
+	resp, err := client.SendMessage(ctx, jid, msg)
+	if err == nil {
+		c.indexSent(ctx, jid, resp, msg, "")
+	}
 	return err
 }
 
@@ -809,9 +821,11 @@ func (d *delivery) Update(ctx context.Context, text string, final bool) error {
 		d.id = id
 		return nil
 	}
-	_, err := client.SendMessage(ctx, d.chat, client.BuildEdit(d.chat, d.id, &waE2E.Message{
-		Conversation: proto.String(text),
-	}))
+	msg := &waE2E.Message{Conversation: proto.String(text)}
+	resp, err := client.SendMessage(ctx, d.chat, client.BuildEdit(d.chat, d.id, msg))
+	if err == nil {
+		d.ch.indexSent(ctx, d.chat, resp, msg, d.id)
+	}
 	if err != nil && final {
 		// Editing can fail on older clients or after a message is too old.
 		// Sending a fresh final message is better than leaving "On it…".

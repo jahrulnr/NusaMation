@@ -135,6 +135,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/channels", s.protected(s.handleChannels))
 	mux.HandleFunc("POST /api/channels/{name}/connect", s.protected(s.handleChannelConnect))
 	mux.HandleFunc("POST /api/channels/whatsapp/send", s.protected(s.handleWhatsAppSend))
+	mux.HandleFunc("GET /api/channels/whatsapp/user", s.protected(s.handleWhatsAppUser))
 	mux.HandleFunc("POST /api/channels/{name}/disconnect", s.protected(s.handleChannelDisconnect))
 	mux.HandleFunc("POST /api/channels/{name}/logout", s.protected(s.handleChannelLogout))
 	mux.HandleFunc("GET /api/channels/{name}/qr", s.protected(s.handleChannelQR))

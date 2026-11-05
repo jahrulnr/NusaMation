@@ -162,6 +162,7 @@ func (c *Channel) SendStructured(ctx context.Context, req OutboundRequest) (stri
 	if err != nil {
 		return "", err
 	}
+	c.indexSent(ctx, jid, resp, msg, "")
 	return resp.ID, nil
 }
 

@@ -287,10 +287,32 @@ You are operating inside a NusaMation workspace.
 			return err
 		}
 	}
+	// Add the query guide to existing workspaces without replacing user notes.
+	current, err := os.ReadFile(agents)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(current), whatsappSearchMarker) {
+		content := strings.TrimRight(string(current), "\n") + "\n\n" + whatsappSearchSection(cfg)
+		if err := os.WriteFile(agents, []byte(content), 0o600); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 const opsMarker = "## NusaMation operations"
+const whatsappSearchMarker = "## NusaMation WhatsApp lookup"
+
+func whatsappSearchSection(cfg config.Config) string {
+	return fmt.Sprintf(`%s
+
+For requests to search WhatsApp messages or find contact/user details, use the
+NusaMation CLI described in %s/whatsapp.md. Message search is paginated: follow
+nextCursor when needed. Results cover captured messages and supplied history,
+not necessarily all historical WhatsApp messages.
+`, whatsappSearchMarker, cfg.DocsDir())
+}
 
 // opsSection points agents at the embedded ops docs seeded under the data dir.
 func opsSection(cfg config.Config) string {
