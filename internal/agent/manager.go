@@ -178,6 +178,43 @@ func (m *Manager) InvalidateAllAgents() {
 	}
 }
 
+// WarmAgent starts an enabled auto-start agent in the background and keeps its
+// idle preview session ready so option/catalog requests skip the cold launch.
+// It is a no-op for agents without auto-start.
+func (m *Manager) WarmAgent(agentID string) {
+	agent, err := m.store.GetAgent(context.Background(), agentID)
+	if err != nil || !agent.Enabled || !agent.AutoStart {
+		return
+	}
+	r := m.ensureRuntime(agent)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		r.warm(ctx)
+	}()
+}
+
+// WarmAutoStart warms every enabled agent marked auto-start, e.g. at boot or
+// after a change invalidated all runtimes.
+func (m *Manager) WarmAutoStart() {
+	list, err := m.store.ListAgents(context.Background())
+	if err != nil {
+		m.log.Warn("could not list agents for warm-up", "error", err)
+		return
+	}
+	for _, a := range list {
+		if !a.Enabled || !a.AutoStart {
+			continue
+		}
+		r := m.ensureRuntime(a)
+		go func(r *Runtime) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			r.warm(ctx)
+		}(r)
+	}
+}
+
 func (m *Manager) EnsureSession(ctx context.Context, req EnsureRequest) (*Session, error) {
 	agent, err := m.store.GetAgent(ctx, req.AgentID)
 	if err != nil {
@@ -468,29 +505,35 @@ func (m *Manager) Probe(ctx context.Context, agentID string) (ProbeResult, error
 		return ProbeResult{}, err
 	}
 	start := time.Now()
-	_ = m.store.UpdateAgentStatus(ctx, agentID, "starting", "")
-	m.Sink().AgentState(agentID, "starting", "")
-	defer func() {}()
-
-	procCfg, err := acpProcessConfig(agent, m.log.With("agent", agent.Slug))
-	if err != nil {
-		_ = m.store.UpdateAgentStatus(ctx, agentID, "error", err.Error())
-		m.Sink().AgentState(agentID, "error", err.Error())
-		return ProbeResult{}, err
+	var client *acp.Client
+	var rt *Runtime
+	if r := m.runtimeFor(agentID); r != nil {
+		client = r.warmClient()
+		rt = r
 	}
-	caps := acp.DefaultClientCapabilities()
-	caps.Elicitation = nil
-	client, err := acp.Start(ctx, acp.ClientConfig{
-		ProcessConfig: procCfg,
-		ClientInfo:    acp.Implementation{Name: "nusamation", Title: "NusaMation", Version: config.Version},
-		Capabilities:  &caps,
-	}, probeHandler{})
-	if err != nil {
-		_ = m.store.UpdateAgentStatus(ctx, agentID, "error", err.Error())
-		m.Sink().AgentState(agentID, "error", err.Error())
-		return ProbeResult{}, err
+	if client == nil {
+		_ = m.store.UpdateAgentStatus(ctx, agentID, "starting", "")
+		m.Sink().AgentState(agentID, "starting", "")
+		procCfg, err := acpProcessConfig(agent, m.log.With("agent", agent.Slug))
+		if err != nil {
+			_ = m.store.UpdateAgentStatus(ctx, agentID, "error", err.Error())
+			m.Sink().AgentState(agentID, "error", err.Error())
+			return ProbeResult{}, err
+		}
+		caps := acp.DefaultClientCapabilities()
+		caps.Elicitation = nil
+		client, err = acp.Start(ctx, acp.ClientConfig{
+			ProcessConfig: procCfg,
+			ClientInfo:    acp.Implementation{Name: "nusamation", Title: "NusaMation", Version: config.Version},
+			Capabilities:  &caps,
+		}, probeHandler{})
+		if err != nil {
+			_ = m.store.UpdateAgentStatus(ctx, agentID, "error", err.Error())
+			m.Sink().AgentState(agentID, "error", err.Error())
+			return ProbeResult{}, err
+		}
+		defer client.Close()
 	}
-	defer client.Close()
 
 	sessionCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
@@ -502,6 +545,9 @@ func (m *Manager) Probe(ctx context.Context, agentID string) (ProbeResult, error
 	}
 	if client.SupportsClose() {
 		_ = client.CloseSession(context.Background(), sess.SessionID)
+	}
+	if rt != nil {
+		rt.discardPending(sess.SessionID)
 	}
 	agentCaps, _ := json.Marshal(client.Capabilities().AgentCapabilities)
 	auths, _ := json.Marshal(client.AuthMethods())

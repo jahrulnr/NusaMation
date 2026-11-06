@@ -154,6 +154,7 @@ func (a *App) Serve(ctx context.Context) error {
 		(&automation.Scheduler{Store: a.store, Chat: a.chat, Log: a.log}).Run(schedulerCtx)
 	}()
 	a.channels.StartAll(ctx)
+	a.agents.WarmAutoStart()
 	if a.cfg.OpenBrowser {
 		go openBrowser(url)
 	}

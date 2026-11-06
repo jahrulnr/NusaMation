@@ -148,6 +148,36 @@ type MCPServerConfig struct {
 	Headers []EnvVar `json:"headers,omitempty"`
 }
 
+// MarshalJSON emits the exact ACP union variant: stdio servers carry
+// command/args/env, http/sse servers carry type/url/headers. Strict agents
+// validate with discriminated schemas that require the array fields present —
+// omitempty would drop empty args/env/headers and fail validation.
+func (c MCPServerConfig) MarshalJSON() ([]byte, error) {
+	m := map[string]any{"name": c.Name}
+	if c.Type == "http" || c.Type == "sse" {
+		m["type"] = c.Type
+		m["url"] = c.URL
+		headers := c.Headers
+		if headers == nil {
+			headers = []EnvVar{}
+		}
+		m["headers"] = headers
+		return json.Marshal(m)
+	}
+	m["command"] = c.Command
+	args := c.Args
+	if args == nil {
+		args = []string{}
+	}
+	env := c.Env
+	if env == nil {
+		env = []EnvVar{}
+	}
+	m["args"] = args
+	m["env"] = env
+	return json.Marshal(m)
+}
+
 type NewSessionRequest struct {
 	Cwd                   string            `json:"cwd"`
 	AdditionalDirectories []string          `json:"additionalDirectories,omitempty"`

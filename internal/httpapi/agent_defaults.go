@@ -16,7 +16,13 @@ func (s *Server) agentDefaultsRequest(w http.ResponseWriter, r *http.Request, sa
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	configs, err := s.agents.PreviewDefaults(ctx, defaults.AgentID, defaults.Selections)
+	preview := s.agents.PreviewDefaults
+	if save {
+		// Persisting defaults must prove the sequence on a live session; the
+		// preview endpoint may answer from the approximate cached catalog.
+		preview = s.agents.ValidateDefaults
+	}
+	configs, err := preview(ctx, defaults.AgentID, defaults.Selections)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "agent_defaults", err.Error())
 		return

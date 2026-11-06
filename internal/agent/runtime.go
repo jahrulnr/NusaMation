@@ -54,6 +54,10 @@ type Runtime struct {
 	byACP    map[string]*Session
 	pending  map[string][]pendingNotif
 	stderr   *acp.Ring
+
+	previewMu  sync.Mutex
+	preview    *previewState
+	previewIDs map[string]struct{}
 }
 
 func (r *Runtime) Info() (string, int, time.Duration, []string) {
@@ -727,6 +731,33 @@ func (r *Runtime) handleNotification(method, sessionID string, raw json.RawMessa
 	}
 	s := r.findSession(sessionID)
 	if s == nil {
+		r.previewMu.Lock()
+		if _, ok := r.previewIDs[sessionID]; ok {
+			// The preview session has no chat sink; fold pushed catalog and
+			// mode updates into its tracked state so the next replay does not
+			// validate against a stale copy.
+			if p := r.preview; p != nil && p.sessionID == sessionID {
+				var u acp.SessionUpdate
+				if json.Unmarshal(raw, &u) == nil {
+					switch u.SessionUpdate {
+					case "config_option_update":
+						if len(u.ConfigOptions) > 0 {
+							p.configs, p.legacy = mergeLegacyModes(u.ConfigOptions, p.modes)
+						}
+					case "current_mode_update":
+						if p.legacy {
+							p.configs, _ = setModeValue(p.configs, u.CurrentModeID)
+						}
+						if p.modes != nil {
+							p.modes.CurrentModeID = u.CurrentModeID
+						}
+					}
+				}
+			}
+			r.previewMu.Unlock()
+			return
+		}
+		r.previewMu.Unlock()
 		r.mu.Lock()
 		list := r.pending[sessionID]
 		if len(list) < 200 {

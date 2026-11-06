@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -53,9 +54,24 @@ func configAccepts(raw json.RawMessage, id string, value any) bool {
 	return false
 }
 
-// PreviewDefaults creates an isolated ACP session and replays choices in order.
-// Each choice is validated against the options returned by the preceding one.
+// PreviewDefaults replays choices in order against the agent's option catalog
+// and returns the resulting configuration. A running agent answers on its
+// reusable preview session (any live runtime qualifies — not only idle-mode
+// agents); a cold agent merges into the cached catalog when one exists;
+// otherwise a throwaway probe session does the replay and seeds the cache.
 func (m *Manager) PreviewDefaults(ctx context.Context, agentID string, selections []store.ConfigSelection) (json.RawMessage, error) {
+	return m.previewDefaults(ctx, agentID, selections, true)
+}
+
+// ValidateDefaults is PreviewDefaults for the save path. It skips the
+// approximate cached catalog — the cache is a "last seen" snapshot that real
+// sessions also rewrite post-selection — so stored defaults are always proven
+// against a live session (warm preview session or throwaway probe).
+func (m *Manager) ValidateDefaults(ctx context.Context, agentID string, selections []store.ConfigSelection) (json.RawMessage, error) {
+	return m.previewDefaults(ctx, agentID, selections, false)
+}
+
+func (m *Manager) previewDefaults(ctx context.Context, agentID string, selections []store.ConfigSelection, allowCache bool) (json.RawMessage, error) {
 	ag, err := m.store.GetAgent(ctx, agentID)
 	if err != nil {
 		return nil, err
@@ -63,6 +79,32 @@ func (m *Manager) PreviewDefaults(ctx context.Context, agentID string, selection
 	if !ag.Enabled {
 		return nil, fmt.Errorf("agent %q is disabled", ag.Name)
 	}
+	if r := m.runtimeFor(agentID); r != nil {
+		// waitClient joins an in-flight start (warm-up or session prepare)
+		// instead of spawning a parallel probe process.
+		client, err := r.waitClient(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if client != nil {
+			return r.previewSelections(ctx, client, ag, selections)
+		}
+	}
+	if allowCache {
+		configs, err := previewSelectionsCached(ag, selections)
+		if err == nil {
+			return configs, nil
+		}
+		if !errors.Is(err, errNoCatalog) {
+			m.log.Debug("cached catalog rejected selections; probing live", "agent", ag.Slug, "error", err)
+		}
+	}
+	return m.previewDefaultsLive(ctx, ag, selections)
+}
+
+// previewDefaultsLive spawns a short-lived probe session for the replay — the
+// slow path, used when there is no warm runtime or usable cached catalog.
+func (m *Manager) previewDefaultsLive(ctx context.Context, ag store.Agent, selections []store.ConfigSelection) (json.RawMessage, error) {
 	caps := acp.DefaultClientCapabilities()
 	caps.Elicitation = nil
 	procCfg, err := acpProcessConfig(ag, m.log.With("agent", ag.Slug))
@@ -96,74 +138,16 @@ func (m *Manager) PreviewDefaults(ctx context.Context, agentID string, selection
 	if len(configs) == 0 {
 		configs = json.RawMessage("[]")
 	}
-	modelID, _, _ := sessionConfigs(configs, "model")
-	hasModelChoice := false
-	for _, choice := range selections {
-		if choice.ID == modelID && modelID != "" {
-			hasModelChoice = true
-		}
+	s := &selectionSession{
+		client: client, sessionID: session.SessionID, modes: session.Modes,
+		configs: configs, legacy: legacy,
 	}
-	if !hasModelChoice && ag.DefaultModel != "" && configAccepts(configs, modelID, ag.DefaultModel) {
-		result, err := client.SetConfig(ctx, session.SessionID, modelID, ag.DefaultModel)
-		if err != nil {
-			return nil, fmt.Errorf("select model %q: %w", ag.DefaultModel, err)
-		}
-		configs, legacy = mergeLegacyModes(result.ConfigOptions, session.Modes)
+	if err := replaySelections(ctx, s, 0, effectiveSelections(configs, ag, selections), selections); err != nil {
+		return nil, err
 	}
-	apply := func(choice store.ConfigSelection) error {
-		if legacy && choice.ID == legacyModeID {
-			modeID, ok := choice.Value.(string)
-			if !ok {
-				return fmt.Errorf("option %q expects a string value", choice.ID)
-			}
-			if err := client.SetMode(ctx, session.SessionID, modeID); err != nil {
-				return err
-			}
-			configs, _ = setModeValue(configs, modeID)
-			if session.Modes != nil {
-				session.Modes.CurrentModeID = modeID
-			}
-			return nil
-		}
-		result, err := client.SetConfig(ctx, session.SessionID, choice.ID, choice.Value)
-		if err != nil {
-			return fmt.Errorf("set %s: %w", choice.ID, err)
-		}
-		configs, legacy = mergeLegacyModes(result.ConfigOptions, session.Modes)
-		return nil
-	}
-	seen := make(map[string]bool)
-	for _, choice := range selections {
-		if seen[choice.ID] || !configAccepts(configs, choice.ID, choice.Value) {
-			return nil, fmt.Errorf("option %q or its value is not available in the current configuration", choice.ID)
-		}
-		seen[choice.ID] = true
-		if err := apply(choice); err != nil {
-			return nil, err
-		}
-	}
-	// A later choice can reset an earlier one (e.g. a model id that implies an
-	// effort level). Re-apply selections whose value no longer holds until the
-	// state settles; the check below still rejects irreconcilable orders.
-	for round := 0; round <= len(selections); round++ {
-		settled := true
-		for _, choice := range selections {
-			if !configAccepts(configs, choice.ID, choice.Value) || anyEqual(findConfigCurrent(configs, choice.ID), choice.Value) {
-				continue
-			}
-			if err := apply(choice); err != nil {
-				return nil, err
-			}
-			settled = false
-		}
-		if settled {
-			break
-		}
-	}
-	for _, choice := range selections {
-		if !configAccepts(configs, choice.ID, choice.Value) || !anyEqual(findConfigCurrent(configs, choice.ID), choice.Value) {
-			return nil, fmt.Errorf("option %q was changed or became unavailable after a later choice; change the selection order", choice.ID)
-		}
-	}
-	return configs, nil
+	// Cache the fresh-session catalog, not the post-selection result — a cached
+	// baseline polluted by the replayed values would wrongly validate dependent
+	// options the next preview does not re-select.
+	_ = m.store.UpdateAgentConfigCache(ctx, ag.ID, configs)
+	return s.configs, nil
 }

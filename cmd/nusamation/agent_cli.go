@@ -36,7 +36,7 @@ Add/set flags:
   -icon I           sparkles, zap, brain, terminal, globe, star
   -color C          amber, violet, emerald, blue, rose, slate
   -enabled=B        Enable/disable the agent (add default true)
-  -auto-start=B     Auto-start on server start (reserved; no effect yet)
+  -auto-start=B     Idle mode: start on boot and keep the agent warm
 
 Other flags:
   -data-dir DIR     NusaMation data directory (default ~/.nusamation)
@@ -167,7 +167,7 @@ func agentFormFlags(fs *flag.FlagSet, f *agentForm, add bool) {
 	fs.StringVar(&f.icon, "icon", "", "icon: sparkles, zap, brain, terminal, globe, star")
 	fs.StringVar(&f.color, "color", "", "color: amber, violet, emerald, blue, rose, slate")
 	fs.BoolVar(&f.enabled, "enabled", add, "enable the agent")
-	fs.BoolVar(&f.autoStart, "auto-start", false, "auto-start on server start (reserved; no effect yet)")
+	fs.BoolVar(&f.autoStart, "auto-start", false, "idle mode: start on server boot and keep the agent warm")
 }
 
 func agentAdd(args []string) error {

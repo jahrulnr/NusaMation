@@ -86,5 +86,6 @@ func (s *Server) handleAuthTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.agents.InvalidateAgent(r.PathValue("id"))
+	s.agents.WarmAgent(r.PathValue("id"))
 	sendStatus(true, "Authentication finished. Reconnecting the agent…")
 }

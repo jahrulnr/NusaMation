@@ -45,6 +45,13 @@ On first run (when no enabled agent exists) NusaMation scans `PATH` for the know
 | Default model | Optional; applied when the session exposes a model config |
 | Environment | Encrypted secrets passed to the process |
 | Enabled | Disabled agents cannot be selected |
+| Idle mode | `auto-start` flag; starts on server boot and keeps a session warm |
+
+Idle mode keeps one agent process and one ACP session resident per opted-in
+agent — a small memory cost — so composer model/option changes answer on the
+warm session instead of waiting for a cold launch. Without it, previews merge
+into the agent's cached catalog and only spawn the process when the cache is
+missing or disputed.
 
 Press **Probe** to start a temporary ACP session and capture capabilities, models, config options and auth methods. Probing does not disturb a live conversation.
 

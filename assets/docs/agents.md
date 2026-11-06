@@ -52,8 +52,8 @@ session options. The HTTP preview and save endpoints are listed in [api.md](api.
   `auto_safe` = auto-approve safe requests; `auto_all` = auto-approve
   everything — deliberately powerful.
 - `-enabled=false` hides the agent from pickers without deleting it.
-- `-auto-start` is stored on the record but currently inert — no consumer
-  spawns it yet; don't rely on it.
+- `-auto-start` enables idle mode: the agent process starts on server boot and
+  keeps a session warm, so composer option/model changes skip the cold launch.
 - On first run, `agent detect -add` semantics apply: every known ACP CLI found
   on PATH is seeded automatically — but only while no enabled agent exists;
   once one does, seeding stops.

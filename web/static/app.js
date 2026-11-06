@@ -2319,8 +2319,32 @@
     if (sidebarRenderTimer) return;
     sidebarRenderTimer = setTimeout(() => {
       sidebarRenderTimer = null;
-      renderSidebar();
+      patchSidebarConversations();
     }, 220);
+  }
+
+  // Updates only preview/time text inside existing rows so rapid message
+  // streams don't recreate the DOM under the cursor; falls back to a full
+  // render when the visible set no longer matches.
+  function patchSidebarConversations() {
+    const list = $("#conv-list");
+    if (!list) { renderSidebar(); return; }
+    const convs = S.conversations.filter((c) => !c.archived);
+    if ($$(".conv-item", list).length !== convs.length) { renderSidebar(); return; }
+    for (const c of convs) {
+      const node = list.querySelector(`.conv-item[data-id="${CSS.escape(c.id)}"]`);
+      if (!node) { renderSidebar(); return; }
+      const previewText = c.lastMessage ? truncate(c.lastMessage.replace(/\s+/g, " "), 70) : "No messages yet";
+      const preview = $(".conv-preview", node);
+      if (preview && preview.textContent !== previewText) preview.textContent = previewText;
+      const title = $(".conv-title", node);
+      if (title && title.textContent !== (c.title || "Untitled")) title.textContent = c.title || "Untitled";
+      const time = $(".conv-time", node);
+      if (time) time.textContent = timeAgo(c.lastMessageAt || c.updatedAt);
+      node.dataset.title = (c.title || "").toLowerCase();
+      node.dataset.preview = (c.lastMessage || "").toLowerCase();
+    }
+    filterSidebar();
   }
 
   /* ---------------- popovers ---------------- */
@@ -3101,7 +3125,7 @@
       <div class="agent-list">${S.agents.map((a) => `<div class="agent-card">
         ${agentOrb(a)}
         <div class="agent-card-main">
-          <div class="agent-card-name">${esc(a.name)} <span class="agent-status"><span class="status-dot ${a.status === "ready" ? "" : a.status === "error" ? "offline" : "warn"}"></span>${esc(a.status || "unknown")}</span></div>
+          <div class="agent-card-name">${esc(a.name)} <span class="agent-status"><span class="status-dot ${a.status === "ready" ? "" : a.status === "error" ? "offline" : "warn"}"></span>${esc(a.status || "unknown")}</span>${a.autoStart ? ` <span class="badge-soft gray">idle</span>` : ""}</div>
           <div class="agent-card-sub">${esc(a.command)} ${esc((a.args || []).join(" "))} · ${esc(a.cwd)}</div>
           <div class="agent-card-sub">${esc(a.description || "")}${a.defaultModel ? " · default " + esc(a.defaultModel) : ""}</div>
         </div>
@@ -3138,7 +3162,9 @@
           <div class="field"><label>Icon</label><select class="select" name="icon">${["sparkles", "zap", "brain", "terminal", "globe", "star"].map((i) => `<option value="${i}" ${a.icon === i ? "selected" : ""}>${i}</option>`).join("")}</select></div>
           <div class="field"><label>Color</label><select class="select" name="color">${Object.keys(AGENT_COLORS).map((c) => `<option value="${c}" ${a.color === c ? "selected" : ""}>${c}</option>`).join("")}</select></div>
           <div class="field"><label>Approval policy</label><select class="select" name="approvalPolicy">${["ask", "auto_safe", "auto_all"].map((p) => `<option value="${p}" ${a.approvalPolicy === p ? "selected" : ""}>${p.replace("_", " ")}</option>`).join("")}</select></div>
-          <div class="field full"><label class="checkbox"><input type="checkbox" name="enabled" ${a.enabled !== false ? "checked" : ""}> Enabled</label></div>
+          <div class="field"><label class="checkbox"><input type="checkbox" name="enabled" ${a.enabled !== false ? "checked" : ""}> Enabled</label></div>
+          <div class="field"><label class="checkbox"><input type="checkbox" name="autoStart" ${a.autoStart ? "checked" : ""}> Idle mode — keep the agent process running</label></div>
+          <div class="field full"><small class="muted">Idle mode starts the agent with NusaMation and keeps a session warm, so model and option changes don't wait for a cold launch.</small></div>
         </div>
         <div class="settings-section"><div class="settings-title" style="display:flex;align-items:center;gap:8px">Environment secrets <span class="badge-soft gray">AES-GCM at rest</span><span class="grow"></span><button class="btn btn-ghost btn-xs" type="button" data-action="add-env" data-prefix="agent">+ Add variable</button></div>
           <div id="agent-env-list">${envRowsHTML(a.env || [], "agent")}</div>
@@ -3440,6 +3466,7 @@
       approvalPolicy: String(fd.get("approvalPolicy") || "ask"),
       defaultModel: S.agentForm?.agent?.defaultModel || "",
       enabled: !!fd.get("enabled"),
+      autoStart: !!fd.get("autoStart"),
       env,
     };
     try {

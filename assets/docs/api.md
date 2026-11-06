@@ -85,12 +85,15 @@ for scheduling and recovery behavior.
 Both `POST /api/settings/agent-defaults/preview` and
 `PUT /api/settings/agent-defaults` take an agent ID and an ordered selection
 array, for example `{"agentId":"<agent-id>","selections":[]}`. Preview
-returns `defaults` and the current `configs` advertised by a temporary ACP
-session. Choose IDs and values from that response, append one selection, and
-preview again before selecting a dependent option. A selection has the shape
+returns `defaults` and the current `configs`. With idle mode on, options
+replay on the agent's warm session; otherwise they merge into the agent's
+cached catalog (a live probe refreshes it when missing or disputed). Choose
+IDs and values from that response, append one selection, and preview again
+before selecting a dependent option. A selection has the shape
 `{"id":"<config-id>","value":"<advertised-value>"}`; boolean options use a
-JSON boolean value. PUT validates the full sequence again before saving.
-Invalid payloads return 400; ACP startup or validation failures return 502.
+JSON boolean value. PUT validates the full sequence against a live agent
+session before saving — it never answers from the cached catalog. Invalid
+payloads return 400; ACP startup or validation failures return 502.
 
 The repo's `docs/API.md` contains additional endpoint details; call
 `GET /api/bootstrap` for the server's own view.

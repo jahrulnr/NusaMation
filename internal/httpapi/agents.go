@@ -46,6 +46,9 @@ func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "agent_failed", err.Error())
 		return
 	}
+	if s.agents != nil {
+		s.agents.WarmAgent(ag.ID)
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"agent": ag.Public()})
 }
 
@@ -67,6 +70,7 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.agents != nil {
 		s.agents.InvalidateAgent(ag.ID)
+		s.agents.WarmAgent(ag.ID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"agent": ag.Public()})
 }
@@ -113,6 +117,9 @@ func (s *Server) handleAuthenticateAgent(w http.ResponseWriter, r *http.Request)
 	if err := s.agents.Authenticate(ctx, r.PathValue("id"), in.MethodID); err != nil {
 		writeError(w, http.StatusBadRequest, "auth_failed", err.Error())
 		return
+	}
+	if s.agents != nil {
+		s.agents.WarmAgent(r.PathValue("id"))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -167,6 +174,7 @@ func (s *Server) handleCreateMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.agents.InvalidateAllAgents()
+	s.agents.WarmAutoStart()
 	writeJSON(w, http.StatusCreated, map[string]any{"server": m.Public()})
 }
 
@@ -188,6 +196,7 @@ func (s *Server) handleUpdateMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.agents.InvalidateAllAgents()
+	s.agents.WarmAutoStart()
 	writeJSON(w, http.StatusOK, map[string]any{"server": m.Public()})
 }
 
@@ -201,5 +210,6 @@ func (s *Server) handleDeleteMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.agents.InvalidateAllAgents()
+	s.agents.WarmAutoStart()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
