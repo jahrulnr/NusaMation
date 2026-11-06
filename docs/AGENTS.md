@@ -75,6 +75,17 @@ The seed catalog covers the common invocations (`claude-agent-acp`, `codex-acp`,
 
 Exact adapter package names change; probe after adding. A command that only implements a chat REPL is not ACP.
 
+### Cursor model parameters
+
+NusaMation advertises Cursor's `clientCapabilities._meta.parameterizedModelPicker`
+extension. Cursor then exposes the selected model's supported parameters, such as
+Effort, Fast, and Context, as separate options in the model menu. Select the model
+first, then choose its parameters; Fast → Off sends the string `"false"` through
+`session/set_config_option`. Available parameters and defaults come from Cursor.
+Without this capability Cursor can expose only a default variant and may ignore
+non-Fast selections. After upgrading NusaMation, reconnect the agent (or restart
+the server) and probe again to replace previously cached model options.
+
 ### Fake agent
 
 `cmd/fake-acp-agent` is a deterministic ACP agent for tests and demos. Build it:

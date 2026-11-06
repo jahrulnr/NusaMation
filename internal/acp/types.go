@@ -430,6 +430,10 @@ func DefaultClientCapabilities() ClientCapabilities {
 		Terminal:    true,
 		Auth:        AuthClientCapabilities{Terminal: true},
 		Elicitation: map[string]any{"form": map[string]any{}, "url": map[string]any{}},
+		// Cursor only exposes model parameters (effort, fast, context, ...) to
+		// clients opting into its parameterized picker. These use the same
+		// config-option updates and setters as our existing dynamic picker.
+		Meta: json.RawMessage(`{"parameterizedModelPicker":true}`),
 	}
 	caps.Session.ConfigOptions = &struct {
 		Boolean *struct{} `json:"boolean,omitempty"`
