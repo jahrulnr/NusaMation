@@ -219,7 +219,10 @@ func (r *Runtime) loadOrCreate(ctx context.Context, s *Session, req EnsureReques
 	if err != nil {
 		return s, err
 	}
-	mcpList, _ := r.mgr.store.ListMCP(ctx, r.agent.ID)
+	mcpList, err := r.mgr.store.ListMCP(ctx)
+	if err != nil {
+		return s, err
+	}
 	mcps := mcpConfigs(mcpList, client.Capabilities().AgentCapabilities)
 	acpID := strings.TrimSpace(req.ACPSessionID)
 	if acpID == "" {

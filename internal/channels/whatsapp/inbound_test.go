@@ -239,3 +239,27 @@ func TestQuoteContext(t *testing.T) {
 		t.Fatalf("plain message quote = %q", got)
 	}
 }
+
+func TestQuoteMediaWithoutCaption(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		quoted *waE2E.Message
+		want   string
+	}{
+		{"image", &waE2E.Message{ImageMessage: &waE2E.ImageMessage{}}, "an image"},
+		{"video", &waE2E.Message{VideoMessage: &waE2E.VideoMessage{}}, "a video"},
+		{"document", &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{}}, "a document"},
+		{"audio", &waE2E.Message{AudioMessage: &waE2E.AudioMessage{}}, "a voice message"},
+		{"sticker", &waE2E.Message{StickerMessage: &waE2E.StickerMessage{}}, "a sticker"},
+		{"video note", &waE2E.Message{PtvMessage: &waE2E.VideoMessage{}}, "a video note"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := &waE2E.ContextInfo{QuotedMessage: tc.quoted}
+			// A reply may itself contain only an attachment.
+			reply := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{ContextInfo: ctx}}
+			if got, want := quoteContext(reply), "[In reply to: "+tc.want+"]"; got != want {
+				t.Fatalf("quote = %q, want %q", got, want)
+			}
+		})
+	}
+}

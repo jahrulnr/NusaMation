@@ -10,6 +10,7 @@ import (
 
 	"github.com/jahrulnr/nusamation/internal/acp"
 	"github.com/jahrulnr/nusamation/internal/agent"
+	"github.com/jahrulnr/nusamation/internal/channels"
 	"github.com/jahrulnr/nusamation/internal/store"
 	"github.com/jahrulnr/nusamation/internal/textfmt"
 )
@@ -233,7 +234,38 @@ func (s *Service) rotateStream(a *activeTurn, kind string) {
 	a.mu.Unlock()
 	if id != "" {
 		s.finalizeMessage(id, text, "complete")
+		if kind == "assistant" {
+			s.deliverSegment(a, text)
+		}
 	}
+}
+
+func (s *Service) deliverSegment(a *activeTurn, text string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	a.deliveryMu.Lock()
+	defer a.deliveryMu.Unlock()
+	a.mu.Lock()
+	d, ok := a.delivery.(channels.SegmentDelivery)
+	a.mu.Unlock()
+	if !ok {
+		return
+	}
+	s.collectOutboundFromText(a)
+	text = strings.TrimSpace(cleanDeliveredText(textfmt.ChatMarkdown(text), a.outboundRefs()))
+	if text == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := d.SendSegment(ctx, textfmt.Truncate(text, 3500)); err != nil {
+		s.log.Warn("failed to send channel reply", "conversation", a.conversationID, "error", err)
+		s.notifyOrigin(a, textfmt.Truncate(text, 3500))
+	}
+	a.mu.Lock()
+	a.deliveredSegment = true
+	a.mu.Unlock()
 }
 
 func (s *Service) appendAgentThought(a *activeTurn, delta string) {
@@ -638,30 +670,43 @@ func (s *Service) updateDelivery(a *activeTurn, final bool) {
 	d := a.delivery
 	deliver := a.deliverToChannel
 	text := strings.TrimSpace(a.assistantAll.String())
+	status, terminalError := a.finalStatus, a.finalError
+	_, segmented := d.(channels.SegmentDelivery)
+	deliveredSegment := a.deliveredSegment
+	if segmented {
+		text = strings.TrimSpace(a.assistant.String())
+	}
 	a.delivery = nil
 	a.mu.Unlock()
 	if !deliver && d == nil {
 		return
 	}
-	if text == "" {
+	if text == "" && status != "error" && !(segmented && deliveredSegment) {
 		text = s.finalDigest(a)
-	} else {
+	} else if text != "" {
 		s.collectOutboundFromText(a)
 		text = strings.TrimSpace(cleanDeliveredText(textfmt.ChatMarkdown(text), a.outboundRefs()))
 	}
-	if strings.TrimSpace(text) == "" {
+	if strings.TrimSpace(text) == "" && status != "error" && !(segmented && deliveredSegment) {
 		text = "Done."
 	}
 	text = textfmt.Truncate(text, 3500)
 	if d == nil {
-		s.notifyOrigin(a, text)
-		return
+		if text != "" {
+			s.notifyOrigin(a, text)
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := d.Update(ctx, text, true); err != nil {
+			s.log.Warn("failed to send channel reply", "conversation", a.conversationID, "error", err)
+			if text != "" {
+				s.notifyOrigin(a, text)
+			}
+		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	if err := d.Update(ctx, text, true); err != nil {
-		s.log.Warn("failed to send channel reply", "conversation", a.conversationID, "error", err)
-		s.notifyOrigin(a, text)
+	if status == "error" {
+		s.notifyOrigin(a, "The agent hit an error: "+terminalError)
 	}
 }
 

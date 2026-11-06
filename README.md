@@ -145,7 +145,7 @@ It streams a thought, a plan, a tool call, a **permission request**, a tool resu
 - Remembered allow rules scoped to a conversation.
 - Encrypted environment variables (AES-GCM key in the data directory).
 - Runtime logs and stderr ring buffer, authentication methods, logout.
-- MCP servers per agent: stdio, HTTP and SSE, with encrypted env/headers.
+- Shared MCP servers for all agents: stdio, HTTP and SSE, with encrypted env/headers.
 
 ### Channels
 

@@ -38,3 +38,29 @@ func TestArchiveAndDeleteAllAgentSessions(t *testing.T) {
 		t.Fatalf("delete calls = %d, trace: %v", got, e.trace())
 	}
 }
+
+func TestSharedMCPReachesEachAgent(t *testing.T) {
+	e := newAfterToolsEnv(t)
+	ctx := context.Background()
+	_, err := e.st.CreateMCP(ctx, store.MCPServer{Name: "shared-tools", Transport: "stdio", Command: "/bin/echo", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.PrepareSession(ctx, e.conv.ID); err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	ag, err := e.st.CreateAgent(ctx, store.AgentInput{Name: "Other", Slug: "other-shared", Command: buildFakeAgent(t), Cwd: e.conv.Cwd, Enabled: &enabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = e.svc.SwitchAgent(ctx, e.conv.ID, ag.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.svc.PrepareSession(ctx, e.conv.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := countTrace(e.trace(), "session_mcp shared-tools"); got != 2 {
+		t.Fatalf("shared MCP delivered %d times, trace: %v", got, e.trace())
+	}
+}

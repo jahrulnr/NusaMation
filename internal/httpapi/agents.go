@@ -143,32 +143,14 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListMCP(w http.ResponseWriter, r *http.Request) {
-	agentID := r.URL.Query().Get("agentId")
-	servers := map[string][]store.MCPServer{}
-	if agentID != "" {
-		list, err := s.store.ListMCP(r.Context(), agentID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "mcp", err.Error())
-			return
-		}
-		pub := make([]store.MCPServer, 0, len(list))
-		for _, m := range list {
-			pub = append(pub, m.Public())
-		}
-		servers[agentID] = pub
-	} else {
-		all, err := s.store.ListAllMCP(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "mcp", err.Error())
-			return
-		}
-		for id, list := range all {
-			pub := make([]store.MCPServer, 0, len(list))
-			for _, m := range list {
-				pub = append(pub, m.Public())
-			}
-			servers[id] = pub
-		}
+	list, err := s.store.ListMCP(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "mcp", err.Error())
+		return
+	}
+	servers := make([]store.MCPServer, 0, len(list))
+	for _, m := range list {
+		servers = append(servers, m.Public())
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"servers": servers})
 }
@@ -179,16 +161,12 @@ func (s *Server) handleCreateMCP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid MCP payload: "+err.Error())
 		return
 	}
-	if _, err := s.store.GetAgent(r.Context(), in.AgentID); err != nil {
-		writeError(w, http.StatusBadRequest, "agent_not_found", "The selected agent does not exist.")
-		return
-	}
 	m, err := s.store.CreateMCP(r.Context(), in)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "mcp_failed", err.Error())
 		return
 	}
-	s.agents.InvalidateAgent(m.AgentID)
+	s.agents.InvalidateAllAgents()
 	writeJSON(w, http.StatusCreated, map[string]any{"server": m.Public()})
 }
 
@@ -209,17 +187,12 @@ func (s *Server) handleUpdateMCP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "mcp_failed", err.Error())
 		return
 	}
-	s.agents.InvalidateAgent(m.AgentID)
+	s.agents.InvalidateAllAgents()
 	writeJSON(w, http.StatusOK, map[string]any{"server": m.Public()})
 }
 
 func (s *Server) handleDeleteMCP(w http.ResponseWriter, r *http.Request) {
-	cur, err := s.store.GetMCP(r.Context(), r.PathValue("id"))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "MCP server not found.")
-		return
-	}
-	if err := s.store.DeleteMCP(r.Context(), cur.ID); err != nil {
+	if err := s.store.DeleteMCP(r.Context(), r.PathValue("id")); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
 			status = http.StatusNotFound
@@ -227,6 +200,6 @@ func (s *Server) handleDeleteMCP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, "mcp_failed", err.Error())
 		return
 	}
-	s.agents.InvalidateAgent(cur.AgentID)
+	s.agents.InvalidateAllAgents()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

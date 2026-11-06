@@ -554,13 +554,18 @@ func (s *Service) mirrorFinal(a *activeTurn) {
 	a.mu.Lock()
 	routing := a.conv.Routing
 	links := append([]store.ChannelLink(nil), a.conv.Links...)
+	status, terminalError := a.finalStatus, a.finalError
 	a.mu.Unlock()
 	if !routing.MirrorFinal || s.channels == nil || len(links) == 0 {
 		return
 	}
 	digest := s.finalDigest(a)
-	if strings.TrimSpace(digest) == "" {
-		return
+	errorText := ""
+	if status == "error" {
+		errorText = "The agent hit an error: " + terminalError
+		if digest == textfmt.Truncate(errorText, 1200) {
+			digest = ""
+		}
 	}
 	var ref struct {
 		ExternalID string `json:"externalId"`
@@ -568,7 +573,7 @@ func (s *Service) mirrorFinal(a *activeTurn) {
 	}
 	_ = json.Unmarshal([]byte(a.turn.OriginRef), &ref)
 	digest = cleanDeliveredText(digest, a.outboundRefs())
-	if strings.TrimSpace(digest) == "" {
+	if strings.TrimSpace(digest) == "" && errorText == "" {
 		return
 	}
 	for _, l := range links {
@@ -582,10 +587,19 @@ func (s *Service) mirrorFinal(a *activeTurn) {
 		}
 		target := targetFromLink(l)
 		go func(ch channels.Channel, target channels.Target) {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			if err := ch.Notify(ctx, target, textfmt.Truncate(digest, 3000)); err != nil {
-				s.log.Warn("failed to mirror final answer", "channel", ch.Name(), "error", err)
+			if strings.TrimSpace(digest) != "" {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				if err := ch.Notify(ctx, target, textfmt.Truncate(digest, 3000)); err != nil {
+					s.log.Warn("failed to mirror final answer", "channel", ch.Name(), "error", err)
+				}
+				cancel()
+			}
+			if errorText != "" {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				if err := ch.Notify(ctx, target, errorText); err != nil {
+					s.log.Warn("failed to mirror agent error", "channel", ch.Name(), "error", err)
+				}
 			}
 		}(ch, target)
 	}

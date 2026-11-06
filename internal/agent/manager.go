@@ -166,6 +166,18 @@ func (m *Manager) InvalidateAgent(agentID string) {
 	}
 }
 
+func (m *Manager) InvalidateAllAgents() {
+	m.mu.Lock()
+	ids := make([]string, 0, len(m.runtimes))
+	for id := range m.runtimes {
+		ids = append(ids, id)
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
+		m.InvalidateAgent(id)
+	}
+}
+
 func (m *Manager) EnsureSession(ctx context.Context, req EnsureRequest) (*Session, error) {
 	agent, err := m.store.GetAgent(ctx, req.AgentID)
 	if err != nil {

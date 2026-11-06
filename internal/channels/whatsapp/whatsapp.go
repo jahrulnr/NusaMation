@@ -835,11 +835,24 @@ func keepTyping(ctx context.Context, every time.Duration, beat func(types.ChatPr
 
 func (d *delivery) ID() string { return "" }
 
+func (d *delivery) SendSegment(ctx context.Context, text string) error {
+	_, err := d.ch.sendText(ctx, d.chat, text)
+	d.typingMu.Lock()
+	if d.typingStop != nil {
+		d.ch.presence(d.chat, types.ChatPresenceComposing)
+	}
+	d.typingMu.Unlock()
+	return err
+}
+
 func (d *delivery) Update(ctx context.Context, text string, final bool) error {
 	if !final {
 		return nil
 	}
 	defer d.pauseTyping()
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
 	_, err := d.ch.sendText(ctx, d.chat, text)
 	return err
 }

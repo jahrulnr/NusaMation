@@ -163,6 +163,16 @@ func (s *server) handle(msg message) {
 		})
 	case "session/new":
 		trace("session_new")
+		var request struct {
+			MCPServers []struct {
+				Name string `json:"name"`
+			} `json:"mcpServers"`
+		}
+		if json.Unmarshal(msg.Params, &request) == nil {
+			for _, server := range request.MCPServers {
+				trace("session_mcp " + server.Name)
+			}
+		}
 		s.mu.Lock()
 		s.cancel = make(chan struct{})
 		s.values["mode"] = "ask"
@@ -655,6 +665,9 @@ func (s *server) reasonsDemo(id json.RawMessage) {
 				"kind":          "read",
 				"status":        "completed",
 			})
+			if i == 0 {
+				time.Sleep(time.Second)
+			}
 		}
 	}
 	s.respond(id, map[string]any{"stopReason": "end_turn"})

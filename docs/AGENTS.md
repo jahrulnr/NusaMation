@@ -119,12 +119,12 @@ Limits: tool states are best-effort reports, so the agent may start a new tool b
 
 ## MCP servers
 
-**Control center → MCP servers**, attached per agent:
+**Control center → MCP servers**, shared by all agents:
 
 - **stdio** — command + args + env.
 - **http / sse** — URL + headers.
 
-NusaMation filters MCP servers by the agent's advertised ACP MCP capabilities and passes them to `session/new`. Secrets are encrypted at rest and never returned by the API. Editing an agent/MCP server invalidates its runtime so the next turn restarts with the new configuration.
+NusaMation filters MCP servers by each agent's advertised ACP MCP capabilities and passes them to `session/new`, `session/load`, and `session/resume`. Secrets are encrypted at rest and never returned by the API. Editing an MCP server invalidates all running agent runtimes, so active turns are interrupted. Older per-agent entries are retained during migration; duplicate names receive an ID suffix and can be reviewed in Settings.
 
 The agent process inherits the NusaMation process environment, with per-agent environment values added on top. Start NusaMation with the environment needed by the configured agents.
 

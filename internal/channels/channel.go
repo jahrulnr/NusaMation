@@ -67,6 +67,11 @@ type Delivery interface {
 	Update(ctx context.Context, text string, final bool) error
 }
 
+// SegmentDelivery sends a completed assistant message while the turn continues.
+type SegmentDelivery interface {
+	SendSegment(ctx context.Context, text string) error
+}
+
 // OutboundMedia is a file the agent asked to deliver to a chat channel.
 // Exactly one of Data (in-memory bytes) or Path (local file) must be set.
 type OutboundMedia struct {

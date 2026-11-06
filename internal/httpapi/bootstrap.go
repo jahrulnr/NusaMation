@@ -19,14 +19,10 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	convs, _ := s.store.ListConversations(ctx, store.ConversationFilter{Limit: 250})
 	approvals, _ := s.store.ListPendingApprovals(ctx, 100)
-	mcp, _ := s.store.ListAllMCP(ctx)
-	publicMCP := make(map[string][]store.MCPServer, len(mcp))
-	for id, list := range mcp {
-		pub := make([]store.MCPServer, 0, len(list))
-		for _, m := range list {
-			pub = append(pub, m.Public())
-		}
-		publicMCP[id] = pub
+	mcp, _ := s.store.ListMCP(ctx)
+	publicMCP := make([]store.MCPServer, 0, len(mcp))
+	for _, m := range mcp {
+		publicMCP = append(publicMCP, m.Public())
 	}
 	total, active, pending, _ := s.store.ConversationStats(ctx)
 	_, approved, denied, _ := s.store.ApprovalCounts(ctx)

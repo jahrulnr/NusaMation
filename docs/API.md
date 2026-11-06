@@ -98,9 +98,9 @@ Approval option kinds: `allow_once`, `allow_always`, `reject_once`, `reject_alwa
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/mcp?agentId=` | map `agentId → [servers]`; env/headers redacted |
+| `GET` | `/mcp` | `{servers: [servers]}` shared by all agents; env/headers redacted |
 | `POST` | `/mcp` | `MCPServer` |
-| `PATCH` | `/mcp/{id}` | full object; invalidates agent runtime |
+| `PATCH` | `/mcp/{id}` | full object; invalidates all agent runtimes |
 | `DELETE` | `/mcp/{id}` | |
 
 ## Channels

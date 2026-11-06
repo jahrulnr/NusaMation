@@ -64,7 +64,6 @@ func (a Agent) Public() Agent {
 
 type MCPServer struct {
 	ID         string     `json:"id"`
-	AgentID    string     `json:"agentId"`
 	Name       string     `json:"name"`
 	Transport  string     `json:"transport"`
 	Command    string     `json:"command,omitempty"`

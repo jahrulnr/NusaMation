@@ -109,6 +109,7 @@ type activeTurn struct {
 	deliveryMu       sync.Mutex
 	delivery         channels.Delivery
 	deliverToChannel bool
+	deliveredSegment bool
 	assistantGap     bool
 
 	outboundMu sync.Mutex

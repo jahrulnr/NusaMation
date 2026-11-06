@@ -250,6 +250,54 @@ func TestSettingsKV(t *testing.T) {
 	}
 }
 
+func TestMCPMigrationPreservesConflictingConfigsAndSecrets(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealer, err := security.LoadOrCreateSealer(filepath.Join(dir, "secret.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetSealer(sealer)
+	secret, err := st.sealSecrets(SecretList{{Name: "TOKEN", Value: "secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.DB().Exec(`DROP TABLE mcp_servers;
+		CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, name TEXT NOT NULL,
+		transport TEXT NOT NULL, command TEXT NOT NULL, args_json TEXT NOT NULL, env_enc TEXT NOT NULL,
+		url TEXT NOT NULL, headers_enc TEXT NOT NULL, enabled INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+		PRAGMA user_version = 2;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range []string{"mcp-one", "mcp-two"} {
+		_, err = st.DB().Exec(`INSERT INTO mcp_servers VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, id, "agent", "tools", "stdio", id, "[]", secret, "", "", 1, i, i)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.SetSealer(sealer)
+	list, err := st.ListMCP(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].Name != "tools" || list[1].Name != "tools [mcp-two]" || list[0].Command != "mcp-one" || list[1].Command != "mcp-two" || len(list[1].Env) != 1 || list[1].Env[0].Value != "secret" {
+		t.Fatalf("migrated MCPs = %#v", list)
+	}
+}
+
 func contains(haystack, needle string) bool {
 	for i := 0; i+len(needle) <= len(haystack); i++ {
 		if haystack[i:i+len(needle)] == needle {

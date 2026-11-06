@@ -41,7 +41,7 @@
     me: null,
     bootstrap: null,
     agents: [],
-    mcp: {},
+    mcp: [],
     channels: [],
     conversations: [],
     approvals: [],
@@ -623,7 +623,7 @@
     S.bootstrap = data;
     S.appVersion = data.app?.version || S.appVersion;
     S.agents = data.agents || [];
-    S.mcp = data.mcp || {};
+    S.mcp = data.mcp || [];
     S.channels = data.channels || [];
     S.conversations = data.conversations || [];
     S.approvals = data.approvals || [];
@@ -1176,11 +1176,16 @@
   }
 
   function userHTML(m) {
+    const match = /^(?:([^\r\n]*?: )?\[In reply to: ([^\r\n]*)\])(?:\r?\n|$)/.exec(m.text || "");
+    const sender = match?.[1] ? `<div class="reply-sender">${esc(match[1])}</div>` : "";
+    const quote = match ? `<div class="reply-quote"><div class="reply-quote-label">In reply to</div><div class="reply-quote-text">${esc(match[2])}</div></div>` : "";
+    const text = match ? m.text.slice(match[0].length) : m.text;
+    const attachments = attachmentsHTML(m.attachments);
     return `<div class="msg user" data-msg-id="${esc(m.id)}">
       <div class="msg-body">
         ${messageHead(m)}
-        <div class="user-bubble markdown">${renderMarkdown(m.text, m.id)}</div>
-        ${attachmentsHTML(m.attachments)}
+        <div class="user-bubble">${sender}${quote}${text ? `<div class="markdown">${renderMarkdown(text, m.id)}</div>` : ""}${match ? attachments : ""}</div>
+        ${match ? "" : attachments}
         ${queueStatusLabel(m) ? `<div class="queue-status">${esc(queueStatusLabel(m))}</div>` : ""}
       </div>
     </div>`;
@@ -3122,15 +3127,9 @@
 
   function mcpSettings() {
     if (S.mcpForm) return mcpFormHTML();
-    const agents = S.agents;
-    const groups = agents.map((a) => {
-      const list = S.mcp[a.id] || [];
-      return `<div class="settings-section">
-        <div class="section-head"><div><h3>${esc(a.name)}</h3><div class="settings-desc" style="margin:2px 0 0">${list.length} server${list.length === 1 ? "" : "s"}</div></div>${list.length ? `<button class="btn btn-ghost btn-sm" data-action="add-mcp" data-agent="${esc(a.id)}">${icon("plus", "sm")} Add</button>` : ""}</div>
-        ${list.length ? list.map((m) => `<div class="mcp-card"><span class="tool-icon kind-execute">${icon(m.transport === "stdio" ? "terminal" : "globe")}</span><div class="grow" style="min-width:0"><div class="mcp-name">${esc(m.name)} <span class="status-dot ${m.enabled ? "" : "warn"}"></span></div><div class="mcp-sub">${esc(m.transport)} · ${esc(m.transport === "stdio" ? m.command : m.url)} ${esc((m.args || []).join(" "))}</div></div><div class="mcp-actions"><button class="icon-btn sm" data-action="edit-mcp" data-id="${esc(m.id)}" title="Edit">${icon("edit", "sm")}</button><button class="icon-btn sm" data-action="delete-mcp" data-id="${esc(m.id)}" title="Delete">${icon("trash", "sm")}</button></div></div>`).join("") : `<div class="mcp-empty"><span>No servers configured</span><button class="btn btn-secondary btn-sm" data-action="add-mcp" data-agent="${esc(a.id)}">${icon("plus", "sm")} Add server</button></div>`}
-      </div>`;
-    }).join("");
-    return `${settingsHead("MCP servers", "Tools are attached per agent. Changes restart the agent runtime on the next turn.")}${groups || `<div class="empty-settings">Add an agent first.</div>`}`;
+    const list = S.mcp || [];
+    const cards = list.map((m) => `<div class="mcp-card"><span class="tool-icon kind-execute">${icon(m.transport === "stdio" ? "terminal" : "globe")}</span><div class="grow" style="min-width:0"><div class="mcp-name">${esc(m.name)} <span class="status-dot ${m.enabled ? "" : "warn"}"></span></div><div class="mcp-sub">${esc(m.transport)} · ${esc(m.transport === "stdio" ? m.command : m.url)} ${esc((m.args || []).join(" "))}</div></div><div class="mcp-actions"><button class="icon-btn sm" data-action="edit-mcp" data-id="${esc(m.id)}" title="Edit">${icon("edit", "sm")}</button><button class="icon-btn sm" data-action="delete-mcp" data-id="${esc(m.id)}" title="Delete">${icon("trash", "sm")}</button></div></div>`).join("");
+    return `${settingsHead("MCP servers", "Shared by all agents. Saving changes restarts active agent runtimes.")}<div class="settings-section"><div class="section-head"><div><h3>Shared servers</h3><div class="settings-desc">${list.length} server${list.length === 1 ? "" : "s"}</div></div><button class="btn btn-secondary btn-sm" data-action="add-mcp">${icon("plus", "sm")} Add server</button></div>${cards || `<div class="mcp-empty"><span>No servers configured</span></div>`}</div>`;
   }
 
   function mcpFormHTML() {
@@ -3139,7 +3138,6 @@
     return `<div class="section-head"><div><h3>${f.id ? "Edit MCP server" : "Add MCP server"}</h3><div class="settings-desc" style="margin:3px 0 0">Stdio runs a local command; HTTP/SSE connects to a URL.</div></div><button class="btn btn-ghost btn-sm" data-action="cancel-mcp">Cancel</button></div>
       <form data-form="mcp" data-id="${esc(f.id || "")}">
         <div class="form-grid">
-          <div class="field full"><label>Agent</label><select class="select" name="agentId">${S.agents.map((a) => `<option value="${esc(a.id)}" ${((m.agentId || f.agentId) === a.id) ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></div>
           <div class="field"><label>Name</label><input class="input" name="name" value="${esc(m.name || "")}" placeholder="filesystem" required></div>
           <div class="field"><label>Transport</label><select class="select" name="transport"><option value="stdio" ${m.transport !== "http" && m.transport !== "sse" ? "selected" : ""}>stdio</option><option value="http" ${m.transport === "http" ? "selected" : ""}>HTTP</option><option value="sse" ${m.transport === "sse" ? "selected" : ""}>SSE</option></select></div>
           <div class="field full"><label>Command <span class="muted">(stdio)</span></label><input class="input" name="command" value="${esc(m.command || "")}" placeholder="npx"></div>
@@ -3436,6 +3434,10 @@
   }
 
   async function saveMCP(form) {
+	if (form.dataset.saving) return;
+	form.dataset.saving = "true";
+	const submit = form.querySelector('[type="submit"]');
+	if (submit) submit.disabled = true;
     const fd = new FormData(form);
     const id = form.dataset.id;
     const collect = (sel) => {
@@ -3450,7 +3452,6 @@
       return out;
     };
     const body = {
-      agentId: String(fd.get("agentId") || ""),
       name: String(fd.get("name") || "").trim(),
       transport: String(fd.get("transport") || "stdio"),
       command: String(fd.get("command") || "").trim(),
@@ -3469,6 +3470,9 @@
       toast(id ? "MCP server saved" : "MCP server added", "", "success");
     } catch (e) {
       toast("Could not save MCP server", e.message, "error", 8000);
+    } finally {
+      delete form.dataset.saving;
+      if (submit) submit.disabled = false;
     }
   }
 
@@ -3502,11 +3506,11 @@
   }
 
   async function deleteMCP(id) {
-    confirmModal("Delete MCP server?", "The agent will no longer see this tool after the next runtime restart.", async () => {
+    confirmModal("Delete MCP server?", "All agent runtimes will restart and lose access to this server.", async () => {
       try {
         await api(`/mcp/${encodeURIComponent(id)}`, { method: "DELETE" });
         const d = await api("/mcp");
-        S.mcp = d.servers || {};
+        S.mcp = d.servers || [];
         renderSettings();
         toast("MCP server removed", "", "success");
       } catch (e) { toast("Could not remove server", e.message, "error"); }
@@ -3819,10 +3823,10 @@
       case "cancel-agent": S.agentForm = null; renderSettings(); break;
       case "delete-agent": deleteAgent(id); break;
       case "cancel-mcp": S.mcpForm = null; renderSettings(); break;
-      case "add-mcp": S.mcpForm = { agentId: target.dataset.agent || (S.agents[0] || {}).id, server: { enabled: true, transport: "stdio" } }; S.agentForm = null; S.settingsTab = "mcp"; renderSettings(); break;
+      case "add-mcp": S.mcpForm = { server: { enabled: true, transport: "stdio" } }; S.agentForm = null; S.settingsTab = "mcp"; renderSettings(); break;
       case "edit-mcp": {
-        const m = Object.values(S.mcp).flat().find((x) => x.id === id);
-        if (m) { S.mcpForm = { id: m.id, agentId: m.agentId, server: m }; S.agentForm = null; S.settingsTab = "mcp"; renderSettings(); }
+        const m = S.mcp.find((x) => x.id === id);
+        if (m) { S.mcpForm = { id: m.id, server: m }; S.agentForm = null; S.settingsTab = "mcp"; renderSettings(); }
         break;
       }
       case "delete-mcp": deleteMCP(id); break;

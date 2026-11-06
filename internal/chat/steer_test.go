@@ -177,11 +177,65 @@ func (c *recChannel) finals() []string {
 type recDelivery struct{ ch *recChannel }
 
 func (d *recDelivery) ID() string { return "rec" }
+func (d *recDelivery) SendSegment(_ context.Context, text string) error {
+	d.ch.mu.Lock()
+	d.ch.events = append(d.ch.events, recEvent{final: true, text: text})
+	d.ch.mu.Unlock()
+	return nil
+}
 func (d *recDelivery) Update(_ context.Context, text string, final bool) error {
 	d.ch.mu.Lock()
 	d.ch.events = append(d.ch.events, recEvent{final: final, text: text})
 	d.ch.mu.Unlock()
 	return nil
+}
+
+func TestChannelReportsErrorsAfterPartialOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name, current string
+		delivered     bool
+	}{
+		{name: "no output"},
+		{name: "partial output", current: "I am working"},
+		{name: "earlier segment", delivered: true},
+		{name: "earlier and current", current: "More progress", delivered: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recChannel{}
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			manager := channels.NewManager(events.Nop{}, logger)
+			manager.Register(rec)
+			svc := &Service{channels: manager, log: logger}
+			a := &activeTurn{turn: store.Turn{OriginChannel: "wa", OriginRef: `{"externalId":"chat-1"}`}, delivery: &recDelivery{ch: rec}, deliverToChannel: true, deliveredSegment: tc.delivered, finalStatus: "error", finalError: "agent process exited: exit status 143"}
+			a.assistant.WriteString(tc.current)
+			a.assistantAll.WriteString(tc.current)
+			svc.updateDelivery(a, true)
+			got := rec.finals()
+			if len(got) != 2 || got[0] != tc.current || got[1] != "The agent hit an error: agent process exited: exit status 143" {
+				t.Fatalf("channel events = %#v", got)
+			}
+		})
+	}
+}
+
+func TestMirroredErrorFollowsPartialOutput(t *testing.T) {
+	rec := &recChannel{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	manager := channels.NewManager(events.Nop{}, logger)
+	manager.Register(rec)
+	svc := &Service{channels: manager, log: logger}
+	a := &activeTurn{
+		turn:        store.Turn{OriginChannel: "web"},
+		conv:        store.Conversation{Routing: store.Routing{MirrorFinal: true}, Links: []store.ChannelLink{{Channel: "wa", ExternalID: "chat-1"}}},
+		finalStatus: "error", finalError: "process exited",
+	}
+	a.assistantAll.WriteString("I am working")
+	svc.mirrorFinal(a)
+	waitFor(t, func() bool { return len(rec.finals()) == 2 }, "mirrored error")
+	got := rec.finals()
+	if got[0] != "I am working" || got[1] != "The agent hit an error: process exited" {
+		t.Fatalf("mirrored messages = %#v", got)
+	}
 }
 
 func TestChannelDeliversEveryReason(t *testing.T) {
@@ -231,17 +285,22 @@ func TestChannelDeliversEveryReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitFor(t, func() bool { return len(rec.finals()) >= 1 }, "first message while agent is working")
+	running, err := st.GetTurn(context.Background(), turn.ID)
+	if err != nil || running.Status != "running" {
+		t.Fatalf("first message arrived after work ended: turn=%#v err=%v", running, err)
+	}
 	waitFor(t, func() bool {
 		got, err := st.GetTurn(context.Background(), turn.ID)
-		return err == nil && got.Status == "completed" && len(rec.finals()) == 1
-	}, "one final channel message")
+		return err == nil && got.Status == "completed" && len(rec.finals()) == 3
+	}, "three separate channel messages")
 	finals := rec.finals()
-	if len(finals) != 1 {
+	if len(finals) != 3 {
 		t.Fatalf("final messages = %#v", rec.events)
 	}
-	for _, part := range []string{"reason one", "reason two", "reason three"} {
-		if !strings.Contains(finals[0], part) {
-			t.Fatalf("final message = %q", finals[0])
+	for i, part := range []string{"reason one", "reason two", "reason three"} {
+		if finals[i] != part {
+			t.Fatalf("message %d = %q, want %q", i, finals[i], part)
 		}
 	}
 	rec.mu.Lock()

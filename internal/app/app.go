@@ -252,7 +252,7 @@ workspace.
 ## Tips
 
 - Keep secrets in agent environment variables (Settings → Agents), not in files.
-- MCP servers can be configured per agent in the control center.
+- MCP servers can be configured for all agents in the control center.
 - Use absolute paths in prompts when referring to files outside this workspace.
 `
 		if err := os.WriteFile(readme, []byte(content), 0o600); err != nil {

@@ -42,7 +42,7 @@ func TestBootstrapDoesNotLeakMCPSecrets(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	enabled := true
-	ag, err := st.CreateAgent(context.Background(), store.AgentInput{
+	_, err = st.CreateAgent(context.Background(), store.AgentInput{
 		Name: "API Agent", Slug: "api-agent", Command: "/bin/echo", Cwd: dir, Enabled: &enabled,
 	})
 	if err != nil {
@@ -50,7 +50,7 @@ func TestBootstrapDoesNotLeakMCPSecrets(t *testing.T) {
 	}
 	const secret = "super-secret-mcp-token-xyz"
 	if _, err := st.CreateMCP(context.Background(), store.MCPServer{
-		AgentID: ag.ID, Name: "secret-mcp", Transport: "stdio", Command: "/bin/echo",
+		Name: "secret-mcp", Transport: "stdio", Command: "/bin/echo",
 		Env:     store.SecretList{{Name: "API_KEY", Value: secret}},
 		Headers: store.SecretList{{Name: "Authorization", Value: secret}},
 		Enabled: true,

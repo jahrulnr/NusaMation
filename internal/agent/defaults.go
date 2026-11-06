@@ -77,7 +77,7 @@ func (m *Manager) PreviewDefaults(ctx context.Context, agentID string, selection
 		return nil, err
 	}
 	defer client.Close()
-	servers, err := m.store.ListMCP(ctx, agentID)
+	servers, err := m.store.ListMCP(ctx)
 	if err != nil {
 		return nil, err
 	}

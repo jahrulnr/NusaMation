@@ -439,14 +439,14 @@ func mustJSON(v any) json.RawMessage {
 	return b
 }
 
-func (s *Store) ListMCP(ctx context.Context, agentID string) ([]MCPServer, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,agent_id,name,transport,command,args_json,env_enc,url,headers_enc,enabled,created_at,updated_at
-		FROM mcp_servers WHERE agent_id=? ORDER BY created_at ASC`, agentID)
+func (s *Store) ListMCP(ctx context.Context) ([]MCPServer, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,transport,command,args_json,env_enc,url,headers_enc,enabled,created_at,updated_at
+		FROM mcp_servers ORDER BY created_at ASC, id ASC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []MCPServer
+	out := []MCPServer{}
 	for rows.Next() {
 		m, err := s.scanMCP(rows)
 		if err != nil {
@@ -457,26 +457,8 @@ func (s *Store) ListMCP(ctx context.Context, agentID string) ([]MCPServer, error
 	return out, rows.Err()
 }
 
-func (s *Store) ListAllMCP(ctx context.Context) (map[string][]MCPServer, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,agent_id,name,transport,command,args_json,env_enc,url,headers_enc,enabled,created_at,updated_at
-		FROM mcp_servers ORDER BY created_at ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string][]MCPServer{}
-	for rows.Next() {
-		m, err := s.scanMCP(rows)
-		if err != nil {
-			return nil, err
-		}
-		out[m.AgentID] = append(out[m.AgentID], m)
-	}
-	return out, rows.Err()
-}
-
 func (s *Store) GetMCP(ctx context.Context, id string) (MCPServer, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,agent_id,name,transport,command,args_json,env_enc,url,headers_enc,enabled,created_at,updated_at
+	row := s.db.QueryRowContext(ctx, `SELECT id,name,transport,command,args_json,env_enc,url,headers_enc,enabled,created_at,updated_at
 		FROM mcp_servers WHERE id=?`, id)
 	return s.scanMCP(row)
 }
@@ -485,7 +467,7 @@ func (s *Store) scanMCP(row rowScanner) (MCPServer, error) {
 	var m MCPServer
 	var argsJSON, envEnc, headersEnc string
 	var enabled int
-	err := row.Scan(&m.ID, &m.AgentID, &m.Name, &m.Transport, &m.Command, &argsJSON, &envEnc, &m.URL, &headersEnc, &enabled, &m.CreatedAt, &m.UpdatedAt)
+	err := row.Scan(&m.ID, &m.Name, &m.Transport, &m.Command, &argsJSON, &envEnc, &m.URL, &headersEnc, &enabled, &m.CreatedAt, &m.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return m, ErrNotFound
@@ -526,9 +508,9 @@ func (s *Store) CreateMCP(ctx context.Context, in MCPServer) (MCPServer, error) 
 	now := nowMS()
 	id := ids.New("mcp")
 	_, err = s.db.ExecContext(ctx, `INSERT INTO mcp_servers
-		(id,agent_id,name,transport,command,args_json,env_enc,url,headers_enc,enabled,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, in.AgentID, strings.TrimSpace(in.Name), in.Transport, in.Command, js(in.Args, "[]"),
+		(id,name,transport,command,args_json,env_enc,url,headers_enc,enabled,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		id, strings.TrimSpace(in.Name), in.Transport, in.Command, js(in.Args, "[]"),
 		envEnc, in.URL, headersEnc, boolInt(in.Enabled), now, now)
 	if err != nil {
 		return MCPServer{}, err
@@ -540,12 +522,6 @@ func (s *Store) UpdateMCP(ctx context.Context, id string, in MCPServer) (MCPServ
 	cur, err := s.GetMCP(ctx, id)
 	if err != nil {
 		return MCPServer{}, err
-	}
-	if in.AgentID != "" && in.AgentID != cur.AgentID {
-		if _, err := s.GetAgent(ctx, in.AgentID); err != nil {
-			return MCPServer{}, fmt.Errorf("target agent %q does not exist", in.AgentID)
-		}
-		cur.AgentID = in.AgentID
 	}
 	if in.Name != "" {
 		cur.Name = strings.TrimSpace(in.Name)
@@ -588,8 +564,8 @@ func (s *Store) UpdateMCP(ctx context.Context, id string, in MCPServer) (MCPServ
 	if err != nil {
 		return MCPServer{}, err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE mcp_servers SET agent_id=?,name=?,transport=?,command=?,args_json=?,env_enc=?,url=?,headers_enc=?,enabled=?,updated_at=? WHERE id=?`,
-		cur.AgentID, cur.Name, cur.Transport, cur.Command, js(cur.Args, "[]"), envEnc, cur.URL, headersEnc, boolInt(cur.Enabled), nowMS(), id)
+	_, err = s.db.ExecContext(ctx, `UPDATE mcp_servers SET name=?,transport=?,command=?,args_json=?,env_enc=?,url=?,headers_enc=?,enabled=?,updated_at=? WHERE id=?`,
+		cur.Name, cur.Transport, cur.Command, js(cur.Args, "[]"), envEnc, cur.URL, headersEnc, boolInt(cur.Enabled), nowMS(), id)
 	if err != nil {
 		return MCPServer{}, err
 	}
