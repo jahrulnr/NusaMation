@@ -296,18 +296,39 @@
     return out.join("\n");
   }
 
-  function renderMarkdown(text, scope = "preview") {
+  function renderMarkdown(text, scope = "preview", format = "markdown") {
     const source = relaxListEndings(String(text || ""));
     const cached = markdownCache.get(scope);
-    if (cached?.source === source) return cached.html;
+    if (cached?.source === source && cached.format === format) return cached.html;
     if (window.marked && window.DOMPurify) {
       try {
         const parser = new window.marked.Marked({ gfm: true, breaks: true });
         if (window.NusaMarkdown) parser.use(window.NusaMarkdown.latex(), window.NusaMarkdown.math(), window.NusaMarkdown.markedFootnote({ prefixId: "footnote-" + scope.replace(/[^a-zA-Z0-9_-]/g, "-") + "-" }), window.NusaMarkdown.emoji());
+        if (format === "whatsapp") parser.use({
+          walkTokens(token) {
+            if (token.type === "em" && token.raw.startsWith("*")) token.type = "strong";
+          },
+          extensions: [{
+            name: "whatsappMonospaceBlock", level: "block",
+            tokenizer(src) {
+              const match = /^```([^\n`]*)\n((?:(?!```)[\s\S])*?)```(?=[ \t]*(?:\n|$))/.exec(src);
+              if (match && !/\n[ \t]*$/.test(match[2])) return { type: "whatsappMonospaceBlock", raw: match[0], text: (match[1] ? match[1] + "\n" : "") + match[2] };
+            },
+            renderer(token) { return `<pre><code>${esc(token.text)}</code></pre>`; },
+          }, {
+            name: "whatsappMonospaceInline", level: "inline",
+            start(src) { return src.indexOf("```"); },
+            tokenizer(src) {
+              const match = /^```([^`]*\n[^`]*?)```/.exec(src);
+              if (match) return { type: "whatsappMonospaceInline", raw: match[0], text: match[1] };
+            },
+            renderer(token) { return `<code class="whatsapp-monospace">${esc(token.text)}</code>`; },
+          }],
+        });
         let html = parser.parse(source);
         html = window.DOMPurify.sanitize(html, { ADD_ATTR: ["target", "rel"] });
         if (!markdownCache.has(scope) && markdownCache.size >= 3000) markdownCache.delete(markdownCache.keys().next().value);
-        markdownCache.set(scope, { source, html });
+        markdownCache.set(scope, { source, format, html });
         return html;
       } catch (e) {
         console.warn("markdown failed", e);
@@ -1178,13 +1199,14 @@
   function userHTML(m) {
     const match = /^(?:([^\r\n]*?: )?\[In reply to: ([^\r\n]*)\])(?:\r?\n|$)/.exec(m.text || "");
     const sender = match?.[1] ? `<div class="reply-sender">${esc(match[1])}</div>` : "";
-    const quote = match ? `<div class="reply-quote"><div class="reply-quote-label">In reply to</div><div class="reply-quote-text">${esc(match[2])}</div></div>` : "";
+    const format = m.channel === "whatsapp" ? "whatsapp" : "markdown";
+    const quote = match ? `<div class="reply-quote"><div class="reply-quote-label">In reply to</div><div class="reply-quote-text markdown">${renderMarkdown(match[2], "quote-" + m.id, format)}</div></div>` : "";
     const text = match ? m.text.slice(match[0].length) : m.text;
     const attachments = attachmentsHTML(m.attachments);
     return `<div class="msg user" data-msg-id="${esc(m.id)}">
       <div class="msg-body">
         ${messageHead(m)}
-        <div class="user-bubble">${sender}${quote}${text ? `<div class="markdown">${renderMarkdown(text, m.id)}</div>` : ""}${match ? attachments : ""}</div>
+        <div class="user-bubble">${sender}${quote}${text ? `<div class="markdown">${renderMarkdown(text, m.id, format)}</div>` : ""}${match ? attachments : ""}</div>
         ${match ? "" : attachments}
         ${queueStatusLabel(m) ? `<div class="queue-status">${esc(queueStatusLabel(m))}</div>` : ""}
       </div>

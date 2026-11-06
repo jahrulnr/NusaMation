@@ -9,7 +9,7 @@ const start = app.indexOf('  function userHTML(');
 const end = app.indexOf('\n  function assistantHTML(', start);
 const userHTML = vm.runInNewContext(`(${app.slice(start, end).trim()})`, {
   esc: (s) => String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
-  renderMarkdown: (s) => `<p>${s || ''}</p>`,
+  renderMarkdown: (s) => `<p>${String(s || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</p>`,
   messageHead: () => '', attachmentsHTML: (a) => a?.length ? '<div class="attach-grid">attachment</div>' : '', queueStatusLabel: () => '',
 });
 
@@ -18,7 +18,7 @@ test('quoted media and group attachment-only replies are styled together', () =>
     const html = userHTML({id: 'c', text: `Nama: [In reply to: ${label}]`, attachments: [{id: 'file'}]});
     assert.match(html, /class="reply-sender">Nama: /);
     assert.match(html, /class="reply-quote"/);
-    assert.match(html, new RegExp(`class="reply-quote-text">${label}`));
+    assert.match(html, new RegExp(`class="reply-quote-text markdown"><p>${label}`));
     assert.match(html, /class="attach-grid">attachment<\/div><\/div>/);
     assert.doesNotMatch(html, /class="markdown"/);
   }
@@ -26,7 +26,7 @@ test('quoted media and group attachment-only replies are styled together', () =>
 
 test('captioned media replies preserve the caption and attachment', () => {
   const html = userHTML({id: 'd', text: '[In reply to: an image]\nlihat ini', attachments: [{id: 'file'}]});
-  assert.match(html, /class="reply-quote-text">an image/);
+  assert.match(html, /class="reply-quote-text markdown"><p>an image/);
   assert.match(html, /<p>lihat ini<\/p>/);
   assert.match(html, /class="attach-grid">attachment/);
 });

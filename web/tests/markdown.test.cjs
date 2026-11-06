@@ -18,6 +18,47 @@ function parse(text, scope) {
     context.NusaMarkdown.markedFootnote({ prefixId: `footnote-${scope}-` }), context.NusaMarkdown.emoji());
   return p.parse(relaxListEndings(text));
 }
+const renderContext = vm.createContext({
+  window: { marked: context.marked, NusaMarkdown: context.NusaMarkdown, DOMPurify: { sanitize: (html) => html } },
+  esc: (s) => String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
+  console,
+});
+
+test('WhatsApp multiline monospace keeps its first line and markup literal', () => {
+  const block = renderContext.renderMarkdown('```baris *satu*\n  <dua>```', 'wa-block', 'whatsapp');
+  assert.match(block, /<pre><code>baris \*satu\*\n  &lt;dua&gt;<\/code><\/pre>/);
+  const blankStart = renderContext.renderMarkdown('```\nsatu\ndua```', 'wa-blank-start', 'whatsapp');
+  assert.match(blankStart, /<pre><code>satu\ndua<\/code><\/pre>/);
+  const inline = renderContext.renderMarkdown('Lihat ```satu\ndua``` ya', 'wa-inline', 'whatsapp');
+  assert.match(inline, /<code class="whatsapp-monospace">satu\ndua<\/code>/);
+  const fenced = renderContext.renderMarkdown('```sh\necho hi\n```', 'wa-fence', 'whatsapp');
+  assert.match(fenced, /<code class="language-sh">echo hi/);
+});
+const renderStart = app.indexOf('  const markdownCache = new Map();');
+const renderEnd = app.indexOf('\n  const plainCache = new Map();', renderStart);
+vm.runInContext(app.slice(renderStart, renderEnd) + '\nthis.renderMarkdown = renderMarkdown;', renderContext);
+
+test('WhatsApp messages render bold, italic, strike, code and lists with WhatsApp semantics', () => {
+  const text = '*tebal* _miring_ ~coret~ `inline` ```mono```\n- satu\n- dua';
+  const html = renderContext.renderMarkdown(text, 'wa', 'whatsapp');
+  assert.match(html, /<strong>tebal<\/strong>/);
+  assert.match(html, /<em>miring<\/em>/);
+  assert.match(html, /<del>coret<\/del>/);
+  assert.match(html, /<code>inline<\/code>/);
+  assert.match(html, /<code>mono<\/code>/);
+  assert.match(html, /<li>satu<\/li>/);
+  assert.match(html, /<li>dua<\/li>/);
+});
+
+test('Markdown emphasis is unchanged and cached renders respect the input format', () => {
+  const text = '*miring* **tebal** `*code*`';
+  const md = renderContext.renderMarkdown(text, 'same-id', 'markdown');
+  const wa = renderContext.renderMarkdown(text, 'same-id', 'whatsapp');
+  assert.match(md, /<em>miring<\/em>/);
+  assert.match(wa, /<strong>miring<\/strong>/);
+  assert.match(wa, /<strong>tebal<\/strong>/);
+  assert.match(wa, /<code>\*code\*<\/code>/);
+});
 test('a top-level line after a list becomes its own paragraph', () => {
   const text = 'intro:\n- one --loop\n- two --loop\nclosing line';
   const html = parse(text, 'x');
