@@ -46,6 +46,12 @@ func (s *Service) trySteer(ctx context.Context, conv store.Conversation, text, c
 	s.emit("message.created", conv.ID, s.hydrateMessage(ctx, msg))
 
 	blocks := []acp.ContentBlock{{Type: "text", Text: text}}
+	inputContext := s.inputContext(msg, originChannel, originRef, s.deliveryChannel(a))
+	inputContext.Instructions = append(inputContext.Instructions, "This input steers the running turn. Its reply destination remains the running turn's deliveryChannel.")
+	if rules := s.responseRules(a); rules != "" {
+		inputContext.Instructions = append(inputContext.Instructions, rules)
+	}
+	blocks = appendPromptContext(blocks, inputContext)
 	if steering {
 		steerCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		res, err := s.agents.Steer(steerCtx, session, blocks)

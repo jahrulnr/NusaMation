@@ -58,6 +58,32 @@ func TestSteerInjectsIntoRunningTurn(t *testing.T) {
 	}
 }
 
+func TestCrossChannelSteerKeepsRunningDeliveryContext(t *testing.T) {
+	t.Setenv("FAKE_ACP_MIDTURN", "1")
+	e := newAfterToolsEnv(t)
+	_, running := e.submit("steer-hold", "")
+	waitFor(t, func() bool { return e.hasText("working") }, "hold prompt to start")
+	msg, turn, err := e.svc.Submit(context.Background(), SubmitInput{
+		ConversationID: e.conv.ID, Text: "use usb", Channel: "whatsapp", Delivery: deliverySteer,
+		OriginRef: `{"externalId":"chat-1","messageId":"wa-1","senderId":"sender-1"}`,
+	})
+	if err != nil || turn.ID != running.ID || msg.Text != "use usb" {
+		t.Fatalf("steer result: %+v %+v %v", msg, turn, err)
+	}
+	e.waitStatus(running.ID, "completed")
+	for _, line := range e.trace() {
+		if strings.HasPrefix(line, "steer use usb") {
+			for _, want := range []string{`"inputChannel":"whatsapp"`, `"deliveryChannel":"web"`, `"messageId":"wa-1"`, "steers the running turn"} {
+				if !strings.Contains(line, want) {
+					t.Fatalf("steer missing %s: %s", want, line)
+				}
+			}
+			return
+		}
+	}
+	t.Fatal("no steering request recorded")
+}
+
 func TestChannelSteerWithoutCapabilityWaitsForTools(t *testing.T) {
 	e := newAfterToolsEnv(t)
 	_, p1 := e.submit("steer-hold", "")

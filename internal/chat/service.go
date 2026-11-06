@@ -215,6 +215,9 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 		target = s.activeFor(conv.ID)
 	}
 	meta := map[string]any{}
+	if in.AutomationRunID != "" {
+		meta["automationRunId"] = in.AutomationRunID
+	}
 	if len(uploads) > 0 {
 		list := make([]map[string]any, 0, len(uploads))
 		for _, u := range uploads {

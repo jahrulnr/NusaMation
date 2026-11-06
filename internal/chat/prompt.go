@@ -144,7 +144,7 @@ func (s *Service) runPrompt(a *activeTurn) (status, stopReason string, runErr er
 	if len(blocks) == 0 {
 		return "error", "", errors.New("nothing to send to the agent")
 	}
-	blocks = s.withChannelRules(a, blocks)
+	blocks = s.withTurnContext(a, blocks)
 	if !a.beginPrompt() {
 		return "cancelled", "cancelled", nil
 	}
@@ -352,38 +352,6 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 	return blocks
 }
 
-// withChannelRules appends the delivery surface's formatting rules as the
-// last prompt block so it is the freshest instruction in the turn.
-func (s *Service) withChannelRules(a *activeTurn, blocks []acp.ContentBlock) []acp.ContentBlock {
-	if s.channels != nil {
-		if _, ok := s.channels.Get("whatsapp"); ok && s.workspace != "" {
-			guide := filepath.Join(s.workspace, "AGENTS.md")
-			blocks = append(blocks, acp.ContentBlock{Type: "text", Text: "<system-reminder>\nFor WhatsApp message search or contact lookup, use the NusaMation CLI described in " + guide + ". Search is paginated and covers captured messages and available history.\n</system-reminder>"})
-		}
-	}
-	if a.turn.OriginChannel == "whatsapp" {
-		var origin struct {
-			ExternalID string `json:"externalId"`
-			MessageID  string `json:"messageId"`
-			SenderID   string `json:"senderId"`
-		}
-		if json.Unmarshal([]byte(a.turn.OriginRef), &origin) == nil && origin.ExternalID != "" {
-			metadata, _ := json.Marshal(map[string]string{"target": origin.ExternalID, "messageId": origin.MessageID, "senderId": origin.SenderID, "quotedText": a.user.Text})
-			blocks = append(blocks, acp.ContentBlock{Type: "text", Text: "<system-reminder>\nWhatsApp message context: " + string(metadata) + ". For polls, reactions, quoted replies, stickers, locations, contacts and events, use `nusamation whatsapp send` as documented in the NusaMation WhatsApp ops documentation.\n</system-reminder>"})
-		}
-	}
-	if rules := s.responseRules(a); rules != "" {
-		blocks = append(blocks, acp.ContentBlock{Type: "text", Text: rules})
-	}
-	return blocks
-}
-
-// responseRules returns the formatting rules of the channel this turn's reply
-// will be delivered on, wrapped in the system-reminder tag Claude Code uses
-// for injected context. The text rides inside the user turn: appended at the
-// tail it never invalidates the session's cached prompt prefix, and being
-// byte-identical per channel it becomes part of that prefix on later turns.
-// Channels without a declared style contribute no block.
 func (s *Service) responseRules(a *activeTurn) string {
 	if s.channels == nil {
 		return ""
@@ -400,7 +368,7 @@ func (s *Service) responseRules(a *activeTurn) string {
 	if rules == "" {
 		return ""
 	}
-	return "<system-reminder>\n" + rules + "\n</system-reminder>"
+	return rules
 }
 
 // deliveryChannel resolves the channel this turn's reply is delivered on: the

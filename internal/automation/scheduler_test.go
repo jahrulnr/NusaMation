@@ -2,6 +2,7 @@ package automation
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os/exec"
@@ -61,6 +62,20 @@ func TestSchedulerSessionOwnership(t *testing.T) {
 		}
 		if runs[0].TurnID == "" || runs[1].TurnID == "" {
 			t.Fatalf("missing turn %#v", runs)
+		}
+		for _, run := range runs {
+			turn, err := st.GetTurn(ctx, run.TurnID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			msg, err := st.GetMessage(ctx, turn.UserMessageID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var meta map[string]any
+			if json.Unmarshal(msg.Metadata, &meta) != nil || meta["automationRunId"] != run.ID || msg.Text != job.Prompt {
+				t.Fatalf("automation context not persisted independently of prompt: %+v", msg)
+			}
 		}
 		if (runs[0].ConversationID == runs[1].ConversationID) != (mode == "same") {
 			t.Fatalf("%s conversations %#v", mode, runs)

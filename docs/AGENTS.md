@@ -99,6 +99,10 @@ Important: an agent's own permission mode is separate. If an agent is configured
 
 Changing the mode during a turn is supported. The approval card shows a mode selector for the open conversation. For agents that publish a `mode` config option, the selection is sent with `session/set_config_option`. For agents that only advertise `modes` in the session response, NusaMation exposes them as a synthesized `mode` option and sends `session/set_mode`. The new mode applies to the next permission check. A request that is already pending still needs an answer.
 
+## Prompt instructions
+
+NusaMation sends per-input application context separately from user text, within the ACP user turn. Channel formatting follows the reply destination; automation invocations carry a persisted run identifier. The context applies to the current input, including steering, rather than binding a shared session to one channel. See [ACP prompt context](ACP_PROMPTS.md) for the protocol research, implementation, and limitations.
+
 ## Sessions and handoff
 
 - NusaMation prefers `session/load` when advertised, then `session/resume`, then a new session.

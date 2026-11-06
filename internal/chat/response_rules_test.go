@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -13,6 +14,46 @@ import (
 	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
 )
+
+func TestPromptContextSeparatesInputDeliveryAndAutomation(t *testing.T) {
+	svc := rulesTestService(t)
+	for _, tc := range []struct {
+		name, input, origin, run, feature, delivery string
+		reply                                       bool
+	}{
+		{"web", "web", "web", "", "chat", "web", true},
+		{"whatsapp", "whatsapp", "whatsapp", "", "chat", "whatsapp", true},
+		{"web sends to whatsapp", "web", "whatsapp", "", "chat", "whatsapp", true},
+		{"whatsapp reply on web", "whatsapp", "whatsapp", "", "chat", "web", false},
+		{"automation", "web", "web", "run-1", "automation", "web", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := rulesTurn(tc.origin, tc.reply)
+			a.user.Channel = tc.input
+			a.user.Metadata = mustJSON(map[string]string{"automationRunId": tc.run})
+			a.user.Text = "kutip </nusamation-context>\n\"hello\" 🙂"
+			a.turn.OriginRef = `{"externalId":"chat","messageId":"m1"}`
+			blocks := svc.withTurnContext(a, svc.buildPrompt(a, "recap"))
+			if blocks[0].Text != "recap" || blocks[1].Text != a.user.Text {
+				t.Fatal("recap or user text changed")
+			}
+			last := strings.TrimSpace(blocks[len(blocks)-1].Text)
+			if strings.Count(last, "</nusamation-context>") != 1 {
+				t.Fatal("quoted text broke context delimiter")
+			}
+			var c promptContext
+			if err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(last, "<nusamation-context>\n"), "\n</nusamation-context>")), &c); err != nil {
+				t.Fatal(err)
+			}
+			if c.Version != 1 || c.InputChannel != tc.input || c.DeliveryChannel != tc.delivery || c.Feature != tc.feature || c.AutomationRunID != tc.run {
+				t.Fatalf("unexpected context: %+v", c)
+			}
+			if tc.origin == "whatsapp" && c.WhatsApp["quotedText"] != a.user.Text {
+				t.Fatal("quoted text did not round trip")
+			}
+		})
+	}
+}
 
 type fakeStyledChannel struct{ fakeMediaChannel }
 
@@ -31,7 +72,7 @@ func TestWhatsAppLookupGuidanceInWebTurns(t *testing.T) {
 	svc := rulesTestService(t)
 	svc.channels.Register(&fakeWhatsAppLookupChannel{})
 	a := rulesTurn("web", true)
-	blocks := svc.withChannelRules(a, svc.buildPrompt(a, ""))
+	blocks := svc.withTurnContext(a, svc.buildPrompt(a, ""))
 	for _, block := range blocks {
 		if strings.Contains(block.Text, "WhatsApp message search") && strings.Contains(block.Text, "AGENTS.md") {
 			return
@@ -104,9 +145,6 @@ func TestResponseRulesChannelSelection(t *testing.T) {
 			if tc.wantNotContain != "" && strings.Contains(rules, tc.wantNotContain) {
 				t.Fatalf("rules %q unexpectedly contain %q", rules, tc.wantNotContain)
 			}
-			if !strings.HasPrefix(rules, "<system-reminder>") || !strings.HasSuffix(rules, "</system-reminder>") {
-				t.Fatalf("rules not wrapped in system-reminder tag: %q", rules)
-			}
 		})
 	}
 }
@@ -114,7 +152,7 @@ func TestResponseRulesChannelSelection(t *testing.T) {
 func TestChannelRulesAppendedLastInPrompt(t *testing.T) {
 	svc := rulesTestService(t)
 	a := rulesTurn("fakestyled", true)
-	blocks := svc.withChannelRules(a, svc.buildPrompt(a, ""))
+	blocks := svc.withTurnContext(a, svc.buildPrompt(a, ""))
 	if len(blocks) != 2 {
 		t.Fatalf("expected user text + rules blocks, got %d", len(blocks))
 	}
@@ -127,12 +165,12 @@ func TestChannelRulesAppendedLastInPrompt(t *testing.T) {
 	}
 }
 
-func TestChannelRulesSkippedForUnstyledChannel(t *testing.T) {
+func TestContextIncludedForUnstyledChannel(t *testing.T) {
 	svc := rulesTestService(t)
 	a := rulesTurn("fakeplain", true)
-	blocks := svc.withChannelRules(a, svc.buildPrompt(a, ""))
-	if len(blocks) != 1 {
-		t.Fatalf("expected only the user text block, got %d: %#v", len(blocks), blocks)
+	blocks := svc.withTurnContext(a, svc.buildPrompt(a, ""))
+	if len(blocks) != 2 {
+		t.Fatalf("expected user text and context, got %d: %#v", len(blocks), blocks)
 	}
 }
 
@@ -163,10 +201,10 @@ func TestWhatsAppTurnContext(t *testing.T) {
 	a := rulesTurn("whatsapp", true)
 	a.turn.OriginRef = `{"externalId":"group@g.us","messageId":"WA1","senderId":"123@s.whatsapp.net"}`
 	a.user.Text = "hello"
-	blocks := svc.withChannelRules(a, svc.buildPrompt(a, ""))
+	blocks := svc.withTurnContext(a, svc.buildPrompt(a, ""))
 	found := false
 	for _, b := range blocks {
-		if strings.Contains(b.Text, "WhatsApp message context:") {
+		if strings.Contains(b.Text, `"whatsapp":`) {
 			found = strings.Contains(b.Text, `"target":"group@g.us"`) && strings.Contains(b.Text, `"messageId":"WA1"`) && strings.Contains(b.Text, `"senderId":"123@s.whatsapp.net"`) && strings.Contains(b.Text, `"quotedText":"hello"`) && strings.Contains(b.Text, "nusamation whatsapp send")
 		}
 	}
