@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jahrulnr/nusamation/internal/fsutil"
 	"github.com/jahrulnr/nusamation/internal/store"
 )
 
@@ -37,24 +38,7 @@ func savePickFile(dir string, p *Pick) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".pick-*.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(name)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(name)
-		return err
-	}
-	return os.Rename(name, filepath.Join(dir, p.ID+".json"))
+	return fsutil.WriteFileAtomic(dir, p.ID+".json", data, 0o600)
 }
 
 // validPickID mirrors convMetaPath's traversal guard: pick ids come from the

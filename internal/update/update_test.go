@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -130,6 +131,13 @@ func TestApplyDownloadsVerifiesAndRestarts(t *testing.T) {
 		if gotExe != exe {
 			t.Errorf("restart exe = %q, want %q", gotExe, exe)
 		}
+		// On Windows the swap is deferred to the post-exit helper; the staged
+		// file must already carry the verified bytes when restart starts.
+		if runtime.GOOS == "windows" {
+			if data, err := os.ReadFile(staged); err != nil || string(data) != string(binary) {
+				t.Errorf("staged binary = %q, %v — want downloaded bytes", data, err)
+			}
+		}
 		restarted.Store(true)
 		return nil
 	}
@@ -142,12 +150,17 @@ func TestApplyDownloadsVerifiesAndRestarts(t *testing.T) {
 	if !restarted.Load() {
 		t.Fatal("restart hook never ran; status: " + m.Status().Error)
 	}
-	got, err := os.ReadFile(exe)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(binary) {
-		t.Fatalf("binary not swapped: %q", got)
+	// Unix swaps the exe in-process; on Windows the detached helper moves the
+	// staged file over it only after this process exits, so exe still reads
+	// "old" here by design.
+	if runtime.GOOS != "windows" {
+		got, err := os.ReadFile(exe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(binary) {
+			t.Fatalf("binary not swapped: %q", got)
+		}
 	}
 	st := m.Status()
 	if st.Stage != "restarting" || st.Error != "" {

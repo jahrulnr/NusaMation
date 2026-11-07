@@ -40,6 +40,36 @@ func TestPickFileRoundTrip(t *testing.T) {
 	}
 }
 
+// Re-saving the same pick id exercises rename-over — which os.Rename cannot
+// do on Windows without removing the destination first (fsutil handles it).
+func TestPickFileOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	p := testPick("p1", "s1")
+	if err := savePickFile(dir, p); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	p.Marker = 9
+	if err := savePickFile(dir, p); err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	got, err := loadPickFile(dir, "p1")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Marker != 9 {
+		t.Fatalf("marker = %d, want 9", got.Marker)
+	}
+}
+
+func TestPickFileRejectsTraversal(t *testing.T) {
+	dir := t.TempDir()
+	for _, id := range []string{"", "..", "../x", "a/b", `a\b`} {
+		if _, err := loadPickFile(dir, id); err == nil {
+			t.Fatalf("loadPickFile(%q) accepted", id)
+		}
+	}
+}
+
 // The restart flow: manager A dies, manager B resolves the same pick from disk.
 func TestPickSurvivesManagerRestart(t *testing.T) {
 	dir := t.TempDir()

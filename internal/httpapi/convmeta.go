@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/jahrulnr/nusamation/internal/fsutil"
 )
 
 // Conversation meta is ephemeral UI state kept as a plain JSON file per
@@ -75,25 +77,7 @@ func (s *Server) saveConvMeta(id string, m *convMeta) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".meta-*.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(name)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(name)
-		return err
-	}
-	return os.Rename(name, path)
+	return fsutil.WriteFileAtomic(filepath.Dir(path), filepath.Base(path), data, 0o600)
 }
 
 // handleGetConversationMeta returns the file-backed UI meta; a missing file is
