@@ -1,0 +1,6 @@
+/* Boot */
+.boot { height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: radial-gradient(800px 500px at 50% 40%, #151619 0%, var(--bg) 70%); }
+.boot-orb { width: 58px; height: 58px; border-radius: 18px; background: conic-gradient(from 210deg, #f5b544, #ffcf72, #7ad9c4, #f5b544); filter: drop-shadow(0 0 30px rgba(245, 181, 68, .35)); animation: breathe 2.4s ease-in-out infinite; }
+.boot-name { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; }
+.boot-sub { color: var(--muted); font-size: 13px; }
+@keyframes breathe { 0%,100% { transform: scale(1) rotate(0deg); opacity: .9 } 50% { transform: scale(1.08) rotate(8deg); opacity: 1 } }

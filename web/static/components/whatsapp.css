@@ -1,0 +1,5 @@
+/* WhatsApp QR extras. The QR card itself is in settings.css. */
+/* QR */
+.qr-placeholder { width: 164px; height: 164px; border-radius: 9px; border: 1px dashed var(--border-strong); display: grid; place-items: center; color: var(--muted-2); font-size: 11px; text-align: center; padding: 18px; flex: none; }
+.qr-info h4 { font-size: 13px; }
+.qr-info .muted { line-height: 1.55; }

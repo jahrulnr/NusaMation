@@ -1,0 +1,11 @@
+/* Short touch viewports need the chat width even when landscape is wide. */
+@media (min-width: 801px) and (max-height: 500px) and (pointer: coarse) {
+  .app, .boot-skeleton { grid-template-columns: 1fr; }
+  .boot-skeleton aside { display: none; }
+  .sidebar { position: fixed; inset: 0 auto 0 0; width: min(310px, 86vw); transform: translateX(-104%); transition: transform .22s ease; box-shadow: 20px 0 60px rgba(0,0,0,.4); }
+  .sidebar.open { transform: translateX(0); }
+  .mobile-scrim { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 25; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .mobile-scrim.show { opacity: 1; pointer-events: auto; }
+  .menu-btn { display: inline-grid; }
+  .topbar-sub { display: none; }
+}

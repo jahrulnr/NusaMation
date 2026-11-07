@@ -1,0 +1,6 @@
+/* Approvals modal. Inline approval cards are in chat.css. */
+/* approvals modal */
+.approval-list { display: flex; flex-direction: column; gap: 6px; }
+.approval-modal-item .approval-card { margin-bottom: 6px; }
+.approval-card .btn { position: relative; }
+.approval-card .loading-row { display: inline-flex; }

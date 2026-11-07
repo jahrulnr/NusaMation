@@ -1,0 +1,26 @@
+/* Code copy, then disclosures, diagrams, and math. Prose markdown is in chat.css. */
+/* code copy */
+.code-copy { position: absolute; top: 7px; right: 7px; width: 28px; height: 28px; border-radius: 7px; background: rgba(20,23,28,.86); border: 1px solid var(--border); color: var(--muted); display: grid; place-items: center; opacity: 0; transition: .15s; }
+.markdown pre:hover .code-copy { opacity: 1; }
+.code-copy:hover { color: var(--text); border-color: var(--border-strong); }
+
+/* Markdown content should keep intrinsic image sizes and disclose expandable sections. */
+.markdown img { max-width: 100%; height: auto; }
+.markdown details { margin: 12px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.markdown details > summary { cursor: pointer; padding: 10px 12px; color: var(--text); font-weight: 600; }
+.markdown details > summary:hover, .markdown details > summary:focus-visible { background: var(--panel-2); }
+.markdown details[open] > summary { border-bottom: 1px solid var(--border); }
+.markdown details > :not(summary) { margin: 10px 12px; }
+.mermaid-diagram { max-width: 100%; margin: 12px 0; border: 1px solid var(--border); border-radius: 10px; background: #0d0f13; --pele-bg: #0d0f13; --pele-fg: #e9e7e2; --pele-muted: #a9a69e; --pele-line: #b6b2a8; --pele-surface: #171a20; --pele-surface-alt: #20232b; --pele-border: #494b50; --pele-accent: #f5b544; }
+.diagram-toolbar { display: flex; justify-content: flex-end; gap: 4px; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+.diagram-toolbar button { min-width: 36px; min-height: 32px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-soft); }
+.diagram-toolbar button:hover { background: var(--panel-2); }
+.diagram-viewport { overflow: auto; max-height: min(65vh, 640px); padding: 12px; touch-action: pan-x pan-y; cursor: grab; }
+.diagram-viewport.dragging { cursor: grabbing; user-select: none; }
+.mermaid-diagram .diagram-viewport svg { display: block; max-width: none; height: auto; margin: auto; }
+.markdown .diagram-source { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+.markdown .diagram-source summary { font-size: 11px; }
+.markdown .diagram-source pre { margin: 10px 12px; }
+.markdown .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+.markdown .footnotes { border-top: 1px solid var(--border); margin-top: 18px; padding-top: 8px; font-size: 0.9em; }
+.markdown .footnotes .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); }

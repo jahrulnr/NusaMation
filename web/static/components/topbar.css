@@ -1,0 +1,17 @@
+/* Main */
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; background: radial-gradient(1000px 500px at 60% -10%, rgba(245,181,68,.045), transparent 60%), var(--bg); }
+.topbar { height: var(--topbar-h); flex: none; display: flex; align-items: center; gap: 10px; padding: 0 18px 0 16px; border-bottom: 1px solid var(--border); background: rgba(8,9,11,.72); backdrop-filter: blur(14px); position: relative; z-index: 20; }
+.menu-btn { display: none; }
+.topbar-title-wrap { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.topbar-title { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 38vw; }
+.topbar-sub { font-size: 10.5px; color: var(--muted-2); display: flex; align-items: center; gap: 5px; }
+.topbar-sub .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--muted-2); }
+.topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 5px; }
+.pill-btn { display: inline-flex; align-items: center; gap: 7px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 9px; background: rgba(255,255,255,.02); color: var(--text-soft); font-size: 11.5px; font-weight: 550; transition: .15s; max-width: 190px; }
+.pill-btn:hover { background: var(--panel-2); border-color: var(--border-strong); color: var(--text); }
+.pill-btn .icon { width: 13px; height: 13px; }
+.pill-btn .pill-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pill-btn.accent { color: var(--accent); border-color: var(--accent-line); background: var(--accent-dim); }
+.agent-orb { width: 18px; height: 18px; border-radius: 6px; display: grid; place-items: center; font-size: 9px; font-weight: 800; color: #17130b; background: linear-gradient(145deg, #ffd27b, #d99125); flex: none; }
+.approval-bell { position: relative; }
+.approval-bell .badge { position: absolute; top: 1px; right: 0; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: #17130b; font-size: 9px; font-weight: 800; display: grid; place-items: center; border: 2px solid var(--bg); }

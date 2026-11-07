@@ -1,0 +1,47 @@
+/* Narrow popover/QR, coarse-pointer targets, and the short composer.
+   The 44px icon-button bump stays at the bottom of skeleton.css so it follows these 40px rules. */
+@media (max-width: 800px) {
+  .popover { max-width: calc(100vw - 16px) !important; }
+  .qr-placeholder { width: 200px; height: 200px; align-self: center; }
+}
+
+/* Touch targets, iOS input zoom and short viewports */
+@media (max-width: 800px), (pointer: coarse) {
+  .input, .textarea, .select, .sidebar-search input, .palette-input, .secret-row .input, .allowlist, .config-select, .composer textarea { font-size: 16px; }
+  .topbar .icon-btn, .sidebar-top .icon-btn, .conv-meta > .icon-btn, .composer-bar > .icon-btn { width: 40px; height: 40px; }
+  .topbar .pill-btn, .composer-choice, .composer .reply-toggle, .stop-btn { min-height: 40px; }
+  .topbar .agent-pill { min-width: 40px; justify-content: center; }
+  .send-split { height: 44px; }
+  .send-split .send-btn { width: 44px; height: 44px; }
+  .send-menu-btn { width: 32px; height: 44px; }
+  .composer-mobile-settings { width: 44px; height: 44px; }
+}
+@media (hover: none), (pointer: coarse) {
+  .code-copy { opacity: 1; width: 40px; height: 40px; }
+  .markdown pre code { padding-right: 56px; }
+}
+@media (max-height: 500px) {
+  .modal-overlay:has(.settings-modal) { padding: 4px; }
+  .modal.settings-modal { max-height: calc(var(--app-h, 100dvh) - 8px); }
+  .settings-modal .modal-head { padding: 6px 12px; }
+  .settings-modal .modal-sub { display: none; }
+  .settings-modal .settings-content { padding: 8px 12px; }
+  .automation-actions { padding: 4px 0; }
+  :root { --topbar-h: 48px; }
+  .composer-foot { display: none; }
+  .composer-wrap { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+  .composer { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; align-items: center; column-gap: 4px; padding: 4px 4px 4px 6px; }
+  .composer-attachments { grid-column: 1 / -1; }
+  .composer textarea { grid-column: 3; grid-row: 2; min-height: 44px; padding: 11px 10px; line-height: 22px; }
+  .composer-bar { display: contents; }
+  .composer-bar > .icon-btn, .composer-bar > .composer-mobile-settings, .composer-bar > .stop-btn, .composer-bar > .send-split { grid-row: 2; }
+  .composer-bar > .icon-btn { grid-column: 1; }
+  .composer-bar > .composer-mobile-settings { display: inline-grid; place-items: center; grid-column: 2; width: 44px; height: 44px; border-radius: 9px; color: var(--muted); font-size: 18px; }
+  .composer-bar > .stop-btn { grid-column: 4; }
+  .composer-bar > .send-split { grid-column: 5; }
+  .composer-bar > .agent-choice, .composer-bar > .composer-configs, .composer-bar > .composer-mobile-summary, .composer-bar > .composer-choice, .composer-bar > .reply-toggle, .composer-bar > .grow { display: none; }
+}
+@media (max-width: 360px) and (max-height: 500px) {
+  .composer textarea { grid-column: 1 / -1; grid-row: 2; }
+  .composer-bar > .icon-btn, .composer-bar > .composer-mobile-settings, .composer-bar > .stop-btn, .composer-bar > .send-split { grid-row: 3; }
+}
