@@ -20,7 +20,6 @@ import (
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/jahrulnr/nusamation/internal/channels"
 	"github.com/jahrulnr/nusamation/internal/config"
@@ -546,7 +545,7 @@ func (c *Channel) sendText(ctx context.Context, chat types.JID, text string) (ty
 	if client == nil || !client.IsLoggedIn() {
 		return "", errors.New("WhatsApp is not connected")
 	}
-	msg := &waE2E.Message{Conversation: proto.String(text)}
+	msg := &waE2E.Message{Conversation: new(text)}
 	resp, err := client.SendMessage(ctx, chat, msg)
 	if err != nil {
 		return "", err
@@ -685,10 +684,10 @@ func (c *Channel) SendMedia(ctx context.Context, target channels.Target, media c
 			FileEncSHA256: up.FileEncSHA256,
 			FileSHA256:    up.FileSHA256,
 			FileLength:    &up.FileLength,
-			Mimetype:      proto.String(mime),
+			Mimetype:      new(mime),
 		}
 		if caption != "" {
-			m.Caption = proto.String(caption)
+			m.Caption = new(caption)
 		}
 		msg.ImageMessage = m
 	case whatsmeow.MediaVideo:
@@ -699,11 +698,11 @@ func (c *Channel) SendMedia(ctx context.Context, target channels.Target, media c
 			FileEncSHA256:    up.FileEncSHA256,
 			FileSHA256:       up.FileSHA256,
 			FileLength:       &up.FileLength,
-			Mimetype:         proto.String(mime),
+			Mimetype:         new(mime),
 			StreamingSidecar: up.StreamingSidecar,
 		}
 		if caption != "" {
-			m.Caption = proto.String(caption)
+			m.Caption = new(caption)
 		}
 		msg.VideoMessage = m
 	case whatsmeow.MediaAudio:
@@ -714,11 +713,11 @@ func (c *Channel) SendMedia(ctx context.Context, target channels.Target, media c
 			FileEncSHA256: up.FileEncSHA256,
 			FileSHA256:    up.FileSHA256,
 			FileLength:    &up.FileLength,
-			Mimetype:      proto.String(mime),
+			Mimetype:      new(mime),
 		}
 		// OGG/OPUS clips render as push-to-talk voice-note bubbles.
 		if mime == "audio/ogg" || mime == "audio/opus" {
-			m.PTT = proto.Bool(true)
+			m.PTT = new(true)
 		}
 		msg.AudioMessage = m
 	default:
@@ -738,11 +737,11 @@ func (c *Channel) SendMedia(ctx context.Context, target channels.Target, media c
 			FileEncSHA256: up.FileEncSHA256,
 			FileSHA256:    up.FileSHA256,
 			FileLength:    &up.FileLength,
-			Mimetype:      proto.String(mime),
-			FileName:      proto.String(fileName),
+			Mimetype:      new(mime),
+			FileName:      new(fileName),
 		}
 		if caption != "" {
-			m.Caption = proto.String(caption)
+			m.Caption = new(caption)
 		}
 		msg.DocumentMessage = m
 	}

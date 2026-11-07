@@ -13,10 +13,10 @@ import (
 
 func TestPollText(t *testing.T) {
 	p := &waE2E.PollCreationMessage{
-		Name: proto.String("ini bisa di jawab?"),
+		Name: new("ini bisa di jawab?"),
 		Options: []*waE2E.PollCreationMessage_Option{
-			{OptionName: proto.String("Ya")},
-			{OptionName: proto.String("Tidak")},
+			{OptionName: new("Ya")},
+			{OptionName: new("Tidak")},
 		},
 		SelectableOptionsCount: proto.Uint32(1),
 	}
@@ -36,7 +36,7 @@ func TestPollText(t *testing.T) {
 }
 
 func TestPollCreationVariants(t *testing.T) {
-	p := &waE2E.PollCreationMessage{Name: proto.String("q")}
+	p := &waE2E.PollCreationMessage{Name: new("q")}
 	if pollCreation(nil) != nil {
 		t.Fatal("nil message should have no poll")
 	}
@@ -53,7 +53,7 @@ func TestPollCreationVariants(t *testing.T) {
 			t.Fatalf("variant %d not extracted", i)
 		}
 	}
-	if got := pollCreation(&waE2E.Message{Conversation: proto.String("hi")}); got != nil {
+	if got := pollCreation(&waE2E.Message{Conversation: new("hi")}); got != nil {
 		t.Fatalf("plain text resolved as poll: %v", got)
 	}
 }
@@ -84,7 +84,7 @@ func TestPollKeysMatchEmbeddedMessageKey(t *testing.T) {
 	// the lookup must land on a key rememberPoll wrote.
 	found := false
 	for _, k := range pollKeys((&waCommon.MessageKey{
-		RemoteJID: proto.String(chat.String()), ID: proto.String("POLLID1"),
+		RemoteJID: new(chat.String()), ID: new("POLLID1"),
 	}).GetRemoteJID(), "POLLID1") {
 		for _, s := range stored {
 			if s == k {
@@ -105,16 +105,16 @@ func TestPollKeysMatchEmbeddedMessageKey(t *testing.T) {
 func TestPollAddOptionExtendsCache(t *testing.T) {
 	c := &Channel{polls: map[string][]string{}}
 	info := types.MessageInfo{
-		MessageSource: types.MessageSource{Chat: types.JID{User: "62812", Server: "s.whatsapp.net"}},
-		ID:            "POLLID2",
+		Chat: types.JID{User: "62812", Server: "s.whatsapp.net"},
+		ID:   "POLLID2",
 	}
 	c.rememberPoll(info, &waE2E.PollCreationMessage{
-		Name: proto.String("q"),
+		Name: new("q"),
 		Options: []*waE2E.PollCreationMessage_Option{
-			{OptionName: proto.String("Ya")},
+			{OptionName: new("Ya")},
 		},
 	})
-	mk := &waCommon.MessageKey{RemoteJID: proto.String(info.Chat.String()), ID: proto.String("POLLID2")}
+	mk := &waCommon.MessageKey{RemoteJID: new(info.Chat.String()), ID: new("POLLID2")}
 	c.rememberPollOption(mk, "Mungkin")
 	vote := &waE2E.PollVoteMessage{SelectedOptions: whatsmeow.HashPollOptions([]string{"Mungkin"})}
 	if got := voteOptionNames(vote, c.polls[pollKey(info.Chat.String(), "POLLID2")]); len(got) != 1 || got[0] != "Mungkin" {
@@ -122,14 +122,14 @@ func TestPollAddOptionExtendsCache(t *testing.T) {
 	}
 	if got := c.pollOptionText(&waE2E.PollAddOptionMessage{
 		PollCreationMessageKey: mk,
-		AddOption:              &waE2E.PollCreationMessage_Option{OptionName: proto.String("Lainnya")},
+		AddOption:              &waE2E.PollCreationMessage_Option{OptionName: new("Lainnya")},
 	}); got != "[Poll option added: Lainnya]" {
 		t.Fatalf("pollOptionText = %q", got)
 	}
 }
 
 func TestIsPollTraffic(t *testing.T) {
-	p := &waE2E.PollCreationMessage{Name: proto.String("q")}
+	p := &waE2E.PollCreationMessage{Name: new("q")}
 	for i, msg := range []*waE2E.Message{
 		{PollCreationMessageV3: p},
 		{PollUpdateMessage: &waE2E.PollUpdateMessage{}},
@@ -139,7 +139,7 @@ func TestIsPollTraffic(t *testing.T) {
 			t.Fatalf("poll traffic %d not detected", i)
 		}
 	}
-	if isPollTraffic(&waE2E.Message{Conversation: proto.String("hi")}) {
+	if isPollTraffic(&waE2E.Message{Conversation: new("hi")}) {
 		t.Fatal("plain text detected as poll traffic")
 	}
 }
@@ -151,31 +151,31 @@ func TestWaTextRichTypes(t *testing.T) {
 		want string
 	}{
 		{"live location", &waE2E.Message{LiveLocationMessage: &waE2E.LiveLocationMessage{
-			DegreesLatitude: proto.Float64(-6.2), DegreesLongitude: proto.Float64(106.8),
+			DegreesLatitude: new(-6.2), DegreesLongitude: new(106.8),
 		}}, "[Live location: -6.200000, 106.800000]"},
 		{"contacts array", &waE2E.Message{ContactsArrayMessage: &waE2E.ContactsArrayMessage{
 			Contacts: []*waE2E.ContactMessage{
-				{DisplayName: proto.String("A")}, {DisplayName: proto.String("B")},
+				{DisplayName: new("A")}, {DisplayName: new("B")},
 			},
 		}}, "[Contact cards: A, B]"},
 		{"event", &waE2E.Message{EventMessage: &waE2E.EventMessage{
-			Name: proto.String("Rapat"), StartTime: proto.Int64(1730000000),
+			Name: new("Rapat"), StartTime: proto.Int64(1730000000),
 		}}, "[Event: Rapat — " + time.Unix(1730000000, 0).Format("2006-01-02 15:04") + "]"},
 		{"group invite", &waE2E.Message{GroupInviteMessage: &waE2E.GroupInviteMessage{
-			GroupName: proto.String("Tim Inti"), InviteCode: proto.String("xyz"),
+			GroupName: new("Tim Inti"), InviteCode: new("xyz"),
 		}}, "[Group invite: Tim Inti]"},
 		{"flow response", &waE2E.Message{InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
 			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
 				NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
-					ParamsJSON: proto.String(`{"a":"b"}`),
+					ParamsJSON: new(`{"a":"b"}`),
 				},
 			},
 		}}, `[Form response: {"a":"b"}]`},
 		{"order", &waE2E.Message{OrderMessage: &waE2E.OrderMessage{
-			OrderTitle: proto.String("Kopi"), ItemCount: proto.Int32(3),
+			OrderTitle: new("Kopi"), ItemCount: proto.Int32(3),
 		}}, "[Order: Kopi — 3 item(s)]"},
 		{"product", &waE2E.Message{ProductMessage: &waE2E.ProductMessage{
-			Body: proto.String("Sepatu lari"),
+			Body: new("Sepatu lari"),
 		}}, "[Product: Sepatu lari]"},
 	}
 	for _, tc := range cases {
@@ -187,16 +187,16 @@ func TestWaTextRichTypes(t *testing.T) {
 
 func TestQuoteContext(t *testing.T) {
 	msg := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-		Text: proto.String("Ya"),
+		Text: new("Ya"),
 		ContextInfo: &waE2E.ContextInfo{
-			QuotedMessage: &waE2E.Message{Conversation: proto.String("ini bisa di jawab?")},
+			QuotedMessage: &waE2E.Message{Conversation: new("ini bisa di jawab?")},
 		},
 	}}
 	if got := quoteContext(msg); got != "[In reply to: ini bisa di jawab?]" {
 		t.Fatalf("text quote = %q", got)
 	}
 	img := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-		Text: proto.String("bagus"),
+		Text: new("bagus"),
 		ContextInfo: &waE2E.ContextInfo{
 			QuotedMessage: &waE2E.Message{ImageMessage: &waE2E.ImageMessage{}},
 		},
@@ -207,7 +207,7 @@ func TestQuoteContext(t *testing.T) {
 	// A sticker carrying a quote (sticker replies now surface their context).
 	sticker := &waE2E.Message{StickerMessage: &waE2E.StickerMessage{
 		ContextInfo: &waE2E.ContextInfo{
-			QuotedMessage: &waE2E.Message{Conversation: proto.String("besok jadi?")},
+			QuotedMessage: &waE2E.Message{Conversation: new("besok jadi?")},
 		},
 	}}
 	if got := quoteContext(sticker); got != "[In reply to: besok jadi?]" {
@@ -215,7 +215,7 @@ func TestQuoteContext(t *testing.T) {
 	}
 	// A quote wrapped in view-once unwraps before labeling.
 	vo := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-		Text: proto.String("ok"),
+		Text: new("ok"),
 		ContextInfo: &waE2E.ContextInfo{
 			QuotedMessage: &waE2E.Message{ViewOnceMessage: &waE2E.FutureProofMessage{
 				Message: &waE2E.Message{ImageMessage: &waE2E.ImageMessage{}},
@@ -227,7 +227,7 @@ func TestQuoteContext(t *testing.T) {
 	}
 	// A poll without caption-like text falls back to its kind label.
 	pq := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-		Text: proto.String("Ya"),
+		Text: new("Ya"),
 		ContextInfo: &waE2E.ContextInfo{
 			QuotedMessage: &waE2E.Message{PollCreationMessage: &waE2E.PollCreationMessage{}},
 		},
@@ -235,7 +235,7 @@ func TestQuoteContext(t *testing.T) {
 	if got := quoteContext(pq); got != "[In reply to: a poll]" {
 		t.Fatalf("poll quote = %q", got)
 	}
-	if got := quoteContext(&waE2E.Message{Conversation: proto.String("hi")}); got != "" {
+	if got := quoteContext(&waE2E.Message{Conversation: new("hi")}); got != "" {
 		t.Fatalf("plain message quote = %q", got)
 	}
 }

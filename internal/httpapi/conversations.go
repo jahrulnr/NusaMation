@@ -19,8 +19,7 @@ func (s *Server) handlePrepareConversation(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 	defer cancel()
 	if err := s.chat.PrepareSession(ctx, r.PathValue("id")); err != nil {
-		var authErr *agent.AuthRequiredError
-		if errors.As(err, &authErr) {
+		if authErr, ok := errors.AsType[*agent.AuthRequiredError](err); ok {
 			writeJSON(w, http.StatusForbidden, map[string]any{"code": "agent_auth_required", "error": err.Error(), "authMethods": authErr.Methods})
 			return
 		}

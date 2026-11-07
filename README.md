@@ -49,6 +49,24 @@ Forgot the password? Stop the app and reset it:
 
 On first run NusaMation scans `PATH` for popular ACP CLIs (Devin, Claude Agent, Codex, Gemini, Copilot, OpenCode, Auggie, goose, Kimi, Cursor, Kilo, Qwen, Mistral Vibe, Kiro) and seeds every one it finds as an agent. Add more manually in **Control center → Agents** or with `nusamation agent add`.
 
+### Install from a release (no source checkout)
+
+Every push to `master` runs the tests and builds the binaries; when `VERSION` has been bumped, it also publishes a tagged release with the binaries and installers. Install the latest release with one command:
+
+- **Linux** (mirrors `make install`: binary + systemd user service):
+
+  ```bash
+  curl -fsSL https://github.com/jahrulnr/NusaMation/releases/latest/download/install.sh | bash
+  ```
+
+- **Windows** (PowerShell: installs under `%LOCALAPPDATA%\NusaMation\bin`, adds it to the user PATH and registers a hidden logon task):
+
+  ```powershell
+  irm https://github.com/jahrulnr/NusaMation/releases/latest/download/install.ps1 | iex
+  ```
+
+Pin a version with `NUSAMATION_VERSION=0.1.0` (Linux) or `$env:NUSAMATION_VERSION = '0.1.0'` (Windows). See `scripts/install.sh` / `scripts/install.ps1` for all options and uninstall.
+
 ### Install as a user service
 
 On Linux with a systemd user manager, install the binary and autostart it without root:
@@ -325,12 +343,16 @@ Read [docs/AGENTS.md](docs/AGENTS.md) for approval policies, MCP, auth and works
 ## Development
 
 ```bash
-make test       # go test ./...
-make vet        # go vet ./...
+make check      # fmt + vet (linux & windows) + tests + windows compile check
+make test       # go test ./... (+ GOOS=windows go build ./... as compile check)
+make vet        # go vet ./... (+ GOOS=windows go vet ./...)
+make fmt        # go fmt ./...
 make build      # bin/nusamation
 make fake       # bin/fake-acp-agent
 make run        # go run ./cmd/nusamation
 ```
+
+The `make check` targets also vet and compile the Windows target, so platform-specific code (see `internal/procsys` for the Unix/Windows process-group split) is caught before CI. Windows unit tests themselves run on the Windows CI runners in [`.github/workflows/release.yml`](.github/workflows/release.yml); a Linux host cannot execute Windows test binaries.
 
 ## Security model
 

@@ -432,7 +432,7 @@ func truncate(s string, n int) string {
 type ClientCapabilities struct {
 	FS          FileSystemCapabilities    `json:"fs"`
 	Terminal    bool                      `json:"terminal"`
-	Session     ClientSessionCapabilities `json:"session,omitempty"`
+	Session     ClientSessionCapabilities `json:"session"`
 	Auth        AuthClientCapabilities    `json:"auth"`
 	Elicitation any                       `json:"elicitation,omitempty"`
 	Meta        json.RawMessage           `json:"_meta,omitempty"`
@@ -529,7 +529,8 @@ type ElicitationResponse struct {
 	Content json.RawMessage `json:"content,omitempty"`
 }
 
-func IntPtr(n int) *int { return &n }
+//go:fix inline
+func IntPtr(n int) *int { return new(n) }
 
 func MustRaw(v any) json.RawMessage {
 	b, _ := json.Marshal(v)

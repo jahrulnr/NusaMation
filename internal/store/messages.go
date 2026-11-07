@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/jahrulnr/nusamation/internal/ids"
@@ -198,8 +199,8 @@ func BuildTranscriptRecap(msgs []Message, maxChars int) string {
 	}
 	var b strings.Builder
 	b.WriteString("## Context from earlier in this conversation\n\n")
-	for i := len(msgs) - 1; i >= 0; i-- {
-		m := msgs[i]
+	for _, m := range slices.Backward(msgs) {
+
 		if m.Kind == "tool" {
 			continue
 		}

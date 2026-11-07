@@ -203,10 +203,3 @@ func TestAuthCSRFAndConversationAPI(t *testing.T) {
 		t.Fatal("four-character password was not saved")
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

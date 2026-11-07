@@ -28,16 +28,21 @@ fake:
 run:
 	go run ./cmd/nusamation
 
+fix:
+	go fix ./...
+
 test:
 	go test ./...
+	GOOS=windows go build ./...   # compile check; Windows tests run on CI runners
 
 vet:
 	go vet ./...
+	GOOS=windows go vet ./...
 
 fmt:
 	go fmt ./...
 
-check: fmt vet test
+check: fix fmt vet test
 
 clean:
 	rm -rf bin

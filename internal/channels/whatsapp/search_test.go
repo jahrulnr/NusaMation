@@ -30,16 +30,16 @@ func TestPassiveCaptureAndHistoryAreSearchable(t *testing.T) {
 	self := types.NewJID("100", types.DefaultUserServer)
 	c := &Channel{store: st, log: slog.New(slog.NewTextHandler(io.Discard, nil)), lifeCtx: context.Background(), sem: make(chan struct{}, 4), settings: Settings{Enabled: true, GroupPolicy: "disabled", AllowedNumbers: []string{"100"}}, client: whatsmeow.NewClient(&wastore.Device{ID: &self}, nil)}
 	chat := types.NewJID("200", types.DefaultUserServer)
-	live := &events.Message{Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: chat, Sender: chat}, ID: "live", Timestamp: time.Now()}, Message: &waE2E.Message{Conversation: proto.String("upgrade php live")}}
+	live := &events.Message{Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: chat, Sender: chat}, ID: "live", Timestamp: time.Now()}, Message: &waE2E.Message{Conversation: new("upgrade php live")}}
 	c.handleEvent(live)
 	group := types.NewJID("300", types.GroupServer)
-	groupMessage := &events.Message{Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: group, Sender: chat, IsGroup: true}, ID: "group", Timestamp: time.Now()}, Message: &waE2E.Message{Conversation: proto.String("upgrade php group")}}
+	groupMessage := &events.Message{Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: group, Sender: chat, IsGroup: true}, ID: "group", Timestamp: time.Now()}, Message: &waE2E.Message{Conversation: new("upgrade php group")}}
 	c.handleEvent(groupMessage)
 	page, err := st.SearchWhatsAppMessages(context.Background(), store.WhatsAppSearch{Query: "upgrade php", Limit: 50})
 	if err != nil || len(page.Messages) != 2 {
 		t.Fatalf("passive message: %#v %v", page, err)
 	}
-	history := &events.HistorySync{Data: &waHistorySync.HistorySync{Conversations: []*waHistorySync.Conversation{{ID: proto.String(chat.String()), Messages: []*waHistorySync.HistorySyncMsg{{Message: &waWeb.WebMessageInfo{Key: &waCommon.MessageKey{ID: proto.String("old")}, Message: &waE2E.Message{Conversation: proto.String("upgrade php history")}, MessageTimestamp: proto.Uint64(100)}}}}}}}
+	history := &events.HistorySync{Data: &waHistorySync.HistorySync{Conversations: []*waHistorySync.Conversation{{ID: new(chat.String()), Messages: []*waHistorySync.HistorySyncMsg{{Message: &waWeb.WebMessageInfo{Key: &waCommon.MessageKey{ID: new("old")}, Message: &waE2E.Message{Conversation: new("upgrade php history")}, MessageTimestamp: proto.Uint64(100)}}}}}}}
 	c.indexHistory(history)
 	c.indexHistory(history)
 	page, err = st.SearchWhatsAppMessages(context.Background(), store.WhatsAppSearch{Query: "upgrade php", Limit: 50})

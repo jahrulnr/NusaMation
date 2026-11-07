@@ -11,7 +11,6 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/jahrulnr/nusamation/internal/channels"
 )
@@ -43,7 +42,7 @@ func locationMessage(req OutboundRequest) (*waE2E.LocationMessage, error) {
 	if req.Latitude == nil || req.Longitude == nil || *req.Latitude < -90 || *req.Latitude > 90 || *req.Longitude < -180 || *req.Longitude > 180 {
 		return nil, errors.New("latitude and longitude are required and must be valid coordinates")
 	}
-	return &waE2E.LocationMessage{DegreesLatitude: req.Latitude, DegreesLongitude: req.Longitude, Name: proto.String(req.Name), Address: proto.String(req.Address)}, nil
+	return &waE2E.LocationMessage{DegreesLatitude: req.Latitude, DegreesLongitude: req.Longitude, Name: new(req.Name), Address: new(req.Address)}, nil
 }
 
 // buildOutbound prepares non-media messages separately from network I/O.
@@ -53,7 +52,7 @@ func buildOutbound(req OutboundRequest) (*waE2E.Message, error) {
 		if strings.TrimSpace(req.Text) == "" || req.MessageID == "" || req.SenderID == "" {
 			return nil, errors.New("reply requires text, messageId and senderId")
 		}
-		return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(req.Text), ContextInfo: &waE2E.ContextInfo{StanzaID: proto.String(req.MessageID), Participant: proto.String(req.SenderID), QuotedMessage: &waE2E.Message{Conversation: proto.String(req.QuotedText)}}}}, nil
+		return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: new(req.Text), ContextInfo: &waE2E.ContextInfo{StanzaID: new(req.MessageID), Participant: new(req.SenderID), QuotedMessage: &waE2E.Message{Conversation: new(req.QuotedText)}}}}, nil
 	case "location":
 		loc, err := locationMessage(req)
 		if err != nil {
@@ -64,14 +63,14 @@ func buildOutbound(req OutboundRequest) (*waE2E.Message, error) {
 		if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.VCard) == "" {
 			return nil, errors.New("contact requires name and vcard")
 		}
-		return &waE2E.Message{ContactMessage: &waE2E.ContactMessage{DisplayName: proto.String(req.Name), Vcard: proto.String(req.VCard)}}, nil
+		return &waE2E.Message{ContactMessage: &waE2E.ContactMessage{DisplayName: new(req.Name), Vcard: new(req.VCard)}}, nil
 	case "event":
 		if strings.TrimSpace(req.Name) == "" || req.StartTime <= 0 || (req.EndTime != 0 && req.EndTime < req.StartTime) {
 			return nil, errors.New("event requires a name and valid startTime/endTime")
 		}
-		ev := &waE2E.EventMessage{Name: proto.String(req.Name), Description: proto.String(req.Description), StartTime: proto.Int64(req.StartTime), JoinLink: proto.String(req.JoinLink)}
+		ev := &waE2E.EventMessage{Name: new(req.Name), Description: new(req.Description), StartTime: new(req.StartTime), JoinLink: new(req.JoinLink)}
 		if req.EndTime != 0 {
-			ev.EndTime = proto.Int64(req.EndTime)
+			ev.EndTime = new(req.EndTime)
 		}
 		if req.Latitude != nil || req.Longitude != nil {
 			loc, err := locationMessage(req)
@@ -151,7 +150,7 @@ func (c *Channel) SendStructured(ctx context.Context, req OutboundRequest) (stri
 		if err != nil {
 			return "", err
 		}
-		msg = &waE2E.Message{StickerMessage: &waE2E.StickerMessage{URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey, FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: &up.FileLength, Mimetype: proto.String("image/webp"), IsAnimated: proto.Bool(req.Animated)}}
+		msg = &waE2E.Message{StickerMessage: &waE2E.StickerMessage{URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey, FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: &up.FileLength, Mimetype: new("image/webp"), IsAnimated: new(req.Animated)}}
 	default:
 		msg, err = buildOutbound(req)
 		if err != nil {

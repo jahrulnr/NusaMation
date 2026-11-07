@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jahrulnr/nusamation/internal/store"
+	"github.com/jahrulnr/nusamation/internal/testutil"
 )
 
 func TestArchiveAndDeleteAllAgentSessions(t *testing.T) {
@@ -14,7 +15,7 @@ func TestArchiveAndDeleteAllAgentSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	enabled := true
-	ag, err := e.st.CreateAgent(ctx, store.AgentInput{Name: "Other", Slug: "other-test", Command: buildFakeAgent(t), Cwd: e.conv.Cwd, Enabled: &enabled})
+	ag, err := e.st.CreateAgent(ctx, store.AgentInput{Name: "Other", Slug: "other-test", Command: testutil.BuildFakeACP(t), Cwd: e.conv.Cwd, Enabled: &enabled})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +51,7 @@ func TestSharedMCPReachesEachAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	enabled := true
-	ag, err := e.st.CreateAgent(ctx, store.AgentInput{Name: "Other", Slug: "other-shared", Command: buildFakeAgent(t), Cwd: e.conv.Cwd, Enabled: &enabled})
+	ag, err := e.st.CreateAgent(ctx, store.AgentInput{Name: "Other", Slug: "other-shared", Command: testutil.BuildFakeACP(t), Cwd: e.conv.Cwd, Enabled: &enabled})
 	if err != nil {
 		t.Fatal(err)
 	}

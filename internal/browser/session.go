@@ -640,7 +640,7 @@ func (s *Session) castLoop(ctx context.Context, cancel context.CancelFunc) {
 	}()
 	events := cdp.Events[page.EventScreencastFrame](ctx, s.tab(), page.ScreencastFrame)
 	if _, err := chromedp.Call(ctx, page.StartScreencast, page.StartScreencastParams{
-		Format: "jpeg", Quality: ptr(screencastQuality), EveryNthFrame: 1,
+		Format: "jpeg", Quality: new(screencastQuality), EveryNthFrame: 1,
 	}); err != nil {
 		return
 	}
@@ -681,7 +681,7 @@ func (s *Session) onFrame(ev page.EventScreencastFrame) {
 func (s *Session) forceScreenshot() {
 	ctx, cancel := s.ioCtx()
 	res, err := chromedp.Call(ctx, page.CaptureScreenshot,
-		page.CaptureScreenshotParams{Format: "jpeg", Quality: ptr(screencastQuality)})
+		page.CaptureScreenshotParams{Format: "jpeg", Quality: new(screencastQuality)})
 	cancel()
 	if err != nil {
 		return

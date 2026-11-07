@@ -146,12 +146,12 @@ func (m *Manager) CreateSession(ctx context.Context, conversationID, url string,
 		return nil, err
 	}
 	bcRes, err := chromedp.CallBrowser(browserCtx, target.CreateBrowserContext,
-		target.CreateBrowserContextParams{DisposeOnDetach: ptr(true)})
+		target.CreateBrowserContextParams{DisposeOnDetach: new(true)})
 	if err != nil {
 		return nil, fmt.Errorf("%w: create browser context: %v", ErrUnavailable, err)
 	}
 	tRes, err := chromedp.CallBrowser(browserCtx, target.CreateTarget,
-		target.CreateTargetParams{URL: url, BrowserContextID: bcRes.BrowserContextID, NewWindow: ptr(true)})
+		target.CreateTargetParams{URL: url, BrowserContextID: bcRes.BrowserContextID, NewWindow: new(true)})
 	if err != nil {
 		_, _ = chromedp.CallBrowser(browserCtx, target.DisposeBrowserContext,
 			target.DisposeBrowserContextParams{BrowserContextID: bcRes.BrowserContextID})
@@ -438,4 +438,5 @@ func (m *Manager) sweepLoop() {
 	}
 }
 
-func ptr[T any](v T) *T { return &v }
+//go:fix inline
+func ptr[T any](v T) *T { return new(v) }

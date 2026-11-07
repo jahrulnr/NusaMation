@@ -188,15 +188,9 @@ func whatsappContacts(args []string) error {
 	sort.Slice(all, func(i, j int) bool { return all[i].JID < all[j].JID })
 	start := len(all)
 	if *page-1 <= len(all)/(*limit) {
-		start = (*page - 1) * (*limit)
-		if start > len(all) {
-			start = len(all)
-		}
+		start = min((*page-1)*(*limit), len(all))
 	}
-	end := start + *limit
-	if end > len(all) {
-		end = len(all)
-	}
+	end := min(start+*limit, len(all))
 	result := struct {
 		Contacts []waContact `json:"contacts"`
 		Page     int         `json:"page"`

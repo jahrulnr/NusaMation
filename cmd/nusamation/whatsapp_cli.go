@@ -191,7 +191,7 @@ func whatsappSet(args []string) error {
 
 func splitNumbers(raw string) []string {
 	var out []string
-	for _, p := range strings.Split(raw, ",") {
+	for p := range strings.SplitSeq(raw, ",") {
 		if n := whatsapp.NormalizeNumber(p); n != "" {
 			out = append(out, n)
 		}

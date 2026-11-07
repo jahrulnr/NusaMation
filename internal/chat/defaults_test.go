@@ -5,7 +5,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,18 +13,13 @@ import (
 	"github.com/jahrulnr/nusamation/internal/events"
 	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
+	"github.com/jahrulnr/nusamation/internal/testutil"
 )
 
 func TestAgentDefaultsFollowDynamicOptions(t *testing.T) {
 	ctx := context.Background()
-	repo, _ := filepath.Abs("../..")
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "fake-acp")
-	build := exec.Command("go", "build", "-o", bin, "./cmd/fake-acp-agent")
-	build.Dir = repo
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v: %s", err, out)
-	}
+	bin := testutil.BuildFakeACP(t)
 	st, err := store.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -102,14 +96,8 @@ func TestAgentDefaultsFollowDynamicOptions(t *testing.T) {
 
 func TestAgentDefaultsSurviveLaterChoiceReset(t *testing.T) {
 	ctx := context.Background()
-	repo, _ := filepath.Abs("../..")
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "fake-acp")
-	build := exec.Command("go", "build", "-o", bin, "./cmd/fake-acp-agent")
-	build.Dir = repo
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v: %s", err, out)
-	}
+	bin := testutil.BuildFakeACP(t)
 	st, err := store.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
 		t.Fatal(err)

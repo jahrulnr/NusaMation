@@ -71,7 +71,7 @@ func hasScheme(s string) bool {
 	if i < 1 {
 		return false
 	}
-	for j := 0; j < i; j++ {
+	for j := range i {
 		c := s[j]
 		alpha := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 		rest := j > 0 && (c >= '0' && c <= '9' || c == '+' || c == '-' || c == '.')

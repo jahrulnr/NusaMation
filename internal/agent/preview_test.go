@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,19 +13,8 @@ import (
 
 	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
+	"github.com/jahrulnr/nusamation/internal/testutil"
 )
-
-func buildFakeACP(t *testing.T, dir string) string {
-	t.Helper()
-	repo, _ := filepath.Abs("../..")
-	bin := filepath.Join(dir, "fake-acp")
-	build := exec.Command("go", "build", "-o", bin, "./cmd/fake-acp-agent")
-	build.Dir = repo
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v: %s", err, out)
-	}
-	return bin
-}
 
 func previewTestStore(t *testing.T, dir string) *store.Store {
 	t.Helper()
@@ -52,7 +40,7 @@ func traceLines(t *testing.T, path string) []string {
 		t.Fatal(err)
 	}
 	out := []string{}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if line != "" {
 			out = append(out, line)
 		}
@@ -82,7 +70,7 @@ func configCurrentString(raw json.RawMessage, id string) string {
 func TestPreviewWarmRuntimeReusesSession(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	bin := buildFakeACP(t, dir)
+	bin := testutil.BuildFakeACP(t)
 	st := previewTestStore(t, dir)
 	defer st.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -140,7 +128,7 @@ func TestPreviewWarmRuntimeReusesSession(t *testing.T) {
 func TestPreviewDropsSessionAfterReplayError(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	bin := buildFakeACP(t, dir)
+	bin := testutil.BuildFakeACP(t)
 	st := previewTestStore(t, dir)
 	defer st.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -179,7 +167,7 @@ func TestPreviewDropsSessionAfterReplayError(t *testing.T) {
 func TestProbeReusesWarmClient(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	bin := buildFakeACP(t, dir)
+	bin := testutil.BuildFakeACP(t)
 	st := previewTestStore(t, dir)
 	defer st.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -216,7 +204,7 @@ func TestProbeReusesWarmClient(t *testing.T) {
 func TestPreviewCachedCatalogSkipsSpawn(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	bin := buildFakeACP(t, dir)
+	bin := testutil.BuildFakeACP(t)
 	st := previewTestStore(t, dir)
 	defer st.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -256,7 +244,7 @@ func TestPreviewCachedCatalogSkipsSpawn(t *testing.T) {
 func TestPreviewSeedsCatalogAfterLiveProbe(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	bin := buildFakeACP(t, dir)
+	bin := testutil.BuildFakeACP(t)
 	st := previewTestStore(t, dir)
 	defer st.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -297,7 +285,7 @@ func TestPreviewSeedsCatalogAfterLiveProbe(t *testing.T) {
 func TestWarmAutoStartOnlyWarmsOptedIn(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	bin := buildFakeACP(t, dir)
+	bin := testutil.BuildFakeACP(t)
 	st := previewTestStore(t, dir)
 	defer st.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

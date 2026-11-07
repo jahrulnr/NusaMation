@@ -17,6 +17,7 @@ import (
 
 	"github.com/jahrulnr/nusamation/internal/acp"
 	"github.com/jahrulnr/nusamation/internal/ids"
+	"github.com/jahrulnr/nusamation/internal/procsys"
 	"github.com/jahrulnr/nusamation/internal/security"
 )
 
@@ -141,17 +142,14 @@ func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, root
 	}
 	limit := 1 << 20
 	if req.OutputByteLimit != nil && *req.OutputByteLimit > 0 {
-		limit = int(*req.OutputByteLimit)
-		if limit > 16<<20 {
-			limit = 16 << 20
-		}
+		limit = min(int(*req.OutputByteLimit), 16<<20)
 	}
 	cmd := terminalCommand(req.Command, req.Args)
 	cmd.Dir = cwd
 	cmd.Env = terminalEnv(req.Env)
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
+	// On Unix the child gets its own process group so a kill reaches the
+	// whole tree; on Windows this is a no-op.
+	procsys.StartInOwnGroup(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, &acp.RPCError{Code: acp.CodeInternalError, Message: err.Error()}
@@ -221,10 +219,13 @@ func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, root
 // and its args separately, which is what exec.Command expects. Some agents
 // (e.g. Devin) send a whole shell line as command with no args, so when no
 // args are given and the command does not resolve to a program, run it
-// through /bin/sh.
+// through the platform shell.
 func terminalCommand(command string, args []string) *exec.Cmd {
 	if len(args) == 0 {
 		if _, err := exec.LookPath(command); err != nil {
+			if runtime.GOOS == "windows" {
+				return exec.Command("cmd.exe", "/c", command)
+			}
 			return exec.Command("/bin/sh", "-c", command)
 		}
 	}
@@ -343,15 +344,7 @@ func (tm *TerminalManager) kill(t *terminal) {
 	if !running || cmd == nil || cmd.Process == nil {
 		return
 	}
-	if runtime.GOOS == "windows" {
-		_ = cmd.Process.Kill()
-		return
-	}
-	if cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	} else {
-		_ = cmd.Process.Kill()
-	}
+	procsys.Signal(cmd, syscall.SIGKILL)
 }
 
 func (tm *TerminalManager) cleanupLoop() {

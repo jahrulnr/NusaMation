@@ -210,11 +210,11 @@ func (a *App) publicURL(addr net.Addr) string {
 	if addr != nil {
 		host = addr.String()
 	}
-	if strings.HasPrefix(host, "0.0.0.0:") {
-		host = "127.0.0.1:" + strings.TrimPrefix(host, "0.0.0.0:")
+	if after, ok := strings.CutPrefix(host, "0.0.0.0:"); ok {
+		host = "127.0.0.1:" + after
 	}
-	if strings.HasPrefix(host, "[::]:") {
-		host = "127.0.0.1:" + strings.TrimPrefix(host, "[::]:")
+	if after, ok := strings.CutPrefix(host, "[::]:"); ok {
+		host = "127.0.0.1:" + after
 	}
 	if !strings.Contains(host, ":") {
 		host = "127.0.0.1:8787"

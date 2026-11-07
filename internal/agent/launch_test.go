@@ -3,13 +3,19 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jahrulnr/nusamation/internal/testutil"
 )
 
 func TestResolveCodexACPUsesAdapter(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"codex", "codex-acp"} {
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -17,11 +23,17 @@ func TestResolveCodexACPUsesAdapter(t *testing.T) {
 	t.Setenv("PATH", dir)
 	t.Setenv("HOME", t.TempDir())
 	codex := filepath.Join(dir, "codex")
+	if runtime.GOOS == "windows" {
+		codex += ".exe"
+	}
+	// On Windows the probe of the sh-script stub fails fast (not a valid
+	// executable), which is exactly the path this test relies on: the adapter
+	// wins and CODEX_PATH points at the configured codex binary.
 	command, args, env, err := resolveACPLaunch(codex, []string{"acp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(command) != "codex-acp" || len(args) != 0 {
+	if strings.TrimSuffix(filepath.Base(command), ".exe") != "codex-acp" || len(args) != 0 {
 		t.Fatalf("launch = %s %v", command, args)
 	}
 	if env["CODEX_PATH"] != codex {
@@ -30,6 +42,7 @@ func TestResolveCodexACPUsesAdapter(t *testing.T) {
 }
 
 func TestResolveCodexACPKeepsRealSubcommand(t *testing.T) {
+	testutil.RequirePosixShell(t)
 	dir := t.TempDir()
 	codex := filepath.Join(dir, "codex")
 	script := "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then printf '  acp               Agent Client Protocol\\n'; fi\n"

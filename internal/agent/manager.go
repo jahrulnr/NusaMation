@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -443,15 +444,9 @@ func (m *Manager) TerminalAuthCommand(ctx context.Context, agentID, methodID str
 			env[key] = v
 		}
 	}
-	for key, value := range extra {
-		env[key] = value
-	}
-	for key, value := range envMap(ag.Env) {
-		env[key] = value
-	}
-	for key, value := range selected.Env {
-		env[key] = value
-	}
+	maps.Copy(env, extra)
+	maps.Copy(env, envMap(ag.Env))
+	maps.Copy(env, selected.Env)
 	env["TERM"] = "xterm-256color"
 	for key, value := range env {
 		cmd.Env = append(cmd.Env, key+"="+value)

@@ -207,7 +207,7 @@ func TestConcurrentSubmitsDrainQueueWithNoOwnerLeft(t *testing.T) {
 	e := newAfterToolsEnv(t)
 	const n = 4
 	turnIDs := make(chan string, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			_, turn, err := e.svc.Submit(context.Background(), SubmitInput{
 				ConversationID: e.conv.ID, Text: "follow-up burst", Channel: "web",
@@ -218,7 +218,7 @@ func TestConcurrentSubmitsDrainQueueWithNoOwnerLeft(t *testing.T) {
 			turnIDs <- turn.ID
 		}()
 	}
-	for i := 0; i < n; i++ {
+	for range n {
 		e.waitStatus(<-turnIDs, "completed")
 	}
 	waitFor(t, func() bool {

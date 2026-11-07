@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,18 +14,13 @@ import (
 	"github.com/jahrulnr/nusamation/internal/events"
 	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
+	"github.com/jahrulnr/nusamation/internal/testutil"
 )
 
 func TestSchedulerSessionOwnership(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	repo, _ := filepath.Abs("../..")
-	bin := filepath.Join(dir, "fake-acp")
-	build := exec.Command("go", "build", "-o", bin, "./cmd/fake-acp-agent")
-	build.Dir = repo
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, out)
-	}
+	bin := testutil.BuildFakeACP(t)
 	st, err := store.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
 		t.Fatal(err)

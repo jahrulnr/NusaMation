@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -454,8 +455,8 @@ func (s *Service) outboundAnchorMessage(ctx context.Context, a *activeTurn) stri
 	}
 	msgs, err := s.store.ListMessages(ctx, a.conversationID, 0, 0, 200)
 	if err == nil {
-		for i := len(msgs) - 1; i >= 0; i-- {
-			m := msgs[i]
+		for _, m := range slices.Backward(msgs) {
+
 			if m.TurnID == a.turn.ID && m.Role == "assistant" && m.Kind == "text" {
 				return m.ID
 			}

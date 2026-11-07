@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/jahrulnr/nusamation/internal/testutil"
 )
 
 type blockingHandler struct {
@@ -79,8 +81,9 @@ func (silentHandler) OnStderr(string) {}
 func (silentHandler) OnExit(error)    {}
 
 func TestStartIncludesStderrWhenProcessExits(t *testing.T) {
+	testutil.RequirePosixShell(t)
 	_, err := Start(context.Background(), ClientConfig{
-		ProcessConfig: ProcessConfig{Command: "sh", Args: []string{"-c", "echo 'TERM is dumb' >&2; exit 1"}},
+		Command: "sh", Args: []string{"-c", "echo 'TERM is dumb' >&2; exit 1"},
 	}, silentHandler{})
 	if err == nil || !strings.Contains(err.Error(), "TERM is dumb") {
 		t.Fatalf("err = %v", err)
@@ -90,6 +93,7 @@ func TestStartIncludesStderrWhenProcessExits(t *testing.T) {
 // The exit path drains stderr before reporting the death, so lines written
 // right up to the process exit always land in the ring.
 func TestStderrWrittenBeforeExitIsCaptured(t *testing.T) {
+	testutil.RequirePosixShell(t)
 	p := NewProcess(ProcessConfig{
 		Command: "sh",
 		Args:    []string{"-c", "printf 'first line\\nlast line\\n' >&2; exit 1"},
@@ -108,7 +112,8 @@ func TestStderrWrittenBeforeExitIsCaptured(t *testing.T) {
 // ErrProcessExited or the RPC error the exit path fails pending calls with —
 // never a raw os.PathError like `write |1: file already closed`.
 func TestCallRacingProcessExitNeverReturnsPipeError(t *testing.T) {
-	for i := 0; i < 20; i++ {
+	testutil.RequirePosixShell(t)
+	for range 20 {
 		p := NewProcess(ProcessConfig{
 			Command: "sh",
 			Args:    []string{"-c", "exit 1"},
@@ -151,6 +156,7 @@ func TestWriteErrorIsNormalized(t *testing.T) {
 // Closing with a call in flight resolves the call and lets every process
 // goroutine wind down.
 func TestCloseDuringInflightCall(t *testing.T) {
+	testutil.RequirePosixShell(t)
 	p := NewProcess(ProcessConfig{
 		Command: "sh",
 		Args:    []string{"-c", "while read -r x; do :; done"},
@@ -171,8 +177,7 @@ func TestCloseDuringInflightCall(t *testing.T) {
 		if err == nil {
 			t.Fatal("in-flight call returned nil")
 		}
-		var pathErr *os.PathError
-		if errors.As(err, &pathErr) {
+		if _, ok := errors.AsType[*os.PathError](err); ok {
 			t.Fatalf("in-flight call returned raw pipe error: %v", err)
 		}
 	case <-time.After(5 * time.Second):

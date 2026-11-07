@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,36 +18,8 @@ import (
 	"github.com/jahrulnr/nusamation/internal/events"
 	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
+	"github.com/jahrulnr/nusamation/internal/testutil"
 )
-
-var (
-	fakeAgentOnce sync.Once
-	fakeAgentBin  string
-	fakeAgentErr  error
-)
-
-func buildFakeAgent(t *testing.T) string {
-	fakeAgentOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "fake-acp-")
-		if err != nil {
-			fakeAgentErr = err
-			return
-		}
-		repo, _ := filepath.Abs("../..")
-		bin := filepath.Join(dir, "fake-acp")
-		build := exec.Command("go", "build", "-o", bin, "./cmd/fake-acp-agent")
-		build.Dir = repo
-		if out, err := build.CombinedOutput(); err != nil {
-			fakeAgentErr = fmt.Errorf("build fake agent: %v\n%s", err, out)
-			return
-		}
-		fakeAgentBin = bin
-	})
-	if fakeAgentErr != nil {
-		t.Fatal(fakeAgentErr)
-	}
-	return fakeAgentBin
-}
 
 // afterToolsEnv records notices and wires a Service to the fake agent whose
 // RPC trace is written to a file the test can read.
@@ -79,7 +50,7 @@ func newAfterToolsEnv(t *testing.T) *afterToolsEnv {
 }
 
 func newAfterToolsEnvWithPolicy(t *testing.T, approvalPolicy string) *afterToolsEnv {
-	bin := buildFakeAgent(t)
+	bin := testutil.BuildFakeACP(t)
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "test.db"))
 	if err != nil {

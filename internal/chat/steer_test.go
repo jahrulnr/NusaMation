@@ -17,6 +17,7 @@ import (
 	"github.com/jahrulnr/nusamation/internal/events"
 	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
+	"github.com/jahrulnr/nusamation/internal/testutil"
 )
 
 func TestSteerInjectsIntoRunningTurn(t *testing.T) {
@@ -265,7 +266,7 @@ func TestMirroredErrorFollowsPartialOutput(t *testing.T) {
 }
 
 func TestChannelDeliversEveryReason(t *testing.T) {
-	bin := buildFakeAgent(t)
+	bin := testutil.BuildFakeACP(t)
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "test.db"))
 	if err != nil {

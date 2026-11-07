@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/jahrulnr/nusamation/internal/events"
 	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
+	"github.com/jahrulnr/nusamation/internal/testutil"
 )
 
 func TestMidTurnModeSwitchSkipsLaterApprovals(t *testing.T) {
@@ -32,16 +32,7 @@ func TestMidTurnModeSwitchSkipsLaterApprovals(t *testing.T) {
 }
 
 func runMidTurnModeSwitch(t *testing.T, env store.SecretList) {
-	repo, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin := filepath.Join(t.TempDir(), "fake-acp")
-	build := exec.Command("go", "build", "-o", bin, "./cmd/fake-acp-agent")
-	build.Dir = repo
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build fake agent: %v\n%s", err, out)
-	}
+	bin := testutil.BuildFakeACP(t)
 
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "test.db"))

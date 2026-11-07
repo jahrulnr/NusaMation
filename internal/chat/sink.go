@@ -866,8 +866,7 @@ func (s *Service) finishTurn(a *activeTurn, status, stopReason string, runErr er
 	turn, _ := s.store.GetTurn(ctx, a.turn.ID)
 	conv, _ := s.store.GetConversation(ctx, a.conversationID)
 	var authMethods []acp.AuthMethod
-	var authErr *agent.AuthRequiredError
-	if errors.As(runErr, &authErr) {
+	if authErr, ok := errors.AsType[*agent.AuthRequiredError](runErr); ok {
 		authMethods = authErr.Methods
 	}
 	s.emit("turn.completed", a.conversationID, map[string]any{

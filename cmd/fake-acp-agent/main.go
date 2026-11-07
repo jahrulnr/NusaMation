@@ -288,45 +288,45 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }, cancel chan struct{}) {
-	text := ""
+	var text strings.Builder
 	for _, p := range prompt {
 		if p.Text != "" {
-			text += p.Text
+			text.WriteString(p.Text)
 		}
 	}
-	if strings.Contains(text, "timeline-terminal-test") || strings.Contains(text, "timeline-background-test") {
-		s.terminalDemo(id, sessionID, strings.Contains(text, "timeline-background-test"))
+	if strings.Contains(text.String(), "timeline-terminal-test") || strings.Contains(text.String(), "timeline-background-test") {
+		s.terminalDemo(id, sessionID, strings.Contains(text.String(), "timeline-background-test"))
 		return
 	}
-	if strings.Contains(text, "mode-switch-test") {
+	if strings.Contains(text.String(), "mode-switch-test") {
 		s.modeSwitchDemo(id, sessionID)
 		return
 	}
 	toolDelay := 400 * time.Millisecond
-	if strings.Contains(text, "slow") {
+	if strings.Contains(text.String(), "slow") {
 		toolDelay = 4 * time.Second
 	}
-	if strings.Contains(text, "after-tools-two-tools") {
+	if strings.Contains(text.String(), "after-tools-two-tools") {
 		s.toolsDemo(id, cancel, false, toolDelay)
 		return
 	}
-	if strings.Contains(text, "after-tools-ignore-cancel") {
+	if strings.Contains(text.String(), "after-tools-ignore-cancel") {
 		s.toolsDemo(id, cancel, true, toolDelay)
 		return
 	}
-	if strings.Contains(text, "after-tools-no-tools") {
+	if strings.Contains(text.String(), "after-tools-no-tools") {
 		s.noToolsDemo(id, cancel)
 		return
 	}
-	if strings.Contains(text, "after-tools-permission") {
+	if strings.Contains(text.String(), "after-tools-permission") {
 		s.permissionDemo(id, sessionID, cancel)
 		return
 	}
-	if strings.Contains(text, "send-media-test") {
-		s.mediaDemo(id, text)
+	if strings.Contains(text.String(), "send-media-test") {
+		s.mediaDemo(id, text.String())
 		return
 	}
-	if strings.Contains(text, "steer-hold") {
+	if strings.Contains(text.String(), "steer-hold") {
 		s.chunk("working ")
 		select {
 		case <-cancel:
@@ -337,7 +337,7 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 		}
 		return
 	}
-	if strings.Contains(text, "segment-reasons-test") {
+	if strings.Contains(text.String(), "segment-reasons-test") {
 		s.reasonsDemo(id)
 		return
 	}
@@ -380,10 +380,10 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 	}})
 	answer := "I inspected the workspace safely. The fake agent saw README.md and AGENTS.md. " +
 		"If you asked for a demo, this is the demo: NusaMation streams thoughts, tools and approvals to web, while chat channels only receive this final digest."
-	if strings.Contains(strings.ToLower(text), "poem") {
+	if strings.Contains(strings.ToLower(text.String()), "poem") {
 		answer = "A quiet tide writes silver on the shore,\nAnd NusaMation answers, asking nothing more."
 	}
-	for _, word := range strings.Fields(answer) {
+	for word := range strings.FieldsSeq(answer) {
 		select {
 		case <-cancel:
 			s.respond(id, map[string]any{"stopReason": "cancelled"})
@@ -442,7 +442,7 @@ func (s *server) toolsDemo(id json.RawMessage, cancel chan struct{}, ignoreCance
 		s.respond(id, map[string]any{"stopReason": "end_turn"})
 		return
 	}
-	for i := 0; i < 300; i++ {
+	for range 300 {
 		select {
 		case <-cancel:
 			s.respond(id, map[string]any{"stopReason": "cancelled"})

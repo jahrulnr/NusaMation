@@ -9,7 +9,7 @@ import (
 func TestWhatsAppSearchPaginationAndHistoryDeduplication(t *testing.T) {
 	st := testStore(t)
 	ctx := context.Background()
-	for i := 0; i < 55; i++ {
+	for i := range 55 {
 		m := WhatsAppMessage{Chat: "group@g.us", ID: fmt.Sprint(i), Sender: "123@s.whatsapp.net", Timestamp: int64(i / 2), Text: "upgrade php", Live: true}
 		if err := st.SaveWhatsAppMessage(ctx, m); err != nil {
 			t.Fatal(err)

@@ -105,10 +105,7 @@ const uploadBatchSize = 500
 func (s *Store) ListUploadsForMessages(ctx context.Context, messageIDs []string) ([]Upload, error) {
 	var out []Upload
 	for start := 0; start < len(messageIDs); start += uploadBatchSize {
-		end := start + uploadBatchSize
-		if end > len(messageIDs) {
-			end = len(messageIDs)
-		}
+		end := min(start+uploadBatchSize, len(messageIDs))
 		chunk := messageIDs[start:end]
 		args := make([]any, 0, len(chunk))
 		for _, id := range chunk {

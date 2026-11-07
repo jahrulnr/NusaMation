@@ -547,7 +547,7 @@ func (s *Service) UpdateConversation(ctx context.Context, id string, patch Conve
 	if patch.Archived != nil && *patch.Archived {
 		if a := s.activeFor(id); a != nil {
 			_ = s.Cancel(ctx, id)
-			for i := 0; i < 50; i++ {
+			for range 50 {
 				if s.activeFor(id) == nil {
 					break
 				}
@@ -627,7 +627,7 @@ func (s *Service) DeleteConversation(ctx context.Context, id string) error {
 	}
 	if a := s.activeFor(id); a != nil {
 		_ = s.Cancel(ctx, id)
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			if s.activeFor(id) == nil {
 				break
 			}

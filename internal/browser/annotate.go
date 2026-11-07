@@ -146,7 +146,7 @@ func (s *Session) PreviewAnnotate(x, y float64) (*Preview, error) {
 	cfRes, err := chromedp.Call(cctx, runtime.CallFunctionOn, runtime.CallFunctionOnParams{
 		FunctionDeclaration: descriptorExtractor,
 		ObjectID:            rRes.Object.ObjectID,
-		ReturnByValue:       ptr(true),
+		ReturnByValue:       new(true),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("preview: %w", err)
@@ -208,7 +208,7 @@ func (s *Session) Annotate(ctx context.Context, x, y float64) (*Pick, error) {
 	cfRes, err := chromedp.Call(cctx, runtime.CallFunctionOn, runtime.CallFunctionOnParams{
 		FunctionDeclaration: descriptorExtractor,
 		ObjectID:            rRes.Object.ObjectID,
-		ReturnByValue:       ptr(true),
+		ReturnByValue:       new(true),
 	})
 	if err != nil {
 		return fail(err)

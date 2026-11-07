@@ -1,0 +1,152 @@
+name: test-build-release
+
+# Flow: push/merge to master -> unit tests [linux, windows] -> build [linux,
+# windows] -> tag (v<VERSION>) -> GitHub release with binaries + installers.
+#
+# The tag is derived from the VERSION file (e.g. "0.1.0" -> "v0.1.0"). If that
+# tag was already published, the release step is skipped so repeated pushes
+# don't create duplicate releases. Bump VERSION (and CHANGELOG.md) to ship a
+# new release.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Serialize runs on the same ref so two pushes can't race on tag/release.
+concurrency:
+  group: test-build-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Vet
+        run: go vet ./...
+      - name: Unit tests
+        run: go test ./...
+
+  # Regression test for the Linux installer: exercises download, checksum
+  # verification, install, idempotency and uninstall against a fake release.
+  test-install-script:
+    name: test install.sh
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run installer test harness
+        run: bash scripts/test/run.sh
+
+  build:
+    name: build ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            asset: nusamation-linux-amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            asset: nusamation-linux-arm64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            asset: nusamation-windows-amd64.exe
+          - os: windows-latest
+            goos: windows
+            goarch: arm64
+            asset: nusamation-windows-arm64.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Build
+        shell: bash
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -o dist/${{ matrix.asset }} ./cmd/nusamation
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/
+
+  release:
+    name: tag & release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check if already released
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v$(cat VERSION)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" --json isDraft --jq '.isDraft' >/dev/null 2>&1; then
+            if [ "$(gh release view "$tag" --json isDraft --jq '.isDraft')" = "false" ]; then
+              echo "skipped=true" >> "$GITHUB_OUTPUT"
+              echo "::notice title=Release skipped::$tag is already published"
+            else
+              # Draft left behind by a failed run would wedge this version.
+              echo "skipped=false" >> "$GITHUB_OUTPUT"
+              echo "::warning title=Removing stale draft::deleting draft $tag left by a failed run"
+              gh release delete "$tag" --yes --cleanup-tag || true
+            fi
+          else
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.check.outputs.skipped != 'true'
+        with:
+          path: dist/
+          merge-multiple: true
+      - name: Add installers
+        if: steps.check.outputs.skipped != 'true'
+        run: cp scripts/install.sh scripts/install.ps1 dist/
+      # Only binaries are checksummed; the installers are small text scripts
+      # covered by git history.
+      - name: Generate checksums
+        if: steps.check.outputs.skipped != 'true'
+        run: (cd dist && sha256sum nusamation-* > SHA256SUMS)
+      - name: Tag and create GitHub release
+        if: steps.check.outputs.skipped != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.check.outputs.tag }}"
+          # Pin the tag to this exact commit so release binaries always match
+          # the tagged source, even if a stale tag was left by a failed run.
+          git tag -f "$tag" "$GITHUB_SHA"
+          git push origin "$tag" --force
+          gh release create "$tag" dist/* \
+            --title "NusaMation $tag" \
+            --generate-notes

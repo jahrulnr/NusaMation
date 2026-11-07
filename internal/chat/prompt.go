@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -209,9 +210,7 @@ func (s *Service) sessionRequest(conv store.Conversation, ag store.Agent) agent.
 	}
 	desired := map[string]any{}
 	if raw, ok := meta["desiredConfig"].(map[string]any); ok {
-		for k, v := range raw {
-			desired[k] = v
-		}
+		maps.Copy(desired, raw)
 	}
 	model := conv.Model
 	if model == "" {
@@ -377,10 +376,7 @@ func annotationBlock(metadata json.RawMessage) string {
 	}
 	var b strings.Builder
 	b.WriteString("Page annotations — the user marked elements on a web page; each element's screenshot is attached as an image.\n")
-	described := len(meta.Annotations)
-	if described > maxDescribed {
-		described = maxDescribed
-	}
+	described := min(len(meta.Annotations), maxDescribed)
 	for i := 0; i < described; i++ {
 		an := meta.Annotations[i]
 		d := an.Descriptor

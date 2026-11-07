@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -411,12 +412,7 @@ func (r *Runtime) applyDesiredConfig(ctx context.Context, client *acp.Client, s 
 }
 
 func contains(list []string, v string) bool {
-	for _, s := range list {
-		if s == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, v)
 }
 
 func (r *Runtime) applyConfig(ctx context.Context, client *acp.Client, s *Session, id string, value any) error {
@@ -957,10 +953,7 @@ func (h *runtimeHandler) readFile(raw json.RawMessage) (any, *acp.RPCError) {
 	lines := strings.SplitAfter(string(data), "\n")
 	start := 0
 	if req.Line != nil && *req.Line > 1 {
-		start = *req.Line - 1
-		if start > len(lines) {
-			start = len(lines)
-		}
+		start = min(*req.Line-1, len(lines))
 	}
 	end := len(lines)
 	if req.Limit != nil && *req.Limit >= 0 && start+*req.Limit < end {

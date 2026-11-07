@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/jahrulnr/nusamation/internal/acp"
+	"github.com/jahrulnr/nusamation/internal/testutil"
 )
 
 func TestTerminalStreamsFullOutputAndKeepsACPOutputLimit(t *testing.T) {
+	testutil.RequirePosixShell(t)
 	root := t.TempDir()
 	tm := NewTerminalManager(nil)
 	defer tm.CloseAll()
@@ -63,6 +65,7 @@ func TestTerminalStreamsFullOutputAndKeepsACPOutputLimit(t *testing.T) {
 }
 
 func TestTerminalRunsShellLineWithoutArgs(t *testing.T) {
+	testutil.RequirePosixShell(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "marker.txt"), []byte("marker\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -75,6 +78,7 @@ func TestTerminalRunsShellLineWithoutArgs(t *testing.T) {
 }
 
 func TestTerminalKeepsArgvForProgramPathWithSpaces(t *testing.T) {
+	testutil.RequirePosixShell(t)
 	root := t.TempDir()
 	dir := filepath.Join(root, "with space")
 	if err := os.Mkdir(dir, 0o755); err != nil {

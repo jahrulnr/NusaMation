@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -88,7 +90,7 @@ func probeCodexHelp(command string) bool {
 	if err != nil && len(out) == 0 {
 		return false
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) > 0 && fields[0] == "acp" {
 			return true
@@ -151,8 +153,8 @@ func newestNode(root, prefix string) string {
 		}
 	}
 	sort.Slice(names, func(i, j int) bool { return versionLess(names[i], names[j]) })
-	for i := len(names) - 1; i >= 0; i-- {
-		if p := nodeBinary(filepath.Join(root, names[i])); p != "" {
+	for _, name := range slices.Backward(names) {
+		if p := nodeBinary(filepath.Join(root, name)); p != "" {
 			return p
 		}
 	}
@@ -181,7 +183,7 @@ func versionLess(a, b string) bool {
 func splitVersion(v string) []int {
 	v = strings.TrimPrefix(v, "v")
 	var out []int
-	for _, part := range strings.Split(v, ".") {
+	for part := range strings.SplitSeq(v, ".") {
 		n, err := strconv.Atoi(part)
 		if err != nil {
 			break
@@ -196,9 +198,7 @@ func mergeEnv(base, extra map[string]string) map[string]string {
 		return base
 	}
 	out := make(map[string]string, len(base)+len(extra))
-	for k, v := range base {
-		out[k] = v
-	}
+	maps.Copy(out, base)
 	for k, v := range extra {
 		if _, ok := out[k]; !ok {
 			out[k] = v

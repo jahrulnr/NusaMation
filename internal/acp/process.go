@@ -10,11 +10,12 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/jahrulnr/nusamation/internal/procsys"
 )
 
 var (
@@ -155,9 +156,9 @@ func (p *Process) Start(ctx context.Context) error {
 		env = append(env, "NO_COLOR=1")
 	}
 	cmd.Env = env
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
+	// On Unix the child gets its own process group so shutdown can signal the
+	// whole tree; on Windows this is a no-op.
+	procsys.StartInOwnGroup(cmd)
 	// Create the pipes by hand instead of using the StdinPipe/StdoutPipe/
 	// StderrPipe helpers: cmd.Wait() closes the helper pipes' parent ends as
 	// soon as the child exits, while the writer and the scanner goroutines
@@ -601,15 +602,7 @@ func (p *Process) signal(sig syscall.Signal) {
 	if p.cmd == nil || p.cmd.Process == nil {
 		return
 	}
-	if runtime.GOOS == "windows" {
-		_ = p.cmd.Process.Kill()
-		return
-	}
-	if p.cmd.SysProcAttr != nil && p.cmd.SysProcAttr.Setpgid {
-		_ = syscall.Kill(-p.cmd.Process.Pid, sig)
-	} else {
-		_ = p.cmd.Process.Signal(sig)
-	}
+	procsys.Signal(p.cmd, sig)
 }
 
 func idKey(raw json.RawMessage) string {

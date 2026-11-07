@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -347,9 +348,7 @@ func (a *activeTurn) outboundRefs() map[string]bool {
 	a.outboundMu.Lock()
 	defer a.outboundMu.Unlock()
 	out := make(map[string]bool, len(a.sentRefs))
-	for k, v := range a.sentRefs {
-		out[k] = v
-	}
+	maps.Copy(out, a.sentRefs)
 	return out
 }
 
