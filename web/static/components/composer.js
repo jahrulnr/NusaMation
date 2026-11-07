@@ -7,6 +7,7 @@ import { closePopover, menuItem, openPopover } from "./popover.js";
 import { renderChat } from "./chat.js";
 import { showAgentBlocker, showSlowAgent } from "./requests.js";
 import { loadConversation, normalizeMessage, setRoute, upsertConversation, upsertMessage } from "./conversations.js";
+import { clearDraft, saveDraftNow, scheduleDraftSave } from "./convmeta.js";
 import { renderTopbar } from "./topbar.js";
 import { openSettings } from "./settings.js";
 
@@ -68,7 +69,8 @@ export function renderComposer() {
   const ta = $("#prompt");
   ta.dataset.composerKey = composerKey;
   if (!oldTa || !existing) {
-    ta.addEventListener("input", () => { S.draft = ta.value; autoGrow(); });
+    ta.addEventListener("input", () => { S.draft = ta.value; autoGrow(); scheduleDraftSave(); });
+    ta.addEventListener("blur", () => { saveDraftNow(); });
     ta.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !isMobile() && !e.isComposing) {
         e.preventDefault();
@@ -205,6 +207,7 @@ export function setSendMode(mode) {
   S.sendDelivery = mode;
   closePopover();
   updateComposerState();
+  scheduleDraftSave();
   $("#send-menu-btn")?.focus();
 }
 
@@ -229,9 +232,9 @@ export function renderPendingAttachments() {
     if (a.type === "annotation") {
       const u = a.upload || {};
       const label = `${a.tagName || a.label || "element"}${a.comment ? ": " + a.comment : ""}`;
-      const title = [a.label, a.comment, a.selector].filter(Boolean).join(" · ");
+      const title = [a.label, a.comment, a.selector, a.shot === false ? "no screenshot" : ""].filter(Boolean).join(" · ");
       return `<div class="pending-attach annot" title="${esc(title || label)}">
-        ${u.id ? `<img src="/api/uploads/${encodeURIComponent(u.id)}" alt="">` : icon("pin", "sm")}
+        ${u.id ? `<span class="thumb"><img src="/api/uploads/${encodeURIComponent(u.id)}" alt="">${a.marker ? `<span class="n">${esc(a.marker)}</span>` : ""}</span>` : icon("pin", "sm")}
         <span class="name">${esc(label)}</span>
         <button data-action="annotation-edit" data-id="${esc(a.pickId)}" aria-label="Edit comment" title="Edit comment">${icon("edit", "sm")}</button>
         <button data-action="remove-attachment" data-id="${esc(u.id || a.pickId)}" aria-label="Remove">${icon("x", "sm")}</button>
@@ -254,6 +257,7 @@ export function editAnnotationComment(pickId) {
   promptModal("Edit annotation comment", "Comment", chip.comment || "", async (value) => {
     chip.comment = (value || "").trim();
     renderPendingAttachments();
+    scheduleDraftSave();
     closeModal();
   }, "Comment for the agent…", true);
 }
@@ -284,6 +288,7 @@ export async function uploadFiles(files) {
       const d = await api("/uploads", { method: "POST", body: fd });
       owner.attachments.push({ upload: d.upload });
       if (composerFor(composerKey) === owner) renderPendingAttachments();
+      scheduleDraftSave(composerKey);
     } catch (e) {
       toast("Upload failed", e.message, "error");
     }
@@ -331,8 +336,8 @@ export async function sendMessage() {
       owner.pendingSelections = [];
     }
     const links = (conversation.links || []).filter((l) => l.channel !== "web");
-    // Annotation chips are NOT uploads: they ride as annotations[{pickId,comment}]
-    // and the server binds each pick's crop upload itself (contract §3.9/§6.3).
+    // Annotation chips are NOT uploads: they ride as annotations[{pickId,comment,
+    // screenshot}] and the server binds each pick's marked upload itself (contract §3.9/§6.3).
     const files = attachments.filter((a) => a.type !== "annotation");
     const annotations = attachments.filter((a) => a.type === "annotation");
     const body = {
@@ -342,11 +347,15 @@ export async function sendMessage() {
       replyChannel: links.length ? links[0].channel : "",
       delivery,
     };
-    if (annotations.length) body.annotations = annotations.map((a) => ({ pickId: a.pickId, comment: a.comment || "" }));
+    if (annotations.length) body.annotations = annotations.map((a) => ({ pickId: a.pickId, comment: a.comment || "", screenshot: a.shot !== false }));
     const d = await api(`/conversations/${encodeURIComponent(conversation.id)}/messages`, { method: "POST", body });
     owner.sending = false;
     if (owner.draft.trim() === text) { owner.draft = ""; if (composerFor(composerKey) === owner) $("#prompt").value = ""; }
     owner.attachments = owner.attachments.filter((a) => !attachments.includes(a));
+    // Clear only the fields that actually went out; leftover text/attachments
+    // (edited mid-send or added while sending) stay persisted as the draft.
+    clearDraft(conversation.id);
+    if (owner.draft || owner.attachments.length) scheduleDraftSave(conversation.id);
     if (composerFor(composerKey) !== owner || S.current?.id !== conversation.id) return;
     renderPendingAttachments();
     upsertTurn(d.turn);

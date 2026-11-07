@@ -44,6 +44,7 @@ type Server struct {
 	notifier *notify.Broadcaster
 	updater  *update.Manager
 	log      *slog.Logger
+	metaMu   sync.Mutex
 	started  time.Time
 	limiter  *loginLimiter
 	static   fs.FS
@@ -110,6 +111,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/conversations/{id}", s.protected(s.handleDeleteConversation))
 	mux.HandleFunc("GET /api/conversations/{id}/messages", s.protected(s.handleMessages))
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.protected(s.handlePrompt))
+	mux.HandleFunc("GET /api/conversations/{id}/meta", s.protected(s.handleGetConversationMeta))
+	mux.HandleFunc("PUT /api/conversations/{id}/meta", s.protected(s.handlePutConversationMeta))
 	mux.HandleFunc("POST /api/conversations/{id}/cancel", s.protected(s.handleCancel))
 	mux.HandleFunc("POST /api/conversations/{id}/turns/{turnId}/cancel", s.protected(s.handleCancelQueuedTurn))
 	mux.HandleFunc("POST /api/conversations/{id}/retry", s.protected(s.handleRetry))

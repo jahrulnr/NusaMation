@@ -5,6 +5,7 @@ import { closeModal } from "./modal.js";
 import { closeWS } from "./ws.js";
 import { startApp } from "./boot.js";
 import { resetBrowserPane } from "./browser.js";
+import { resetConvMeta } from "./convmeta.js";
 
 export function renderLogin(error = "") {
   S.booted = false;
@@ -82,7 +83,7 @@ export async function doLogout() {
   try { await api("/auth/logout", { method: "POST" }); } catch {}
   closeModal(); closeWS();
   S.csrf = ""; S.current = null; S.messages = []; S.conversations = []; S.approvals = []; S.approvalsById.clear();
-  composers.clear(); switchComposer("");
+  composers.clear(); resetConvMeta(); switchComposer("");
   S.sendDelivery = "steer"; S.turns = {};
   renderLogin();
 }

@@ -184,6 +184,7 @@ func (s *Server) handleDeleteConversation(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}
+	s.dropConvMeta(r.PathValue("id"))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -220,6 +221,7 @@ func (s *Server) handleDeleteAllConversations(w http.ResponseWriter, r *http.Req
 				s.log.Warn("could not delete conversation during erase", "id", c.ID, "error", err)
 				continue
 			}
+			s.dropConvMeta(c.ID)
 			progressed = true
 		}
 		if !progressed {
@@ -266,8 +268,9 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		Text        string                  `json:"text"`
 		Attachments []store.AttachmentInput `json:"attachments"`
 		Annotations []struct {
-			PickID  string `json:"pickId"`
-			Comment string `json:"comment"`
+			PickID     string `json:"pickId"`
+			Comment    string `json:"comment"`
+			Screenshot *bool  `json:"screenshot"`
 		} `json:"annotations"`
 		ReplyToChannel bool   `json:"replyToChannel"`
 		ReplyChannel   string `json:"replyChannel"`
@@ -287,7 +290,9 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		annotations = append(annotations, store.AnnotationInput{
-			PickID: pick.ID, Comment: a.Comment, Descriptor: pick.Descriptor, Upload: pick.Upload,
+			PickID: pick.ID, Comment: a.Comment, Marker: pick.Marker,
+			Descriptor: pick.Descriptor, Upload: pick.Upload,
+			OmitScreenshot: a.Screenshot != nil && !*a.Screenshot,
 		})
 	}
 	msg, turn, err := s.chat.Submit(r.Context(), chat.SubmitInput{

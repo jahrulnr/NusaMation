@@ -9,6 +9,7 @@ import { showPendingRequest } from "./requests.js";
 import { focusComposer, prepareComposer, renderComposer, upsertTurn } from "./composer.js";
 import { closeMobileSidebar, renderSidebar, scheduleSidebarRender } from "./sidebar.js";
 import { renderTopbar } from "./topbar.js";
+import { saveTitle } from "./convmeta.js";
 
 export async function selectInitialConversation() {
   const m = location.pathname.match(/^\/c\/([^/]+)/);
@@ -303,6 +304,7 @@ export function renameConversation(id) {
     try {
       const d = await api(`/conversations/${encodeURIComponent(id)}`, { method: "PATCH", body: { title: value.trim() } });
       upsertConversation(d.conversation);
+      saveTitle(id, value.trim());
       closeModal();
     } catch (e) { toast("Could not rename", e.message, "error"); }
   });

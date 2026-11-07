@@ -131,6 +131,39 @@ func TestSteerWithoutCapabilityWaitsForTools(t *testing.T) {
 	}
 }
 
+// A steer carrying annotations cannot be injected — steer moves text only —
+// so it must take the after-tools path and keep its annotation metadata,
+// even when every annotation opts out of screenshots (no uploads to force
+// the non-steer path).
+func TestSteerWithAnnotationsDoesNotDropThem(t *testing.T) {
+	e := newAfterToolsEnv(t)
+	_, p1 := e.submit("steer-hold", "")
+	waitFor(t, func() bool { return e.hasText("working") }, "hold prompt to start")
+	msg, p2, err := e.svc.Submit(context.Background(), SubmitInput{
+		ConversationID: e.conv.ID, Text: "fix this", Channel: "web", Delivery: deliverySteer,
+		Annotations: []store.AnnotationInput{{
+			PickID: "pk1", Comment: "broken", Marker: 1, OmitScreenshot: true,
+			Descriptor: store.AnnotationDescriptor{TagName: "h1", Name: "Title"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p2.ID == p1.ID || p2.Status != "queued" {
+		t.Fatalf("annotated steer = %+v, running %s", p2, p1.ID)
+	}
+	var meta map[string]any
+	if json.Unmarshal(msg.Metadata, &meta) != nil {
+		t.Fatalf("metadata = %s", msg.Metadata)
+	}
+	anns, _ := meta["annotations"].([]any)
+	if len(anns) != 1 {
+		t.Fatalf("annotations dropped from metadata: %s", msg.Metadata)
+	}
+	e.waitStatus(p1.ID, "cancelled")
+	e.waitStatus(p2.ID, "completed")
+}
+
 // A steer must not be injected before the original prompt reached the wire —
 // otherwise it can overtake it.
 func TestInjectableRequiresPromptSent(t *testing.T) {

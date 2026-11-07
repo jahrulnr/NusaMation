@@ -1,19 +1,12 @@
 package browser
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	"image/png"
-	"math"
 	"time"
 
-	"github.com/chromedp/cdproto/cdp"
-	"github.com/chromedp/cdproto/dom"
-	"github.com/chromedp/cdproto/overlay"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
@@ -61,8 +54,11 @@ while(pn&&pn.nodeType===1&&pd<24){
 	pn=pn.parentElement;
 }
 const elementPath=pchains.map(c=>c.join(' > ')).join(' >>> ');
-const framePath=[];
-try{let w=window;while(w.frameElement){framePath.unshift(seg(w.frameElement));w=w.parent;}}catch(_){}
+const framePath=[];let offX=0,offY=0;
+// Accumulate frameElement rects so rect is top-viewport CSS px like the
+// client's click point — the pin marker is painted in the main document.
+try{let w=window;while(w.frameElement){const fr=w.frameElement.getBoundingClientRect();
+	offX+=fr.left;offY+=fr.top;framePath.unshift(seg(w.frameElement));w=w.parent;}}catch(_){}
 const roleMap={BUTTON:'button',SELECT:'combobox',TEXTAREA:'textbox',NAV:'navigation',MAIN:'main',
 	ASIDE:'complementary',H1:'heading',H2:'heading',H3:'heading',H4:'heading',H5:'heading',
 	H6:'heading',UL:'list',OL:'list',LI:'listitem',TABLE:'table',IMG:'img',DIALOG:'dialog',FORM:'form'};
@@ -95,18 +91,47 @@ for(let n=e;n&&n.nodeType===1;n=n.parentElement){const pos=getComputedStyle(n).p
 	if(pos==='fixed'||pos==='sticky'){fixed=true;break;}}
 const r=e.getBoundingClientRect();
 const de=document.documentElement;
+const cs=getComputedStyle(e);
+let html='';
+try{const oh=e.outerHTML||'';const gi=oh.indexOf('>');
+	html=(gi>=0?oh.slice(0,gi+1):oh).slice(0,400);}catch(_){}
 return{missed:false,
 	selector:selector,elementPath:elementPath,tagName:e.tagName.toLowerCase(),
+	html:html,
 	role:role,name:name.slice(0,200),immediateText:immediate,nearbyText:nearby,
-	rect:{x:r.x,y:r.y,width:r.width,height:r.height},isFixed:fixed,
+	rect:{x:r.x+offX,y:r.y+offY,width:r.width,height:r.height},isFixed:fixed,
 	framePath:framePath,pageUrl:location.href,title:document.title,
+	viewport:{width:window.innerWidth||0,height:window.innerHeight||0,dpr:window.devicePixelRatio||1},
+	computed:{fontSize:cs.fontSize,lineHeight:cs.lineHeight,fontFamily:cs.fontFamily,
+		fontWeight:cs.fontWeight,letterSpacing:cs.letterSpacing,color:cs.color,
+		backgroundColor:cs.backgroundColor,display:cs.display,position:cs.position},
 	scrollX:window.scrollX||0,scrollY:window.scrollY||0,
 	pageW:Math.max(de?de.scrollWidth:0,document.body?document.body.scrollWidth:0),
 	pageH:Math.max(de?de.scrollHeight:0,document.body?document.body.scrollHeight:0)};
 }`
 
+// pickElement resolves the topmost element at a client-viewport point. Unlike
+// DOM.getNodeForLocation it is defined in the same coordinate space the
+// screencast shows — click coords stay correct on a scrolled page. Same-origin
+// iframes are entered recursively so pins land on inner elements; a
+// cross-origin frame yields the <iframe> element itself.
+const pickElement = `function(x,y){
+var doc=document,el=null;
+for(var d=0;d<8;d++){
+	el=doc.elementFromPoint(x,y);
+	if(!el)return null;
+	var t=el.tagName;
+	if(t!=='IFRAME'&&t!=='FRAME')return el;
+	var inner=null;
+	try{inner=el.contentDocument;}catch(e){}
+	if(!inner)return el;
+	var r=el.getBoundingClientRect();
+	x-=r.left;y-=r.top;doc=inner;
+}
+return el;}`
+
 // Preview is the hover probe result for annotate mode: the element under a
-// viewport point, without painting, cropping, or recording a pick — the client
+// viewport point, without painting, shooting, or recording a pick — the client
 // draws the transient marker itself.
 type Preview struct {
 	Missed   bool                  `json:"missed"`
@@ -133,19 +158,16 @@ func (s *Session) PreviewAnnotate(x, y float64) (*Preview, error) {
 	}
 	cctx, cancel := context.WithTimeout(s.tabCtx, 5*time.Second)
 	defer cancel()
-	nRes, err := chromedp.Call(cctx, dom.GetNodeForLocation,
-		dom.GetNodeForLocationParams{X: int64(math.Round(x)), Y: int64(math.Round(y))})
+	objID, err := s.pickObjectID(cctx, x, y)
 	if err != nil {
 		return nil, fmt.Errorf("preview: %w", err)
 	}
-	rRes, err := chromedp.Call(cctx, dom.ResolveNode,
-		dom.ResolveNodeParams{BackendNodeID: nRes.BackendNodeID})
-	if err != nil || rRes.Object == nil || rRes.Object.ObjectID == "" {
+	if objID == "" {
 		return &Preview{Missed: true}, nil
 	}
 	cfRes, err := chromedp.Call(cctx, runtime.CallFunctionOn, runtime.CallFunctionOnParams{
 		FunctionDeclaration: descriptorExtractor,
-		ObjectID:            rRes.Object.ObjectID,
+		ObjectID:            objID,
 		ReturnByValue:       new(true),
 	})
 	if err != nil {
@@ -175,15 +197,64 @@ func (s *Session) PreviewAnnotate(x, y float64) (*Preview, error) {
 	return p, nil
 }
 
-var highlightConfig = &overlay.HighlightConfig{
-	ShowInfo:     true,
-	ContentColor: &cdp.RGBA{R: 66, G: 133, B: 244, A: 0.3},
-	BorderColor:  &cdp.RGBA{R: 66, G: 133, B: 244, A: 1},
+// markerPainter injects the pin ring + numbered badge as plain DOM so the
+// screenshot shows exactly what the agent gets — including a badge number
+// matching the [N] label in the prompt text. position:fixed aligns 1:1 with
+// the descriptor's viewport-CSS-px rect, and z-index tops everything.
+const markerPainter = `function(r,n){
+var old=document.getElementById('__nusamation_marker');if(old)old.remove();
+var host=document.createElement('div');
+host.id='__nusamation_marker';
+host.setAttribute('style','position:fixed !important;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none;');
+var ring=document.createElement('div');
+ring.setAttribute('style','position:fixed !important;left:'+r.x+'px;top:'+r.y+'px;width:'+Math.max(2,r.width)+'px;height:'+Math.max(2,r.height)+'px;border:2px solid #3b82f6 !important;background:rgba(59,130,246,.14) !important;border-radius:3px;box-sizing:border-box;');
+var vw=window.innerWidth||1280,vh=window.innerHeight||800;
+var bx=r.x+r.width/2,by=r.y;
+bx=Math.max(14,Math.min(bx,vw-14));
+if(by<14)by=r.y+r.height;
+by=Math.max(14,Math.min(by,vh-14));
+var badge=document.createElement('div');
+badge.setAttribute('style','position:fixed !important;left:'+bx+'px;top:'+by+'px;transform:translate(-50%,-50%);min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#3b82f6 !important;color:#fff !important;font:600 12px/20px system-ui,-apple-system,"Segoe UI",sans-serif;text-align:center;box-shadow:0 0 0 2px #fff,0 1px 4px rgba(0,0,0,.35);box-sizing:content-box;');
+badge.textContent=String(n);
+host.appendChild(ring);host.appendChild(badge);
+(document.documentElement||document.body).appendChild(host);
+// Wait two frames so the pin is painted before the caller screenshots —
+// with a timeout fallback: a throttled (backgrounded) tab may starve rAF.
+return new Promise(function(res){var t=setTimeout(res,250);requestAnimationFrame(function(){requestAnimationFrame(function(){clearTimeout(t);res()})})});}`
+
+const markerRemover = `(function(){var m=document.getElementById('__nusamation_marker');if(m)m.remove();return true})()`
+
+func markerExpr(rect store.AnnotationRect, n int) (string, error) {
+	r, err := json.Marshal(rect)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("(%s)(%s,%d)", markerPainter, r, n), nil
 }
 
-// Annotate runs the §3.7 pipeline: hit test → descriptor extraction → overlay
-// highlight → clipped element crop → upload → pick record.
-func (s *Session) Annotate(ctx context.Context, x, y float64) (*Pick, error) {
+// pickObjectID hit-tests a client-viewport point via elementFromPoint and
+// returns the RemoteObjectID of the resolved element — empty when the point
+// has no element. The object may live in an iframe's context; callFunctionOn
+// on its id runs in that context, matching the extractor's expectations.
+func (s *Session) pickObjectID(ctx context.Context, x, y float64) (runtime.RemoteObjectID, error) {
+	res, err := chromedp.Call(ctx, runtime.Evaluate, runtime.EvaluateParams{
+		Expression: fmt.Sprintf("(%s)(%g,%g)", pickElement, x, y),
+	})
+	if err != nil {
+		return "", err
+	}
+	if res.ExceptionDetails != nil {
+		return "", errors.New(res.ExceptionDetails.Text)
+	}
+	if res.Result == nil {
+		return "", errors.New("element pick returned no result")
+	}
+	return res.Result.ObjectID, nil
+}
+
+// Annotate runs the §3.7 pipeline: hit test → descriptor extraction → DOM
+// pin marker → marked full-viewport shot → marker removed → upload → pick.
+func (s *Session) Annotate(ctx context.Context, x, y float64, marker int) (*Pick, error) {
 	if err := s.acquire(); err != nil {
 		return nil, err
 	}
@@ -192,22 +263,16 @@ func (s *Session) Annotate(ctx context.Context, x, y float64) (*Pick, error) {
 	cctx, cancel := context.WithTimeout(s.tabCtx, 20*time.Second)
 	defer cancel()
 	fail := func(err error) (*Pick, error) { return nil, fmt.Errorf("annotate: %w", err) }
-	nRes, err := chromedp.Call(cctx, dom.GetNodeForLocation,
-		dom.GetNodeForLocationParams{X: int64(math.Round(x)), Y: int64(math.Round(y))})
+	objID, err := s.pickObjectID(cctx, x, y)
 	if err != nil {
 		return fail(err)
 	}
-	rRes, err := chromedp.Call(cctx, dom.ResolveNode,
-		dom.ResolveNodeParams{BackendNodeID: nRes.BackendNodeID})
-	if err != nil {
-		return fail(err)
-	}
-	if rRes.Object == nil || rRes.Object.ObjectID == "" {
+	if objID == "" {
 		return nil, ErrPickMissed
 	}
 	cfRes, err := chromedp.Call(cctx, runtime.CallFunctionOn, runtime.CallFunctionOnParams{
 		FunctionDeclaration: descriptorExtractor,
-		ObjectID:            rRes.Object.ObjectID,
+		ObjectID:            objID,
 		ReturnByValue:       new(true),
 	})
 	if err != nil {
@@ -234,37 +299,32 @@ func (s *Session) Annotate(ctx context.Context, x, y float64) (*Pick, error) {
 		return fail(err)
 	}
 	desc.Point = store.AnnotationPoint{X: x, Y: y}
-	s.mu.Lock()
-	overlayReady := s.overlayReady
-	s.mu.Unlock()
-	if !overlayReady {
-		if _, err := chromedp.Call(cctx, overlay.Enable, cdp.Empty{}); err == nil {
-			s.mu.Lock()
-			s.overlayReady = true
-			s.mu.Unlock()
-		}
+	if marker <= 0 {
+		marker = 1
 	}
-	_, _ = chromedp.Call(cctx, overlay.HighlightNode, overlay.HighlightNodeParams{
-		BackendNodeID: nRes.BackendNodeID, HighlightConfig: highlightConfig,
-	})
-	// Full-viewport capture — a clipped captureScreenshot makes Chromium
-	// transiently resize the visual viewport to the clip, which leaks into the
-	// screencast stream as a wrongly-sized frame + meta. The element crop is
-	// done on the PNG bytes instead (rect is already viewport CSS px).
-	shot, err := chromedp.Call(cctx, page.CaptureScreenshot, page.CaptureScreenshotParams{
+	// Paint the numbered pin into the page and capture the marked viewport —
+	// the badge inside the shot matches the [N] label in the prompt text.
+	// Full-viewport capture only: a clipped captureScreenshot transiently
+	// resizes the visual viewport and leaks a wrongly-sized frame into the
+	// screencast stream.
+	if expr, err := markerExpr(desc.Rect, marker); err == nil {
+		if _, err := chromedp.Call(cctx, runtime.Evaluate, runtime.EvaluateParams{
+			Expression: expr, AwaitPromise: new(true),
+		}); err != nil {
+			s.m.log.Warn("annotation pin paint failed; screenshot will be unmarked",
+				"session", s.id, "error", err)
+		}
+	} else {
+		s.m.log.Warn("annotation pin marker not built; screenshot will be unmarked",
+			"session", s.id, "error", err)
+	}
+	marked, err := chromedp.Call(cctx, page.CaptureScreenshot, page.CaptureScreenshotParams{
 		Format: "png",
 	})
-	// The inspect-style highlight is only needed to mark the element in the
-	// crop — it dims the rest of the page, so don't leave it painted; the
-	// client draws its own persistent marker while the comment popover is open.
 	// Fresh ctx: cctx's 20s budget may already be spent by the capture.
 	hctx, hcancel := context.WithTimeout(s.tabCtx, 5*time.Second)
-	_, _ = chromedp.Call(hctx, overlay.HideHighlight, cdp.Empty{})
+	_, _ = chromedp.Call(hctx, runtime.Evaluate, runtime.EvaluateParams{Expression: markerRemover})
 	hcancel()
-	if err != nil {
-		return fail(err)
-	}
-	crop, err := cropViewportPNG(shot.Data, desc.Rect)
 	if err != nil {
 		return fail(err)
 	}
@@ -272,61 +332,31 @@ func (s *Session) Annotate(ctx context.Context, x, y float64) (*Pick, error) {
 		return fail(errors.New("attachment saving is not configured"))
 	}
 	pickID := ids.New("pk")
-	up, err := s.m.save(ctx, s.conversationID, "element-"+pickID+".png", "image/png", crop)
+	up, err := s.m.save(ctx, s.conversationID, "element-"+pickID+".png", "image/png", marked.Data)
 	if err != nil {
 		return fail(err)
 	}
 	p := &Pick{
 		ID: pickID, SessionID: s.id, ConversationID: s.conversationID,
-		BackendNodeID: int64(nRes.BackendNodeID), Descriptor: desc, Upload: up,
-		CreatedAt: nowMillis(),
+		Marker: marker, Descriptor: desc,
+		Upload: up, CreatedAt: nowMillis(),
 	}
 	s.m.addPick(p)
 	return p, nil
 }
 
-// cropViewportPNG cuts the element rect out of a full-viewport PNG. The
-// descriptor rect is already viewport CSS px and deviceScaleFactor is pinned
-// to 1, so rect maps 1:1 onto image pixels; partially off-screen elements are
-// clamped to the image bounds (≥1px kept, like the old page-coords clip).
-func cropViewportPNG(data []byte, rect store.AnnotationRect) ([]byte, error) {
-	src, err := png.Decode(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	b := src.Bounds()
-	x0 := clampF(rect.X, 0, float64(b.Dx()-1))
-	y0 := clampF(rect.Y, 0, float64(b.Dy()-1))
-	x1 := clampF(rect.X+rect.Width, x0+1, float64(b.Dx()))
-	y1 := clampF(rect.Y+rect.Height, y0+1, float64(b.Dy()))
-	si, ok := src.(interface {
-		SubImage(image.Rectangle) image.Image
-	})
-	if !ok {
-		return nil, errors.New("screenshot image does not support cropping")
-	}
-	var out bytes.Buffer
-	if err := png.Encode(&out, si.SubImage(image.Rect(int(x0), int(y0), int(x1), int(y1)))); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
-}
-
-func clampF(v, lo, hi float64) float64 {
-	return min(max(v, lo), hi)
-}
-
-// ClearAnnotate clears the painted overlay highlight (§3.8); pick records and
-// uploads are kept. Best-effort — the only error is a dead session.
+// ClearAnnotate removes the painted pin marker (§3.8); pick records and
+// uploads are kept. Best-effort — the only error is a dead session. A pick
+// in flight owns the marker lifecycle, so a clear landing mid-pick is a
+// no-op rather than stripping the badge between paint and capture — the
+// acquire() CAS serializes it with Annotate's own claim.
 func (s *Session) ClearAnnotate() {
-	s.mu.Lock()
-	ready := s.overlayReady
-	s.mu.Unlock()
-	if !ready {
+	if err := s.acquire(); err != nil {
 		return
 	}
+	defer s.busy.Store(false)
 	ctx, cancel := context.WithTimeout(s.tabCtx, 5*time.Second)
-	_, _ = chromedp.Call(ctx, overlay.HideHighlight, cdp.Empty{})
+	_, _ = chromedp.Call(ctx, runtime.Evaluate, runtime.EvaluateParams{Expression: markerRemover})
 	cancel()
 }
 func nowMillis() int64 { return time.Now().UnixMilli() }

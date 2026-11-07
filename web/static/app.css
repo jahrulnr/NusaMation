@@ -866,7 +866,12 @@ textarea, input, select { caret-color: var(--accent); }
 .browser-title:empty { display: none; }
 @media (max-width: 1300px) { .browser-title { display: none; } }
 .browser-view { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #060708; overflow: hidden; outline: none; user-select: none; }
-.browser-view.annotate, .browser-view.annotate .browser-frame { cursor: crosshair; }
+/* Annotate-mode cursor: the chat-bubble icon doubled as a pin — the tail tip
+   (hotspot 3,21) is the pick point, so the bubble sits clear of the element.
+   White outline keeps it readable on dark pages; crosshair is the fallback. */
+.browser-view.annotate, .browser-view.annotate .browser-frame {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M21 12a8 8 0 0 1-11.5 7.2L3 21l1.8-6.5A8 8 0 1 1 21 12Z' fill='%233b82f6' stroke='%23fff' stroke-width='1.6'/%3E%3C/svg%3E") 3 21, crosshair;
+}
 .browser-frame { max-width: 100%; max-height: 100%; width: auto; height: auto; display: block; user-select: none; -webkit-user-drag: none; }
 .browser-state { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; gap: 10px; background: rgba(8,9,11,.78); color: var(--muted); font-size: 12px; padding: 22px; text-align: center; }
 .browser-state.show { display: flex; }
@@ -895,6 +900,9 @@ textarea, input, select { caret-color: var(--accent); }
 .annotate-id b { display: block; font-size: 12px; font-family: var(--mono); font-weight: 600; color: var(--accent); }
 .annotate-id small { display: block; color: var(--muted-2); font-size: 10.5px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .annotate-comment { font-size: 12px; min-height: 52px; resize: vertical; }
+.annotate-shot { display: flex; align-items: baseline; gap: 6px; font-size: 11px; color: var(--text-soft); cursor: pointer; }
+.annotate-shot input { margin: 0; position: relative; top: 1px; }
+.annotate-shot small { color: var(--muted-2); font-size: 10px; }
 .annotate-actions { display: flex; justify-content: flex-end; gap: 6px; }
 
 /* Annotation chips — composer (pending) and sent messages */
@@ -905,6 +913,9 @@ textarea, input, select { caret-color: var(--accent); }
 a.annot-chip:hover { border-color: var(--accent); background: rgba(245,181,68,.2); }
 .annot-chip img { width: 54px; height: 40px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); flex: none; display: block; }
 .annot-chip > .icon { color: var(--accent); width: 15px; height: 15px; flex: none; }
+/* Numbered pin badge matching the marker drawn on the screenshot. */
+.pending-attach .thumb, .annot-chip .thumb { position: relative; display: flex; flex: none; }
+.pending-attach .thumb .n, .annot-chip .thumb .n { position: absolute; top: -5px; left: -5px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: #3b82f6; color: #fff; font-size: 9.5px; font-weight: 700; line-height: 15px; text-align: center; box-shadow: 0 0 0 1.5px var(--bg); box-sizing: border-box; }
 .annot-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .annot-chip-text b { color: var(--accent); font-family: var(--mono); font-weight: 600; }
 .annot-chip-text span { color: var(--text-soft); }

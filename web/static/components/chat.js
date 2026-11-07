@@ -161,8 +161,8 @@ export function userHTML(m) {
   const quote = match ? `<div class="reply-quote"><div class="reply-quote-label">In reply to</div><div class="reply-quote-text markdown">${renderMarkdown(match[2], "quote-" + m.id, format)}</div></div>` : "";
   const text = match ? m.text.slice(match[0].length) : m.text;
   const anns = messageAnnotations(m);
-  const cropIds = new Set(anns.map((a) => a.uploadId).filter(Boolean));
-  const visible = (m.attachments || []).filter((a) => !cropIds.has(a.id));
+  const pinUploadIds = new Set(anns.map((a) => a.uploadId).filter(Boolean));
+  const visible = (m.attachments || []).filter((a) => !pinUploadIds.has(a.id));
   const attachments = attachmentsHTML(visible) + annotationsHTML(anns);
   const qt = queuedTurnFor(m);
   const qLabel = qt && qt.status === "queued" ? queueStatusLabel(m) : "";
@@ -381,9 +381,9 @@ export function attachmentsHTML(atts) {
 }
 
 // Page annotations sent with the message (contract §6.4): metadata.annotations
-// carries {pickId, comment, uploadId, descriptor}; the pick's crop upload is
-// also bound as a regular attachment but renders inside the chip, not as a
-// standalone thumb (caller filters it out of the attachment list).
+// carries {pickId, comment, marker, uploadId, descriptor}; the pick's marked
+// upload is also bound as a regular attachment but renders inside the chip,
+// not as a standalone thumb (caller filters it out of the attachment list).
 export function messageAnnotations(m) {
   const meta = parseJSON(m.metadata, {}) || {};
   const anns = Array.isArray(meta.annotations) ? meta.annotations : [];
@@ -397,7 +397,7 @@ export function annotationsHTML(anns) {
     const tag = d.tagName || "element";
     const label = d.name || d.immediateText || "";
     const title = [label, d.selector, d.pageUrl].filter(Boolean).join(" · ");
-    const inner = `${a.uploadId ? `<img src="/api/uploads/${encodeURIComponent(a.uploadId)}" alt="" loading="lazy">` : icon("pin", "sm")}
+    const inner = `${a.uploadId ? `<span class="thumb"><img src="/api/uploads/${encodeURIComponent(a.uploadId)}" alt="" loading="lazy">${a.marker ? `<span class="n">${esc(a.marker)}</span>` : ""}</span>` : icon("pin", "sm")}
       <span class="annot-chip-text"><b>${esc(tag)}</b>${a.comment ? `<span>: ${esc(a.comment)}</span>` : ""}</span>`;
     if (a.uploadId) return `<a class="annot-chip" href="/api/uploads/${encodeURIComponent(a.uploadId)}" target="_blank" rel="noopener" title="${esc(title)}">${inner}</a>`;
     return `<span class="annot-chip" title="${esc(title)}">${inner}</span>`;

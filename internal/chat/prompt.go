@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -358,8 +359,9 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 }
 
 // annotationBlock serializes metadata.annotations into the contract §7 text
-// block: one numbered line per annotation plus Comment/Nearby text lines, the
-// first 4 fully described, capped at 8000 chars total.
+// block: one numbered line per marker plus Comment/Nearby/Layout/Style lines,
+// the first 4 fully described, capped at 8000 chars total. Marker numbers
+// match the badge drawn on each pin's full-viewport screenshot.
 func annotationBlock(metadata json.RawMessage) string {
 	if len(metadata) == 0 {
 		return ""
@@ -377,9 +379,14 @@ func annotationBlock(metadata json.RawMessage) string {
 	trunc := func(s string, n int) string {
 		return textfmt.Truncate(strings.TrimSpace(s), n)
 	}
+	// Page-controlled strings can carry backticks/newlines that would break
+	// out of the inline-code spans and indented lines below.
+	codeSafe := strings.NewReplacer("`", "'", "\r", " ", "\n", " ").Replace
 	var b strings.Builder
-	b.WriteString("Page annotations — the user marked elements on a web page; each element's screenshot is attached as an image.\n")
+	b.WriteString("Page annotations — the user marked elements on a web page. Each marker's full-viewport screenshot is attached in order; the numbered badge [N] and highlight ring in the image identify the element.\n")
 	described := min(len(meta.Annotations), maxDescribed)
+	used := map[int]bool{}
+	nextFree := 0
 	for i := range described {
 		an := meta.Annotations[i]
 		d := an.Descriptor
@@ -388,8 +395,22 @@ func annotationBlock(metadata json.RawMessage) string {
 			label = d.ImmediateText
 		}
 		label = trunc(label, 80)
+		marker := an.Marker
+		if marker <= 0 || used[marker] {
+			marker = 0
+		}
+		if marker == 0 {
+			for {
+				nextFree++
+				if !used[nextFree] {
+					marker = nextFree
+					break
+				}
+			}
+		}
+		used[marker] = true
 		b.WriteString("\n[")
-		b.WriteString(fmt.Sprintf("%d", i+1))
+		b.WriteString(strconv.Itoa(marker))
 		b.WriteString("] <")
 		b.WriteString(trunc(d.TagName, 40))
 		b.WriteString(">")
@@ -398,7 +419,7 @@ func annotationBlock(metadata json.RawMessage) string {
 			b.WriteString(label)
 			b.WriteString("\"")
 		}
-		if sel := trunc(d.Selector, 240); sel != "" {
+		if sel := trunc(codeSafe(d.Selector), 240); sel != "" {
 			b.WriteString(" — selector `")
 			b.WriteString(sel)
 			b.WriteString("`")
@@ -407,6 +428,9 @@ func annotationBlock(metadata json.RawMessage) string {
 			b.WriteString(" — ")
 			b.WriteString(pageURL)
 		}
+		if an.OmitScreenshot {
+			b.WriteString(" (no screenshot)")
+		}
 		if comment := trunc(an.Comment, 600); comment != "" {
 			b.WriteString("\n    Comment: ")
 			b.WriteString(comment)
@@ -414,6 +438,53 @@ func annotationBlock(metadata json.RawMessage) string {
 		if nearby := trunc(d.NearbyText, 300); nearby != "" {
 			b.WriteString("\n    Nearby text: ")
 			b.WriteString(nearby)
+		}
+		if d.Viewport.Width > 0 {
+			layout := fmt.Sprintf("%.0f,%.0f %.0f×%.0f px · picked at %.0f,%.0f · viewport %.0f×%.0f @%gx",
+				d.Rect.X, d.Rect.Y, d.Rect.Width, d.Rect.Height,
+				d.Point.X, d.Point.Y,
+				d.Viewport.Width, d.Viewport.Height, d.Viewport.DPR)
+			if d.ScrollY > 0 || d.ScrollX > 0 {
+				layout += fmt.Sprintf(" · scroll %.0f,%.0f", d.ScrollX, d.ScrollY)
+			}
+			b.WriteString("\n    Layout: ")
+			b.WriteString(layout)
+		}
+		if h := trunc(codeSafe(d.HTML), 300); h != "" {
+			b.WriteString("\n    HTML: `")
+			b.WriteString(h)
+			b.WriteString("`")
+		}
+		if len(d.FramePath) > 0 {
+			b.WriteString("\n    Frame: inside ")
+			b.WriteString(trunc(strings.Join(d.FramePath, " › "), 240))
+		}
+		if cs := d.Computed; cs.FontSize != "" || cs.Display != "" {
+			var parts []string
+			if cs.FontSize != "" {
+				font := "font " + cs.FontSize
+				if cs.LineHeight != "" {
+					font += "/" + cs.LineHeight
+				}
+				parts = append(parts, font)
+			}
+			if cs.FontFamily != "" {
+				parts = append(parts, cs.FontFamily)
+			}
+			if cs.FontWeight != "" {
+				parts = append(parts, "weight "+cs.FontWeight)
+			}
+			if cs.LetterSpacing != "" && cs.LetterSpacing != "normal" {
+				parts = append(parts, "spacing "+cs.LetterSpacing)
+			}
+			if cs.Color != "" || cs.BackgroundColor != "" {
+				parts = append(parts, cs.Color+" on "+cs.BackgroundColor)
+			}
+			if cs.Display != "" || cs.Position != "" {
+				parts = append(parts, cs.Display+"/"+cs.Position)
+			}
+			b.WriteString("\n    Style: ")
+			b.WriteString(trunc(strings.Join(parts, " · "), 280))
 		}
 		if d.Selector == "" && d.ElementPath != "" {
 			b.WriteString("\n    Element path: ")

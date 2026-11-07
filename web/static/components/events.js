@@ -10,6 +10,7 @@ import { autoGrow, editAnnotationComment, focusComposer, openAgentMenu, openComp
 import { browserEscape, browserHistory, browserReconnect, cancelAnnotation, closeBrowserPane, submitAnnotation, toggleAnnotate, toggleBrowserPane } from "./browser.js";
 import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, openConversationMenu, openMoreMenu, openRoutingMenu, renameConversation, selectConversation, setRoute, togglePin, toggleRouting } from "./conversations.js";
 import { renderOffline } from "./shell.js";
+import { scheduleDraftSave } from "./convmeta.js";
 import { closeMobileSidebar, filterSidebar, openMobileSidebar, renderSidebar, toggleSidebarCollapsed } from "./sidebar.js";
 import { renderTopbar } from "./topbar.js";
 import { closeWS, connectWS } from "./ws.js";
@@ -219,14 +220,15 @@ export function bindEvents() {
         if (m) {
           const meta = parseJSON(m.metadata, {}) || {};
           const anns = (Array.isArray(meta.annotations) ? meta.annotations : []).filter((a) => a && a.pickId);
-          const cropIds = new Set(anns.map((a) => a.uploadId).filter(Boolean));
+          const pinUploadIds = new Set(anns.map((a) => a.uploadId).filter(Boolean));
           const owner = composerFor(composerKey);
           owner.draft = m.channel && m.channel !== "web"
             ? (m.text || "").replace(/^(?:[^\r\n]*?: )?\[In reply to: [^\r\n]*\](?:\r?\n|$)/, "")
             : (m.text || "");
-          owner.attachments = (m.attachments || []).filter((a) => !cropIds.has(a.id)).map((a) => ({ upload: a }))
+          owner.attachments = (m.attachments || []).filter((a) => !pinUploadIds.has(a.id)).map((a) => ({ upload: a }))
             .concat(anns.map((a) => ({
               type: "annotation", id: a.pickId, pickId: a.pickId, comment: a.comment || "",
+              marker: a.marker || 0, shot: !a.omitScreenshot,
               tagName: a.descriptor?.tagName || "", label: a.descriptor?.name || a.descriptor?.immediateText || "",
               selector: a.descriptor?.selector || "", upload: a.uploadId ? { id: a.uploadId } : null,
             })));
@@ -242,8 +244,8 @@ export function bindEvents() {
       case "retry-load": await loadConversation(id, false); break;
       case "load-older": await loadOlderMessages(); break;
       case "attach": $("#file-input")?.click(); break;
-      case "reply-toggle": S.replyToChannel = !S.replyToChannel; renderComposer(); focusComposer(); break;
-      case "remove-attachment": S.attachments = S.attachments.filter((a) => (a.upload || a).id !== id); renderPendingAttachments(); break;
+      case "reply-toggle": S.replyToChannel = !S.replyToChannel; renderComposer(); focusComposer(); scheduleDraftSave(); break;
+      case "remove-attachment": S.attachments = S.attachments.filter((a) => (a.upload || a).id !== id); renderPendingAttachments(); scheduleDraftSave(); break;
       case "resolve-approval": await resolveApproval(id, target.dataset.option, target.closest(".approval-card")); break;
       case "toggle-thought": {
         const mid = target.dataset.id;

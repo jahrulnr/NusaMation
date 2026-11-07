@@ -149,8 +149,9 @@ type SubmitInput struct {
 	// mid-turn input. A channel message that cannot be steered waits until
 	// the running turn's tools finish, then cancels that turn and sends.
 	Delivery string `json:"delivery,omitempty"`
-	// Annotations carries resolved browser picks (pickId → descriptor + crop
-	// upload); the http layer resolves them so chat sees plain data.
+	// Annotations carries resolved browser picks (pickId → descriptor +
+	// marked-screenshot upload); the http layer resolves them so chat sees
+	// plain data.
 	Annotations     []store.AnnotationInput `json:"-"`
 	AutomationRunID string                  `json:"-"`
 }
@@ -205,12 +206,20 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 	if err != nil {
 		return store.Message{}, store.Turn{}, err
 	}
-	// Annotation crop uploads bind after client attachments, in
-	// annotations[] order (browser-api-contract §3.9).
+	// Annotation screenshot uploads bind after client attachments, in
+	// annotations[] order (browser-api-contract §3.9). Pins opted out of
+	// screenshots keep the upload for history thumbnails but send no image
+	// to the agent.
 	for _, a := range in.Annotations {
+		if a.OmitScreenshot {
+			continue
+		}
 		uploads = append(uploads, a.Upload)
 	}
-	if in.Delivery == deliverySteer && len(uploads) == 0 {
+	// Steer injects text into the running prompt — it cannot carry uploads
+	// or annotations, so any message with them must take the
+	// wait-tools→cancel→send path below instead of silently dropping them.
+	if in.Delivery == deliverySteer && len(uploads) == 0 && len(in.Annotations) == 0 {
 		if msg, turn, handled, err := s.trySteer(ctx, conv, text, channel, originChannel, originRef); err != nil || handled {
 			return msg, turn, err
 		}
@@ -243,7 +252,8 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 		list := make([]store.MessageAnnotation, 0, len(in.Annotations))
 		for _, a := range in.Annotations {
 			list = append(list, store.MessageAnnotation{
-				PickID: a.PickID, Comment: a.Comment, UploadID: a.Upload.ID,
+				PickID: a.PickID, Comment: a.Comment, Marker: a.Marker,
+				UploadID: a.Upload.ID, OmitScreenshot: a.OmitScreenshot,
 				Descriptor: a.Descriptor,
 			})
 		}

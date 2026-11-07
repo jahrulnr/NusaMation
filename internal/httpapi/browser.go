@@ -221,8 +221,9 @@ func (s *Server) handleBrowserAnnotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		X *float64 `json:"x"`
-		Y *float64 `json:"y"`
+		X      *float64 `json:"x"`
+		Y      *float64 `json:"y"`
+		Marker int      `json:"marker"`
 	}
 	if err := readJSON(w, r, &in, 64<<10); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid annotate payload.")
@@ -232,13 +233,14 @@ func (s *Server) handleBrowserAnnotate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "Valid x and y coordinates are required.")
 		return
 	}
-	pick, err := sess.Annotate(r.Context(), *in.X, *in.Y)
+	pick, err := sess.Annotate(r.Context(), *in.X, *in.Y, in.Marker)
 	if err != nil {
 		s.browserError(w, err, true)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pickId": pick.ID, "descriptor": pick.Descriptor, "upload": pick.Upload,
+		"marker": pick.Marker,
 	})
 }
 

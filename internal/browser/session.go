@@ -14,8 +14,8 @@ import (
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/inspector"
-	"github.com/chromedp/cdproto/overlay"
 	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
@@ -155,7 +155,6 @@ type Session struct {
 	stream       *Stream
 	castCtx      context.Context
 	castCancel   context.CancelFunc
-	overlayReady bool
 
 	busy atomic.Bool
 
@@ -285,7 +284,7 @@ func (s *Session) Navigate(ctx context.Context, url string) (*NavResult, error) 
 		case <-time.After(navWait):
 		}
 	}
-	s.afterCommit()
+	s.afterCommit(true)
 	s.refreshNavState()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -351,7 +350,7 @@ func (s *Session) History(ctx context.Context, action string) (*NavResult, error
 			return nil, fmt.Errorf("%w: browser session ended", ErrUnavailable)
 		case <-time.After(navWait):
 		}
-		s.afterCommit()
+		s.afterCommit(true)
 	}
 	s.refreshNavState()
 	s.mu.Lock()
@@ -426,14 +425,22 @@ func (s *Session) tab() *chromedp.Target {
 }
 
 // afterCommit runs on every committed navigation (contract §5): painted
-// highlights are cleared, backend node ids go stale, a fresh screenshot is
-// forced, and meta is re-emitted.
-func (s *Session) afterCommit() {
-	// Clear the painted highlight of the outgoing document; fails harmlessly
-	// when the overlay was never enabled.
-	ctx, cancel := s.ioCtx()
-	_, _ = chromedp.Call(ctx, overlay.HideHighlight, cdp.Empty{})
-	cancel()
+// pin markers are cleared, a fresh screenshot is forced, and meta is
+// re-emitted. locked=true means the caller already holds s.busy (Navigate/
+// History): the remover runs unconditionally because no pick can be in
+// flight — busy serializes them — and same-document commits do not destroy
+// the DOM marker. locked=false is the event-loop path (page-initiated
+// pushState): the CAS keeps it atomic with a pick's busy claim so a pushState
+// mid-pick can't strip the marker between paint and capture.
+func (s *Session) afterCommit(locked bool) {
+	if locked {
+		s.removeMarker()
+	} else if s.busy.CompareAndSwap(false, true) {
+		s.removeMarker()
+		s.busy.Store(false)
+	}
+	// Skipping during other busy ops is safe: cross-document commits destroy
+	// the DOM marker anyway.
 	s.enqueueNavCheck()
 	go func() {
 		select {
@@ -443,6 +450,12 @@ func (s *Session) afterCommit() {
 		}
 		s.forceScreenshot()
 	}()
+}
+
+func (s *Session) removeMarker() {
+	ctx, cancel := s.ioCtx()
+	_, _ = chromedp.Call(ctx, runtime.Evaluate, runtime.EvaluateParams{Expression: markerRemover})
+	cancel()
 }
 
 // watchNav tracks in-page commits (link clicks, history.pushState) for the
@@ -455,7 +468,7 @@ func (s *Session) watchNav() {
 		if ev.Frame == nil || ev.Frame.ParentID != "" {
 			continue
 		}
-		s.afterCommit()
+		s.afterCommit(false)
 	}
 }
 
@@ -730,10 +743,19 @@ func (s *Session) Click(x, y float64, button string, clickCount int64) error {
 
 func (s *Session) Wheel(x, y, deltaX, deltaY float64) error {
 	ctx, cancel := s.ioCtx()
-	_, err := chromedp.Call(ctx, input.DispatchMouseEvent,
-		input.DispatchMouseEventParams{Type: input.DispatchMouseEventTypeMouseWheel, X: x, Y: y, DeltaX: deltaX, DeltaY: deltaY})
-	cancel()
-	return err
+	defer cancel()
+	// Chromium requires both deltaX and deltaY on every mouseWheel event,
+	// and cdproto's DispatchMouseEventParams omits zero values — so a pure
+	// vertical scroll (deltaX=0) is rejected outright. Send the params
+	// with both keys always present.
+	params := struct {
+		Type   input.DispatchMouseEventType `json:"type"`
+		X      float64                      `json:"x"`
+		Y      float64                      `json:"y"`
+		DeltaX float64                      `json:"deltaX"`
+		DeltaY float64                      `json:"deltaY"`
+	}{Type: input.DispatchMouseEventTypeMouseWheel, X: x, Y: y, DeltaX: deltaX, DeltaY: deltaY}
+	return s.tab().Call(ctx, "Input.dispatchMouseEvent", params, nil)
 }
 
 func (s *Session) InsertText(text string) error {

@@ -55,6 +55,9 @@ type Options struct {
 	// SaveAttachment persists an annotation crop through the upload path
 	// (chat.Service.SaveInboundAttachment).
 	SaveAttachment SaveAttachmentFunc
+	// DataDir is where pick JSON files persist so composer chips survive a
+	// server restart; empty falls back to in-memory only (tests).
+	DataDir string
 	// IdleTTL closes sessions with no stream and no commands after this long.
 	IdleTTL time.Duration
 	// BrowserIdleTTL stops the shared Chromium once it has had no sessions
@@ -66,7 +69,7 @@ type Pick struct {
 	ID             string
 	SessionID      string
 	ConversationID string
-	BackendNodeID  int64
+	Marker         int
 	Descriptor     store.AnnotationDescriptor
 	Upload         store.Upload
 	CreatedAt      int64
@@ -76,6 +79,7 @@ type Manager struct {
 	execPath       string
 	log            *slog.Logger
 	save           SaveAttachmentFunc
+	picksDir       string
 	idleTTL        time.Duration
 	browserIdleTTL time.Duration
 
@@ -102,6 +106,7 @@ func NewManager(opts Options) *Manager {
 		execPath:       opts.ExecPath,
 		log:            log.With("component", "browser"),
 		save:           opts.SaveAttachment,
+		picksDir:       opts.DataDir,
 		idleTTL:        opts.IdleTTL,
 		browserIdleTTL: opts.BrowserIdleTTL,
 		sessions:       map[string]*Session{},
@@ -114,6 +119,14 @@ func NewManager(opts Options) *Manager {
 	}
 	if m.browserIdleTTL <= 0 {
 		m.browserIdleTTL = 2 * time.Minute
+	}
+	if m.picksDir != "" {
+		// Picks outlive their session's process lifetime but not forever —
+		// sweep a week's worth so files from dead sessions do not accumulate.
+		cutoff := time.Now().Add(-7 * 24 * time.Hour).UnixMilli()
+		if err := sweepPickFiles(m.picksDir, cutoff); err != nil {
+			m.log.Warn("stale annotation picks not swept", "error", err)
+		}
 	}
 	go m.sweepLoop()
 	return m
@@ -223,18 +236,38 @@ func (m *Manager) List() []*Session {
 	return out
 }
 
-// Pick resolves an annotation pick id in the manager-wide pick store.
+// Pick resolves an annotation pick id: memory first, then the pick file —
+// picks persist across restarts because the marked screenshot upload does.
 func (m *Manager) Pick(id string) (*Pick, bool) {
+	if !validPickID(id) {
+		return nil, false
+	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	p, ok := m.picks[id]
-	return p, ok
+	m.mu.Unlock()
+	if ok || m.picksDir == "" {
+		return p, ok
+	}
+	p, err := loadPickFile(m.picksDir, id)
+	if err != nil {
+		return nil, false
+	}
+	m.mu.Lock()
+	m.picks[p.ID] = p
+	m.mu.Unlock()
+	return p, true
 }
 
 func (m *Manager) addPick(p *Pick) {
 	m.mu.Lock()
 	m.picks[p.ID] = p
 	m.mu.Unlock()
+	if m.picksDir == "" {
+		return
+	}
+	if err := savePickFile(m.picksDir, p); err != nil {
+		m.log.Warn("annotation pick not persisted; in-memory only", "pick", p.ID, "error", err)
+	}
 }
 
 func (m *Manager) dropSessionPicks(sessionID string) {
@@ -245,6 +278,11 @@ func (m *Manager) dropSessionPicks(sessionID string) {
 		}
 	}
 	m.mu.Unlock()
+	if m.picksDir != "" {
+		if err := deleteSessionPickFiles(m.picksDir, sessionID); err != nil {
+			m.log.Warn("annotation picks not cleared", "session", sessionID, "error", err)
+		}
+	}
 }
 
 // ensureBrowser lazily launches the shared headless Chromium and returns its

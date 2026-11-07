@@ -61,6 +61,8 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | `POST` | `/conversations/{id}/config` | `{configId, value}` or `{model}` |
 | `POST` | `/conversations/{id}/elicitations/{requestId}` | `{action:"accept"|"decline"|"cancel", content?}` answers a pending agent input request |
 | `POST` | `/conversations/{id}/agent` | `{agentId}`; starts a handoff recap |
+| `GET` | `/conversations/{id}/meta` | file-backed UI meta: `{title?, browser?:{lastUrl}, draft?:{text, attachments, sendDelivery, replyToChannel, updatedAt}}`; missing file → `{meta:{}}` |
+| `PUT` | `/conversations/{id}/meta` | merge patch `{title?, browser?:{lastUrl}, draft?}`; `draft:null` clears the draft (sent after a successful message send) |
 | `POST` | `/conversations/{id}/routing` | full `Routing` object |
 | `GET` | `/conversations/{id}/export` | JSON download |
 
@@ -148,14 +150,14 @@ Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser co
 | `DELETE` | `/browser/sessions/{id}` | closes the session and its browser context |
 | `POST` | `/browser/sessions/{id}/navigate` | `{url}` → `{url,title,canGoBack,canGoForward}`; bare domains get `https://`; 409 `busy` during in-flight nav/pick |
 | `POST` | `/browser/sessions/{id}/history` | `{action:"back"\|"forward"\|"reload"}`; missing entry is a 200 no-op |
-| `POST` | `/browser/sessions/{id}/annotate` | `{x,y}` viewport CSS px → `{pickId, descriptor, upload}` (element crop PNG); 422 `pick_missed` |
+| `POST` | `/browser/sessions/{id}/annotate` | `{x,y,marker?}` viewport CSS px → `{pickId, marker, descriptor, upload}` (full-viewport PNG with the pin ring + numbered badge); 422 `pick_missed` |
 | `POST` | `/browser/sessions/{id}/annotate/preview` | `{x,y}` → `{missed, skipped, rect, tagName, name, selector}` hover probe; no paint/upload/pick; `skipped` while busy instead of 409 |
 | `POST` | `/browser/sessions/{id}/annotate/clear` | clears the painted highlight; picks/uploads persist |
 | WebSocket | `/browser/sessions/{id}/stream` | one live stream per session; a new attach sends the old one `closed/stream_replaced` |
 
 Stream protocol: server→client binary messages are JPEG screencast frames; text messages are `{type:"meta"|"closed"|"pong"}`. `meta` carries `deviceWidth/deviceHeight/pageScaleFactor/scrollOffsetX/scrollOffsetY/url/title/canGoBack/canGoForward` on change. Client→server text messages: `{type:"mousemove"|"click"|"wheel"|"text"|"key"|"resize"|"ping"}` with coordinates in viewport CSS px (the client scales the displayed frame using the latest `meta`).
 
-`annotations` on `POST /messages` reference `{pickId}` values returned by `annotate`; the server resolves each pick to its descriptor + crop upload (400 `annotation_invalid` for unknown/stale picks), stores them in `message.metadata.annotations`, and adds an annotation context block plus the crop image blocks to the agent prompt.
+`annotations` on `POST /messages` reference `{pickId, comment, screenshot?}` values; `screenshot:false` keeps the pin's image out of the agent prompt (history thumbnails still work). Picks persist as JSON files under `<data>/browser-picks/` so chips survive a server restart; they are deleted when the browser session closes and swept after a week. The server resolves each pick to its descriptor + marked screenshot (400 `annotation_invalid` for unknown/stale picks), stores them in `message.metadata.annotations` (incl. `marker` — the badge number drawn on the image — and `omitScreenshot`), and adds an annotation context block with selector, nearby text, layout (rect · viewport · scroll) and computed style lines plus the marked image blocks to the agent prompt. The descriptor also carries `viewport{w,h,dpr}`, `computed` style fields, the element's opening `html` tag, `framePath`, scroll offsets and page dimensions.
 
 ## Settings and stats
 

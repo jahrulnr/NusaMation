@@ -282,40 +282,80 @@ type AnnotationRect struct {
 	Height float64 `json:"height"`
 }
 
+// AnnotationViewport records the layout viewport at pick time (CSS px). The
+// width doubles as the explicit breakpoint a layout bug was seen at.
+type AnnotationViewport struct {
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	DPR    float64 `json:"dpr"`
+}
+
+// AnnotationComputed carries the resolved getComputedStyle values the agent
+// asks for most often when diagnosing layout/typography complaints.
+type AnnotationComputed struct {
+	FontSize        string `json:"fontSize,omitempty"`
+	LineHeight      string `json:"lineHeight,omitempty"`
+	FontFamily      string `json:"fontFamily,omitempty"`
+	FontWeight      string `json:"fontWeight,omitempty"`
+	LetterSpacing   string `json:"letterSpacing,omitempty"`
+	Color           string `json:"color,omitempty"`
+	BackgroundColor string `json:"backgroundColor,omitempty"`
+	Display         string `json:"display,omitempty"`
+	Position        string `json:"position,omitempty"`
+}
+
 // AnnotationDescriptor is the element descriptor captured at pick time
 // (browser-api-contract §6.1). backendNodeId stays server-side and is never
 // serialized.
 type AnnotationDescriptor struct {
-	Selector      string          `json:"selector"`
-	ElementPath   string          `json:"elementPath"`
-	TagName       string          `json:"tagName"`
-	Role          string          `json:"role"`
-	Name          string          `json:"name"`
-	ImmediateText string          `json:"immediateText"`
-	NearbyText    string          `json:"nearbyText"`
-	Rect          AnnotationRect  `json:"rect"`
-	IsFixed       bool            `json:"isFixed"`
-	FramePath     []string        `json:"framePath"`
-	Point         AnnotationPoint `json:"point"`
-	PageURL       string          `json:"pageUrl"`
-	Title         string          `json:"title"`
+	Selector    string `json:"selector"`
+	ElementPath string `json:"elementPath"`
+	TagName     string `json:"tagName"`
+	// HTML is the element's opening tag (attributes included), capped at 400
+	// chars — enough for id/class/type/href/aria without shipping a subtree.
+	HTML          string             `json:"html,omitempty"`
+	Role          string             `json:"role"`
+	Name          string             `json:"name"`
+	ImmediateText string             `json:"immediateText"`
+	NearbyText    string             `json:"nearbyText"`
+	Rect          AnnotationRect     `json:"rect"`
+	IsFixed       bool               `json:"isFixed"`
+	FramePath     []string           `json:"framePath"`
+	Point         AnnotationPoint    `json:"point"`
+	PageURL       string             `json:"pageUrl"`
+	Title         string             `json:"title"`
+	Viewport      AnnotationViewport `json:"viewport"`
+	Computed      AnnotationComputed `json:"computed,omitempty"`
+	ScrollX       float64            `json:"scrollX"`
+	ScrollY       float64            `json:"scrollY"`
+	PageW         float64            `json:"pageW"`
+	PageH         float64            `json:"pageH"`
 }
 
 // AnnotationInput is the resolved pick passed httpapi → chat on SubmitInput;
 // the client only submits {pickId, comment} and the server resolves the rest.
+// OmitScreenshot keeps the pick's image out of the agent prompt while the
+// upload stays available for the web history thumbnail.
 type AnnotationInput struct {
-	PickID     string
-	Comment    string
-	Descriptor AnnotationDescriptor
-	Upload     Upload
+	PickID         string
+	Comment        string
+	Marker         int
+	Descriptor     AnnotationDescriptor
+	Upload         Upload
+	OmitScreenshot bool
 }
 
 // MessageAnnotation is the persisted metadata.annotations[] entry (§6.4).
+// Marker is the badge number drawn on the pin screenshot. OmitScreenshot is
+// inverted (opt-out) so annotations persisted before the flag existed keep
+// sending their image.
 type MessageAnnotation struct {
-	PickID     string               `json:"pickId"`
-	Comment    string               `json:"comment"`
-	UploadID   string               `json:"uploadId"`
-	Descriptor AnnotationDescriptor `json:"descriptor"`
+	PickID         string               `json:"pickId"`
+	Comment        string               `json:"comment"`
+	Marker         int                  `json:"marker,omitempty"`
+	UploadID       string               `json:"uploadId"`
+	OmitScreenshot bool                 `json:"omitScreenshot,omitempty"`
+	Descriptor     AnnotationDescriptor `json:"descriptor"`
 }
 
 type AgentInput struct {

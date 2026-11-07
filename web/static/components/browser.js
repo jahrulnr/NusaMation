@@ -1,5 +1,6 @@
 import { $, clamp, esc, icon, truncate } from "./util.js";
 import { S, onComposerSwitch } from "./state.js";
+import { saveLastURL, scheduleDraftSave } from "./convmeta.js";
 import { api } from "./api.js";
 import { toast } from "./toast.js";
 import { closePopover, openPopover } from "./popover.js";
@@ -28,7 +29,7 @@ const B = {
   statusText: "",
   closedCode: "",
   annotate: false,
-  pendingPick: null,      // {pickId, descriptor, upload, submitted}
+  pendingPick: null,      // {pickId, descriptor, upload, marker, comment, includeScreenshot, submitted}
   picking: false,
   gotFrame: false,
   frameUrl: "",
@@ -389,6 +390,7 @@ export async function browserNavigate(url) {
   try {
     const d = await api(`/browser/sessions/${encodeURIComponent(B.session.id)}/navigate`, { method: "POST", body: { url } });
     applyNavState(d);
+    saveLastURL(B.conversationId, B.nav.url || url);
   } catch (e) {
     browserApiError(e, "Navigation failed");
   } finally {
@@ -404,6 +406,7 @@ export async function browserHistory(action) {
   try {
     const d = await api(`/browser/sessions/${encodeURIComponent(B.session.id)}/history`, { method: "POST", body: { action } });
     applyNavState(d);
+    saveLastURL(B.conversationId, B.nav.url);
   } catch (e) {
     browserApiError(e, action === "reload" ? "Reload failed" : "Could not navigate history");
   } finally {
@@ -634,7 +637,7 @@ function hideHover() {
 }
 
 // Keeps the picked element marked while its comment popover is open — the
-// server clears the page-dimming CDP overlay right after the crop, so this
+// server removes the painted pin right after the marked screenshot, so this
 // client-side box is the persistent highlight.
 function pinHover(d) {
   B.hoverSeq++;
@@ -694,12 +697,15 @@ async function pickAt(p, clientPoint) {
   marker.style.top = clientPoint.y - vr.top + "px";
   view.appendChild(marker);
   try {
+    // Marker number = next free pin number so the badge baked into the
+    // screenshot stays unique even after chips are removed/reordered.
+    const pinNo = Math.max(0, ...S.attachments.filter((a) => a.type === "annotation").map((a) => a.marker || 0)) + 1;
     const d = await api(`/browser/sessions/${encodeURIComponent(B.session.id)}/annotate`, {
       method: "POST",
-      body: { x: p.x, y: p.y },
+      body: { x: p.x, y: p.y, marker: pinNo },
     });
     if (!B.open || !B.annotate) return; // pane closed / annotate exited while the pick was in flight
-    B.pendingPick = { pickId: d.pickId, descriptor: d.descriptor || {}, upload: d.upload || null, submitted: false, comment: "" };
+    B.pendingPick = { pickId: d.pickId, descriptor: d.descriptor || {}, upload: d.upload || null, marker: d.marker || pinNo, submitted: false, comment: "", includeScreenshot: true };
     pinHover(d.descriptor || {});
     openAnnotatePopover(clientPoint);
   } catch (e) {
@@ -731,6 +737,7 @@ function openAnnotatePopover(clientPoint) {
       <div class="annotate-id"><b>${esc(d.tagName ? `<${d.tagName}>` : "element")}</b><small>${esc(truncate(label, 60) || d.selector || "")}</small></div>
     </div>
     <textarea class="input annotate-comment" rows="2" placeholder="Comment for the agent…" aria-label="Annotation comment" autofocus></textarea>
+    <label class="annotate-shot"><input type="checkbox" class="annotate-shot-input" checked> Include screenshot <small>(pin ${pick.marker || 1} — the agent sees the marked page)</small></label>
     <div class="annotate-actions">
       <button class="btn btn-ghost btn-xs" data-action="annotation-cancel">Cancel</button>
       <button class="btn btn-primary btn-xs" data-action="annotation-submit">Add note</button>
@@ -755,6 +762,9 @@ function openAnnotatePopover(clientPoint) {
   };
   const ta = $(".annotate-comment", pop);
   ta?.addEventListener("input", () => { if (B.pendingPick) B.pendingPick.comment = ta.value; });
+  $(".annotate-shot-input", pop)?.addEventListener("change", (e) => {
+    if (B.pendingPick) B.pendingPick.includeScreenshot = !!e.target.checked;
+  });
   ta?.addEventListener("keydown", (e) => {
     e.stopPropagation();
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submitAnnotation(); }
@@ -774,6 +784,8 @@ export function submitAnnotation() {
     id: pick.pickId,             // used by the remove-attachment filter when no upload exists
     pickId: pick.pickId,
     comment,
+    marker: pick.marker || 0,
+    shot: pick.includeScreenshot !== false,
     tagName: d.tagName || "",
     label: d.name || d.immediateText || "",
     selector: d.selector || "",
@@ -783,6 +795,7 @@ export function submitAnnotation() {
   postClearHighlight();
   closePopover();
   renderPendingAttachments();
+  scheduleDraftSave();
   focusComposer();
 }
 
