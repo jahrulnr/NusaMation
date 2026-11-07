@@ -114,6 +114,11 @@ prepare_dirs() {
 install_service() {
 	log "Installing systemd user unit ${UNIT_FILE}"
 	mkdir -p "${UNIT_DIR}"
+	# The systemd user manager does not inherit the login shell PATH, so agent
+	# CLIs in non-standard locations (~/go/bin, ~/.cargo/bin, ...) would be
+	# invisible to the service. Merge the current PATH into the unit, install
+	# dir first; add more entries later via ${ENV_FILE} (PATH=...).
+	merged="$(printf '%s\n' "${INSTALL_DIR}" "${PATH:-/usr/local/bin:/usr/bin:/bin}" | tr ':' '\n' | awk '!seen[$0]++' | paste -sd: -)"
 	printf '%s\n' \
 		'[Unit]' \
 		'Description=NusaMation personal agent mesh' \
@@ -127,7 +132,7 @@ install_service() {
 		'Type=simple' \
 		"WorkingDirectory=${HOME}" \
 		"Environment=HOME=${HOME}" \
-		"Environment=PATH=${INSTALL_DIR}:/usr/local/bin:/usr/bin:/bin" \
+		"Environment=PATH=${merged}" \
 		"Environment=NUSAMATION_DATA_DIR=${DATA_DIR}" \
 		"EnvironmentFile=-${ENV_FILE}" \
 		"ExecStart=${INSTALL_DIR}/nusamation" \

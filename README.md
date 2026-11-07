@@ -17,57 +17,49 @@ NusaMation is not another LLM wrapper. The brain is any **Agent Client Protocol 
 
 ## Quick start
 
-Requirements: Go **1.27+**, and an ACP agent CLI on `PATH` (popular ones are auto-detected on first run).
+Install the latest release with one command — no Go toolchain or source checkout required:
 
-```bash
-git clone https://github.com/jahrulnr/NusaMation.git
-cd NusaMation
-go build -o nusamation ./cmd/nusamation
-
-# Linux/macOS
-./nusamation
-```
-
-Open <http://127.0.0.1:8787>. On first run NusaMation prints a generated admin password once. Save it.
-
-```text
-  URL:      http://127.0.0.1:8787
-  Password: nm_xxxxxxxxxxxxxxxx
-```
-
-Set your own password instead:
-
-```bash
-NUSAMATION_PASSWORD='a-long-password' ./nusamation
-```
-
-Forgot the password? Stop the app and reset it:
-
-```bash
-./nusamation reset-password -data-dir ~/.nusamation
-```
-
-On first run NusaMation scans `PATH` for popular ACP CLIs (Devin, Claude Agent, Codex, Gemini, Copilot, OpenCode, Auggie, goose, Kimi, Cursor, Kilo, Qwen, Mistral Vibe, Kiro) and seeds every one it finds as an agent. Add more manually in **Control center → Agents** or with `nusamation agent add`.
-
-### Install from a release (no source checkout)
-
-Every push to `master` runs the tests and builds the binaries; when `VERSION` has been bumped, it also publishes a tagged release with the binaries and installers. Install the latest release with one command:
-
-- **Linux** (mirrors `make install`: binary + systemd user service):
+- **Linux** (binary + systemd user service, autostart at boot):
 
   ```bash
   curl -fsSL https://github.com/jahrulnr/NusaMation/releases/latest/download/install.sh | bash
   ```
 
-- **Windows** (PowerShell: installs under `%LOCALAPPDATA%\NusaMation\bin`, adds it to the user PATH and registers a hidden logon task):
+- **Windows** (PowerShell: binary under `%LOCALAPPDATA%\NusaMation\bin`, user PATH, hidden logon task):
 
   ```powershell
   irm https://github.com/jahrulnr/NusaMation/releases/latest/download/install.ps1 | iex
   ```
 
-Pin a version with `NUSAMATION_VERSION=0.1.0` (Linux) or `$env:NUSAMATION_VERSION = '0.1.0'` (Windows). See `scripts/install.sh` / `scripts/install.ps1` for all options and uninstall.
+The installer downloads the release binary, verifies its SHA-256 checksum and starts NusaMation immediately. Open <http://127.0.0.1:8787>.
 
-### Install as a user service
+On first run NusaMation generates an admin password and prints it once. Find it in the service log:
+
+```bash
+# Linux (systemd user service)
+journalctl --user -u nusamation.service -n 60 --no-pager
+
+# Windows (PowerShell)
+Get-Content (Join-Path $env:USERPROFILE '.nusamation\logs\nusamation.log')
+```
+
+Forgot it? Stop NusaMation and reset it:
+
+```bash
+nusamation reset-password -data-dir ~/.nusamation
+```
+
+On first run NusaMation also scans `PATH` for popular ACP CLIs (Devin, Claude Agent, Codex, Gemini, Copilot, OpenCode, Auggie, goose, Kimi, Cursor, Kilo, Qwen, Mistral Vibe, Kiro) and seeds every one it finds as an agent. Add more manually in **Control center → Agents** or with `nusamation agent add`.
+
+Pin a version, customize install paths or uninstall: see [Installation](#installation).
+
+## Installation
+
+### From a release
+
+The one-liners above install the latest release. Pin a version with `NUSAMATION_VERSION=0.1.0` (Linux) or `$env:NUSAMATION_VERSION = '0.1.0'` (Windows). Both installers verify the binary against the published SHA-256 checksums, are safe to re-run (data is kept) and support uninstall. See `scripts/install.sh` / `scripts/install.ps1` for all options. On Linux the installer mirrors `make install` and merges the `PATH` of the shell that ran it into the service unit, so agent CLIs outside the standard directories are detected by the service.
+
+### Install as a user service (from source)
 
 On Linux with a systemd user manager, install the binary and autostart it without root:
 
@@ -83,6 +75,8 @@ This installs:
 | `~/.nusamation/` | Data directory (database, workspace, uploads, secrets) |
 | `~/.config/systemd/user/nusamation.service` | systemd user unit |
 | `~/.config/nusamation/env` | Optional environment overrides, created only when missing |
+
+The service unit merges the `PATH` of the shell that ran `make install` (install dir first), so agent CLIs in non-standard locations (`~/go/bin`, `~/.cargo/bin`, …) are detected. Add more entries later with a `PATH=...` line in `~/.config/nusamation/env`.
 
 The service is enabled for login and started immediately:
 
@@ -107,22 +101,6 @@ journalctl --user -u nusamation.service -n 60 --no-pager
 ```
 
 If port `8787` is already used by a manually started instance, stop that instance before `make install`. Re-running `make install` is safe: the environment file and data are not overwritten. `make uninstall` removes the binary and service but keeps data; `make purge` also removes the data and environment file.
-
-### Run the demo agent
-
-The repository includes a deterministic fake ACP agent for UI and integration testing:
-
-```bash
-go build -o fake-acp ./cmd/fake-acp-agent
-
-# Add it in Control center → Agents:
-#   Name:    Fake ACP
-#   Command: /absolute/path/to/fake-acp
-#   Cwd:     /absolute/path/to/a/workspace
-#   Policy:  ask
-```
-
-It streams a thought, a plan, a tool call, a **permission request**, a tool result and a final message. Use it to see the approval flow end to end.
 
 ## Screens
 
@@ -341,6 +319,39 @@ Use **Probe** to discover models and configuration options. Devin publishes mode
 Read [docs/AGENTS.md](docs/AGENTS.md) for approval policies, MCP, auth and workspace guidance.
 
 ## Development
+
+### Build and run from source
+
+Requirements: Go **1.27+**, and an ACP agent CLI on `PATH` (popular ones are auto-detected on first run).
+
+```bash
+git clone https://github.com/jahrulnr/NusaMation.git
+cd NusaMation
+go build -o nusamation ./cmd/nusamation
+
+# Linux/macOS
+./nusamation
+```
+
+Open <http://127.0.0.1:8787>. On first run the binary prints a generated admin password once; save it. Set your own password instead with `NUSAMATION_PASSWORD='a-long-password' ./nusamation`.
+
+### Run the demo agent
+
+The repository includes a deterministic fake ACP agent for UI and integration testing:
+
+```bash
+go build -o fake-acp ./cmd/fake-acp-agent
+
+# Add it in Control center → Agents:
+#   Name:    Fake ACP
+#   Command: /absolute/path/to/fake-acp
+#   Cwd:     /absolute/path/to/a/workspace
+#   Policy:  ask
+```
+
+It streams a thought, a plan, a tool call, a **permission request**, a tool result and a final message. Use it to see the approval flow end to end.
+
+### Make targets
 
 ```bash
 make check      # fmt + vet (linux & windows) + tests + windows compile check

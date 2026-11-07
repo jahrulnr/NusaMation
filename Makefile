@@ -73,7 +73,8 @@ install-bin: check-home build
 	@printf 'Installed binary: %s\n' "$(BIN_DIR)/nusamation"
 
 install-service: install-bin prepare
-	@printf '%s\n' \
+	@merged=$$(printf '%s\n' '$(BIN_DIR)' "$${PATH:-/usr/local/bin:/usr/bin:/bin}" | tr ':' '\n' | awk '!seen[$$0]++' | paste -sd: -); \
+	printf '%s\n' \
 		'[Unit]' \
 		'Description=NusaMation personal agent mesh' \
 		'Documentation=https://github.com/jahrulnr/NusaMation' \
@@ -86,7 +87,7 @@ install-service: install-bin prepare
 		'Type=simple' \
 		'WorkingDirectory=$(HOME)' \
 		'Environment=HOME=$(HOME)' \
-		'Environment=PATH=$(BIN_DIR):/usr/local/bin:/usr/bin:/bin' \
+		"Environment=PATH=$$merged" \
 		'Environment=NUSAMATION_DATA_DIR=$(DATA_DIR)' \
 		'EnvironmentFile=-$(ENV_FILE)' \
 		'ExecStart=$(BIN_DIR)/nusamation' \

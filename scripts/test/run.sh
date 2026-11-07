@@ -43,6 +43,14 @@ cp "$FAKE_DIR/$asset" "$out"
 EOF
 chmod +x "$TESTROOT/fakebin/curl"
 
+# Fake systemctl: forces the "no systemd user manager" path in install_service
+# so the generated unit file can be inspected on any host.
+cat > "$TESTROOT/fakebin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$TESTROOT/fakebin/systemctl"
+
 export PATH="$TESTROOT/fakebin:$PATH"
 export FAKE_DIR="$TESTROOT/release"
 export HOME="$TESTROOT/home"
@@ -105,6 +113,20 @@ if HOME="$TESTROOT/home4" "$INSTALLER" uninstall >/dev/null 2>&1; then
 	pass "uninstall keeps data"
 else
 	fail "uninstall exited non-zero"
+fi
+
+# 7. The service unit merges the installer's PATH (systemd user services do
+# not inherit the login shell PATH). systemctl is absent in the harness, so
+# only the generated unit file is checked.
+if HOME="$TESTROOT/home5" NUSAMATION_NO_SERVICE= "$INSTALLER" >/dev/null 2>&1; then
+	unit="$TESTROOT/home5/.config/systemd/user/nusamation.service"
+	[ -f "$unit" ] || fail "unit file not written"
+	expected="$(printf '%s\n' "$TESTROOT/home5/.local/bin" "$PATH" | tr ':' '\n' | awk '!seen[$0]++' | paste -sd: -)"
+	got="$(sed -n 's/^Environment=PATH=//p' "$unit")"
+	[ "$got" = "$expected" ] || fail "unit PATH mismatch: got=$got want=$expected"
+	pass "service unit merges PATH"
+else
+	fail "install with service exited non-zero"
 fi
 
 echo "all installer tests passed"

@@ -1,12 +1,13 @@
 name: test-build-release
 
 # Flow: push/merge to master -> unit tests [linux, windows] -> build [linux,
-# windows] -> tag (v<VERSION>) -> GitHub release with binaries + installers.
+# windows] -> tag (v<VERSION>) -> GitHub release with binaries + installers,
+# notes from the matching "## [<version>]" section of CHANGELOG.md.
 #
 # The tag is derived from the VERSION file (e.g. "0.1.0" -> "v0.1.0"). If that
 # tag was already published, the release step is skipped so repeated pushes
-# don't create duplicate releases. Bump VERSION (and CHANGELOG.md) to ship a
-# new release.
+# don't create duplicate releases. Bump VERSION (and add a CHANGELOG.md
+# section) to ship a new release.
 on:
   push:
     branches: [master]
@@ -143,10 +144,27 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ steps.check.outputs.tag }}"
+          version="${tag#v}"
           # Pin the tag to this exact commit so release binaries always match
           # the tagged source, even if a stale tag was left by a failed run.
           git tag -f "$tag" "$GITHUB_SHA"
           git push origin "$tag" --force
-          gh release create "$tag" dist/* \
-            --title "NusaMation $tag" \
-            --generate-notes
+          # Release notes come from the matching "## [<version>]" section in
+          # CHANGELOG.md (Keep a Changelog format); fall back to GitHub's
+          # auto-generated notes when the section is missing.
+          if awk -v ver="$version" '
+              BEGIN { gsub(/\./, "[.]", ver); pat = "^## \\[" ver "\\]([[:space:]]|$)" }
+              $0 ~ pat { insec = 1; next }
+              insec && $0 ~ /^## / { insec = 0 }
+              insec { print }
+            ' CHANGELOG.md > /tmp/release-notes.md && [ -s /tmp/release-notes.md ]; then
+            echo "::notice title=Release notes::using CHANGELOG.md section for $version"
+            gh release create "$tag" dist/* \
+              --title "NusaMation $tag" \
+              --notes-file /tmp/release-notes.md
+          else
+            echo "::notice title=Release notes::no CHANGELOG.md section for $version; using generated notes"
+            gh release create "$tag" dist/* \
+              --title "NusaMation $tag" \
+              --generate-notes
+          fi

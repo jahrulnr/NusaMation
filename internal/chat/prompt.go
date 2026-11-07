@@ -377,7 +377,7 @@ func annotationBlock(metadata json.RawMessage) string {
 	var b strings.Builder
 	b.WriteString("Page annotations — the user marked elements on a web page; each element's screenshot is attached as an image.\n")
 	described := min(len(meta.Annotations), maxDescribed)
-	for i := 0; i < described; i++ {
+	for i := range described {
 		an := meta.Annotations[i]
 		d := an.Descriptor
 		label := d.Name

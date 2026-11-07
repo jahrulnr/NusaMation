@@ -74,10 +74,7 @@ func (s *Server) hydrateMessages(r *http.Request, msgs []store.Message) []messag
 func (s *Server) handleListConversations(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	archived := q.Get("archived") == "1" || strings.EqualFold(q.Get("archived"), "true")
-	limit := parseInt(q.Get("limit"), 100)
-	if limit > 500 {
-		limit = 500
-	}
+	limit := min(parseInt(q.Get("limit"), 100), 500)
 	list, err := s.store.ListConversations(r.Context(), store.ConversationFilter{
 		Query: q.Get("q"), AgentID: q.Get("agentId"), Channel: q.Get("channel"),
 		Archived: archived, Limit: limit, Offset: parseInt(q.Get("offset"), 0),
@@ -240,10 +237,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	after := int64(parseInt(q.Get("after"), 0))
 	before := int64(parseInt(q.Get("before"), 0))
-	limit := parseInt(q.Get("limit"), 100)
-	if limit > 500 {
-		limit = 500
-	}
+	limit := min(parseInt(q.Get("limit"), 100), 500)
 	msgs, err := s.store.ListMessages(r.Context(), r.PathValue("id"), after, before, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "messages", err.Error())
