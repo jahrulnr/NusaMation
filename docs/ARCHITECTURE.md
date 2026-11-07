@@ -103,6 +103,8 @@ Authenticated WebSocket hub. Every event has a monotonic ID, type, conversation 
 
 Vanilla JS control center. Vendored `marked`, `DOMPurify` and `highlight.js`; no Node build. Renders streaming messages, thoughts, tool cards, plans, approvals, channel settings and the agent/MCP studio. Reconnects the event stream with exponential backoff and resynchronises state on reconnect.
 
+The SPA is native ES modules: `static/app.js` is the entry (binds events, sizes the viewport, boots); feature modules live in `static/components/` — `state.js` is the zero-import leaf holding shared state, `util.js` the DOM/format helpers, and the rest map to UI areas (chat, composer, conversations, settings, ws, events…). Modules may import each other cyclically; that stays safe only because cross-module calls are function declarations used after eval — never call an imported binding at module top level.
+
 ## Turn lifecycle
 
 ```mermaid
@@ -198,6 +200,6 @@ To add Telegram/Discord:
 2. Convert inbound payloads into `channels.Inbound` with a stable chat/thread ID.
 3. Enforce the adapter's own allowlist/group policy before calling the handler.
 4. Return a `Delivery` from `Begin` that edits the acknowledgement if the platform supports edits; otherwise no-op and send on final.
-5. Register the channel in `internal/app` and add a settings card in `web/static/app.js`.
+5. Register the channel in `internal/app` and add a settings card in `web/static/components/settings.js` (channel status/panel helpers live in `components/whatsapp.js`).
 
 No changes to the orchestrator are required for a plain text channel.

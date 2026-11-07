@@ -134,7 +134,7 @@ The chat layer converts markdown to WhatsApp-friendly text (bold, italic, headin
    ```
 6. Implement `ResponseStyler` when the platform has its own message format — the rules are appended to each prompt so the agent writes for that surface.
 7. Implement `PollAsker` when the platform has a native poll widget — approvals and choice questions become tappable; report votes back via `Inbound.PollVote`.
-8. Add a settings card to `web/static/app.js` (optional; plain channels still show status).
+8. Add a settings card to `web/static/components/settings.js` (optional; plain channels still show status).
 9. Add tests for allowlist, dedupe and target parsing.
 
 The orchestrator and web UI do not need channel-specific code for text delivery.

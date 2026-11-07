@@ -8,10 +8,10 @@ context.window = context;
 for (const name of ['marked.min.js', 'markdown-math.min.js']) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'static', 'vendor', name), 'utf8'), context);
 }
-const app = fs.readFileSync(path.join(__dirname, '..', 'static', 'app.js'), 'utf8');
-const relaxStart = app.indexOf('  function relaxListEndings(');
-const relaxEnd = app.indexOf('\n  function renderMarkdown(', relaxStart);
-const relaxListEndings = vm.runInNewContext(`(${app.slice(relaxStart, relaxEnd).trim()})`, {});
+const app = fs.readFileSync(path.join(__dirname, '..', 'static', 'components', 'markdown.js'), 'utf8');
+const relaxStart = app.indexOf('export function relaxListEndings(');
+const relaxEnd = app.indexOf('\nexport function renderMarkdown(', relaxStart);
+const relaxListEndings = vm.runInNewContext(`(${app.slice(relaxStart, relaxEnd).trim().replace(/^export /, '')})`, {});
 function parse(text, scope) {
   const p = new context.marked.Marked({ gfm: true, breaks: true });
   p.use(context.NusaMarkdown.latex(), context.NusaMarkdown.math(),
@@ -34,9 +34,9 @@ test('WhatsApp multiline monospace keeps its first line and markup literal', () 
   const fenced = renderContext.renderMarkdown('```sh\necho hi\n```', 'wa-fence', 'whatsapp');
   assert.match(fenced, /<code class="language-sh">echo hi/);
 });
-const renderStart = app.indexOf('  const markdownCache = new Map();');
-const renderEnd = app.indexOf('\n  const plainCache = new Map();', renderStart);
-vm.runInContext(app.slice(renderStart, renderEnd) + '\nthis.renderMarkdown = renderMarkdown;', renderContext);
+const renderStart = app.indexOf('export const markdownCache = new Map();');
+const renderEnd = app.indexOf('\nexport const plainCache = new Map();', renderStart);
+vm.runInContext(app.slice(renderStart, renderEnd).replace(/^export /gm, '') + '\nthis.renderMarkdown = renderMarkdown;', renderContext);
 
 test('WhatsApp messages render bold, italic, strike, code and lists with WhatsApp semantics', () => {
   const text = '*tebal* _miring_ ~coret~ `inline` ```mono```\n- satu\n- dua';

@@ -3,9 +3,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const app = fs.readFileSync(path.join(__dirname, '..', 'static', 'app.js'), 'utf8');
-const start = app.indexOf('  function setupDiagramZoom(');
-const end = app.indexOf('\n  async function renderDiagram(', start);
+const app = fs.readFileSync(path.join(__dirname, '..', 'static', 'components', 'markdown.js'), 'utf8');
+const start = app.indexOf('export function setupDiagramZoom(');
+const end = app.indexOf('\nexport async function renderDiagram(', start);
 assert.ok(start >= 0 && end > start);
 function setup() {
   const handlers = {};
@@ -13,7 +13,7 @@ function setup() {
   const viewport = { scrollLeft: 0, scrollTop: 0, classList: { add() {}, remove() {} }, setPointerCapture() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 200, height: 100 }), addEventListener: (name, fn) => { handlers[name] = fn; } };
   const figure = { addEventListener: (name, fn) => { handlers[name] = fn; } };
   const query = (selector) => ({ '.diagram-viewport': viewport, 'svg': svg, '.diagram-scale': label })[selector];
-  const fn = vm.runInNewContext(`(${app.slice(start, end).trim()})`, { $: query, Math });
+  const fn = vm.runInNewContext(`(${app.slice(start, end).trim().replace(/^export /, '')})`, { $: query, Math });
   fn(figure, 400);
   return { handlers, svg, label, viewport };
 }

@@ -4,10 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const app = fs.readFileSync(path.join(__dirname, '..', 'static', 'app.js'), 'utf8');
-const start = app.indexOf('  function userHTML(');
-const end = app.indexOf('\n  function assistantHTML(', start);
-const userHTML = vm.runInNewContext(`(${app.slice(start, end).trim()})`, {
+const app = fs.readFileSync(path.join(__dirname, '..', 'static', 'components', 'chat.js'), 'utf8');
+const start = app.indexOf('export function userHTML(');
+const end = app.indexOf('\nexport function assistantHTML(', start);
+const userHTML = vm.runInNewContext(`(${app.slice(start, end).trim().replace(/^export /, '')})`, {
   esc: (s) => String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
   renderMarkdown: (s) => `<p>${String(s || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</p>`,
   messageHead: () => '', attachmentsHTML: (a) => a?.length ? '<div class="attach-grid">attachment</div>' : '', queueStatusLabel: () => '',
