@@ -76,7 +76,9 @@ if ($Uninstall) {
     Remove-FromUserPath $installDir
     Write-Host "Data was kept at $dataDir"
     Write-Host 'Delete it manually to purge.'
-    exit 0
+    # return instead of exit: exit would terminate the caller's session when
+    # the script is invoked with & (tests, wrappers).
+    return
 }
 
 $procArch = $env:PROCESSOR_ARCHITECTURE

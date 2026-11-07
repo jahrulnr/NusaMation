@@ -78,8 +78,15 @@ func (s *Service) resolveOutboundPath(raw string, roots []string) (string, bool)
 	switch {
 	case strings.HasPrefix(raw, "file://"):
 		u, err := url.Parse(raw)
-		if err != nil || u.Scheme != "file" || (u.Host != "" && u.Host != "localhost") {
+		if err != nil || u.Scheme != "file" {
 			return "", false
+		}
+		if u.Host != "" && u.Host != "localhost" {
+			// file://C:/path puts the Windows drive letter in Host.
+			isDrive := runtime.GOOS == "windows" && len(u.Host) == 2 && u.Host[1] == ':'
+			if !isDrive {
+				return "", false
+			}
 		}
 		dec, err := url.PathUnescape(u.Path)
 		if err != nil {
@@ -240,10 +247,12 @@ type errString string
 
 func (e errString) Error() string { return string(e) }
 
-// fileLinkRe matches [label](/abs/path) and [label](file:///abs/path) markdown.
+// fileLinkRe matches [label](/abs/path) and [label](file:///abs/path)
+// markdown, plus Windows drive paths ([label](C:\abs) and
+// [label](file://C:/abs)).
 // fileURIRe matches bare file:///abs/path URIs written into the reply text.
 var (
-	fileLinkRe = regexp.MustCompile(`!?\[([^\]]{0,120})\]\(\s*<?((?:file://)?/[^\s>)]+)>?\s*\)`)
+	fileLinkRe = regexp.MustCompile(`!?\[([^\]]{0,120})\]\(\s*<?((?:file://)?(?:/[^\s>)]+|(?i:[a-z]:[\\/][^\s>)]+)))>?\s*\)`)
 	fileURIRe  = regexp.MustCompile(`file:///[^\s)\]"'<>` + "`" + `]+`)
 )
 

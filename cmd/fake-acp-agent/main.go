@@ -518,7 +518,10 @@ func (s *server) terminalDemo(id json.RawMessage, sessionID string, background b
 	s.update(map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{"type": "text", "text": "Checking the command."}})
 	command, args := "sh", []string{"-c", "printf first; sleep 0.5; printf second; exit 3"}
 	if runtime.GOOS == "windows" {
-		command, args = "powershell", []string{"-NoProfile", "-Command", "[Console]::Write('first'); Start-Sleep -Milliseconds 500; [Console]::Write('second'); exit 3"}
+		// cmd.exe starts instantly and exits deterministically; the
+		// "<nul set /p" trick prints without a trailing newline so the
+		// output stays exactly "firstsecond" with exit code 3.
+		command, args = "cmd.exe", []string{"/d", "/c", "<nul set /p x=first & ping -n 2 127.0.0.1 >nul & <nul set /p x=second & exit /b 3"}
 	}
 	result := s.callClient("terminal/create", map[string]any{"sessionId": sessionID, "command": command, "args": args, "outputByteLimit": 4})
 	var terminal struct {

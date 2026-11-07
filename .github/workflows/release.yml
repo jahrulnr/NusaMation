@@ -5,9 +5,9 @@ name: test-build-release
 # notes from the matching "## [<version>]" section of CHANGELOG.md.
 #
 # The tag is derived from the VERSION file (e.g. "0.1.0" -> "v0.1.0"). If that
-# tag was already published, the release step is skipped so repeated pushes
-# don't create duplicate releases. Bump VERSION (and add a CHANGELOG.md
-# section) to ship a new release.
+# tag already exists — published release, draft, or bare tag — the release
+# step is skipped, so repeated pushes don't create duplicate releases. Delete
+# the tag/release or bump VERSION to release again.
 on:
   push:
     branches: [master]
@@ -41,17 +41,9 @@ jobs:
       - name: Unit tests
         run: go test ./...
 
-  # Regression test for the Linux installer: exercises download, checksum
-  # verification, install, idempotency and uninstall against a fake release.
-  test-install-script:
-    name: test install.sh
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run installer test harness
-        run: bash scripts/test/run.sh
-
+  # Installers are platform scripts, not binaries: install.sh is exercised on
+  # the Linux legs and install.ps1 on the Windows legs (once per OS, on the
+  # amd64 leg). A broken installer fails the build and blocks the release.
   build:
     name: build ${{ matrix.goos }}-${{ matrix.goarch }}
     needs: test
@@ -89,6 +81,15 @@ jobs:
           mkdir -p dist
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
             go build -trimpath -o dist/${{ matrix.asset }} ./cmd/nusamation
+      - name: Test installer
+        if: matrix.goarch == 'amd64'
+        shell: bash
+        run: |
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            bash scripts/test/run.sh
+          else
+            pwsh -NoProfile -File scripts/test/run.ps1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
@@ -111,16 +112,9 @@ jobs:
           set -euo pipefail
           tag="v$(cat VERSION)"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if gh release view "$tag" --json isDraft --jq '.isDraft' >/dev/null 2>&1; then
-            if [ "$(gh release view "$tag" --json isDraft --jq '.isDraft')" = "false" ]; then
-              echo "skipped=true" >> "$GITHUB_OUTPUT"
-              echo "::notice title=Release skipped::$tag is already published"
-            else
-              # Draft left behind by a failed run would wedge this version.
-              echo "skipped=false" >> "$GITHUB_OUTPUT"
-              echo "::warning title=Removing stale draft::deleting draft $tag left by a failed run"
-              gh release delete "$tag" --yes --cleanup-tag || true
-            fi
+          if gh release view "$tag" >/dev/null 2>&1 || git ls-remote --tags origin "refs/tags/$tag" | grep -q .; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Release skipped::$tag already exists (published, draft, or tag)"
           else
             echo "skipped=false" >> "$GITHUB_OUTPUT"
           fi
