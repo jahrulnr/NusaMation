@@ -28,9 +28,11 @@ import (
 	"github.com/jahrulnr/nusamation/internal/chat"
 	"github.com/jahrulnr/nusamation/internal/config"
 	"github.com/jahrulnr/nusamation/internal/httpapi"
+	"github.com/jahrulnr/nusamation/internal/notify"
 	"github.com/jahrulnr/nusamation/internal/realtime"
 	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
+	"github.com/jahrulnr/nusamation/internal/update"
 )
 
 type App struct {
@@ -42,6 +44,8 @@ type App struct {
 	channels *channels.Manager
 	chat     *chat.Service
 	hub      *realtime.Hub
+	notifier *notify.Broadcaster
+	updater  *update.Manager
 	logFile  *os.File
 }
 
@@ -94,12 +98,19 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	hub := realtime.NewHub(logger)
+	// Desktop notifications ride the same event stream: everything published
+	// through notifyBus still reaches web clients via the wrapped hub.
+	notifyBus := notify.Wrap(hub, notify.Options{Store: st, Log: logger})
 	agentMgr := agent.NewManager(st, logger)
-	chanMgr := channels.NewManager(hub, logger)
+	chanMgr := channels.NewManager(notifyBus, logger)
 	chanMgr.Register(webchannel.New())
 	chatSvc := chat.New(chat.Options{
-		Store: st, Agents: agentMgr, Channels: chanMgr, Events: hub, Log: logger,
+		Store: st, Agents: agentMgr, Channels: chanMgr, Events: notifyBus, Log: logger,
 		UploadDir: cfg.UploadDir(), Workspace: cfg.WorkspaceDir(),
+	})
+	updater := update.New(update.Options{
+		Store: st, Bus: notifyBus, Notify: notifyBus, Log: logger,
+		OnRestart: notifyBus.Mute,
 	})
 	browserMgr := browser.NewManager(browser.Options{
 		ExecPath: cfg.BrowserExec, Log: logger,
@@ -117,7 +128,8 @@ func New(cfg config.Config) (*App, error) {
 
 	a := &App{
 		cfg: cfg, log: logger, store: st, agents: agentMgr, browser: browserMgr,
-		channels: chanMgr, chat: chatSvc, hub: hub, logFile: logFile,
+		channels: chanMgr, chat: chatSvc, hub: hub, notifier: notifyBus,
+		updater: updater, logFile: logFile,
 	}
 	if created {
 		printBootstrap(cfg, password)
@@ -129,6 +141,7 @@ func (a *App) Serve(ctx context.Context) error {
 	api, err := httpapi.New(httpapi.Options{
 		Config: a.cfg, Store: a.store, Chat: a.chat, Agents: a.agents,
 		Browser: a.browser, Channels: a.channels, Hub: a.hub, Log: a.log,
+		Notifier: a.notifier, Updater: a.updater,
 	})
 	if err != nil {
 		return err
@@ -159,6 +172,7 @@ func (a *App) Serve(ctx context.Context) error {
 		defer close(schedulerDone)
 		(&automation.Scheduler{Store: a.store, Chat: a.chat, Log: a.log}).Run(schedulerCtx)
 	}()
+	go a.updater.Run(schedulerCtx)
 	a.channels.StartAll(ctx)
 	a.agents.WarmAutoStart()
 	if a.cfg.OpenBrowser {
@@ -178,6 +192,8 @@ func (a *App) Serve(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+	// Suppress "agent error" popups for processes we intentionally kill.
+	a.notifier.Mute()
 	a.channels.StopAll()
 	a.agents.StopAll()
 	a.log.Info("NusaMation stopped")

@@ -70,7 +70,7 @@ export function renderComposer() {
   if (!oldTa || !existing) {
     ta.addEventListener("input", () => { S.draft = ta.value; autoGrow(); });
     ta.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && e.shiftKey && !isMobile() && !e.isComposing) {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !isMobile() && !e.isComposing) {
         e.preventDefault();
         sendMessage();
       }

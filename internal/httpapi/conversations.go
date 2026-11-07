@@ -335,6 +335,34 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// handleCancelQueuedTurn cancels a single queued turn without touching the
+// running one. With {"dropMessage": true} the queued user message is deleted
+// too, which the edit flow uses before resending the corrected prompt.
+func (s *Server) handleCancelQueuedTurn(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		DropMessage bool `json:"dropMessage"`
+	}
+	if r.ContentLength != 0 {
+		if err := readJSON(w, r, &in, 0); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+	}
+	turn, err := s.chat.CancelQueued(r.Context(), r.PathValue("id"), r.PathValue("turnId"), in.DropMessage)
+	if err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, store.ErrNotQueued):
+			status = http.StatusConflict
+		}
+		writeError(w, status, "cancel_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"turn": turn})
+}
+
 func (s *Server) handleRetry(w http.ResponseWriter, r *http.Request) {
 	turn, err := s.chat.Retry(r.Context(), r.PathValue("id"), "web", "")
 	if err != nil {

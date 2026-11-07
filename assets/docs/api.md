@@ -30,6 +30,7 @@ GET|POST /api/conversations
 GET|PATCH|DELETE /api/conversations/{id}
 GET|POST /api/conversations/{id}/messages
 POST /api/conversations/{id}/cancel|retry|config|agent|routing|prepare
+POST /api/conversations/{id}/turns/{turnId}/cancel   # queued turn only; {"dropMessage":true} also removes the queued message
 POST /api/conversations/{id}/approvals/{approvalId}
 GET  /api/conversations/{id}/export
 GET  /api/approvals   POST /api/approvals/{id}    # answer permission requests
@@ -43,6 +44,8 @@ POST /api/channels/{name}/connect|disconnect|logout
 GET  /api/channels/{name}/qr|settings
 PUT  /api/channels/{name}/settings
 GET|PUT /api/settings   GET|DELETE /api/approval-rules/{id}
+GET  /api/update      POST /api/update/check|apply   # self-update status + actions
+POST /api/notifications/test              # desktop notification smoke test
 POST /api/uploads     GET /api/uploads/{id}
 GET  /api/events                          # WebSocket realtime stream
 GET  /api/health                          # unauthenticated

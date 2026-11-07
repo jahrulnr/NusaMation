@@ -23,9 +23,11 @@ import (
 	"github.com/jahrulnr/nusamation/internal/channels"
 	"github.com/jahrulnr/nusamation/internal/chat"
 	"github.com/jahrulnr/nusamation/internal/config"
+	"github.com/jahrulnr/nusamation/internal/notify"
 	"github.com/jahrulnr/nusamation/internal/realtime"
 	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
+	"github.com/jahrulnr/nusamation/internal/update"
 	webui "github.com/jahrulnr/nusamation/web"
 )
 
@@ -39,6 +41,8 @@ type Server struct {
 	browser  *browser.Manager
 	channels *channels.Manager
 	hub      *realtime.Hub
+	notifier *notify.Broadcaster
+	updater  *update.Manager
 	log      *slog.Logger
 	started  time.Time
 	limiter  *loginLimiter
@@ -54,6 +58,8 @@ type Options struct {
 	Browser  *browser.Manager
 	Channels *channels.Manager
 	Hub      *realtime.Hub
+	Notifier *notify.Broadcaster
+	Updater  *update.Manager
 	Log      *slog.Logger
 }
 
@@ -69,7 +75,8 @@ func New(opts Options) (*Server, error) {
 	}
 	s := &Server{
 		cfg: opts.Config, store: opts.Store, chat: opts.Chat, agents: opts.Agents,
-		browser: opts.Browser, channels: opts.Channels, hub: opts.Hub, log: log.With("component", "http"),
+		browser: opts.Browser, channels: opts.Channels, hub: opts.Hub,
+		notifier: opts.Notifier, updater: opts.Updater, log: log.With("component", "http"),
 		started: time.Now(), limiter: newLoginLimiter(8, 5*time.Minute), static: static, index: index,
 	}
 	if opts.Config.PublicURL != "" && s.hub != nil {
@@ -104,6 +111,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/conversations/{id}/messages", s.protected(s.handleMessages))
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.protected(s.handlePrompt))
 	mux.HandleFunc("POST /api/conversations/{id}/cancel", s.protected(s.handleCancel))
+	mux.HandleFunc("POST /api/conversations/{id}/turns/{turnId}/cancel", s.protected(s.handleCancelQueuedTurn))
 	mux.HandleFunc("POST /api/conversations/{id}/retry", s.protected(s.handleRetry))
 	mux.HandleFunc("POST /api/conversations/{id}/prepare", s.protected(s.handlePrepareConversation))
 	mux.HandleFunc("POST /api/conversations/{id}/elicitations/{elicitationId}", s.protected(s.handleElicitationResponse))
@@ -158,6 +166,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/browser/sessions/{id}/annotate/preview", s.protected(s.handleBrowserAnnotatePreview))
 	mux.HandleFunc("POST /api/browser/sessions/{id}/annotate/clear", s.protected(s.handleBrowserAnnotateClear))
 	mux.HandleFunc("GET /api/browser/sessions/{id}/stream", s.protected(s.handleBrowserStream))
+
+	mux.HandleFunc("GET /api/update", s.protected(s.handleUpdateStatus))
+	mux.HandleFunc("POST /api/update/check", s.protected(s.handleUpdateCheck))
+	mux.HandleFunc("POST /api/update/apply", s.protected(s.handleUpdateApply))
+	mux.HandleFunc("POST /api/notifications/test", s.protected(s.handleTestNotification))
 
 	mux.HandleFunc("GET /api/settings", s.protected(s.handleGetSettings))
 	mux.HandleFunc("PUT /api/settings", s.protected(s.handleUpdateSettings))

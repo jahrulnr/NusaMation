@@ -99,6 +99,14 @@ Authenticated WebSocket hub. Every event has a monotonic ID, type, conversation 
 
 `net/http` API and embedded SPA. Single-admin auth, CSRF, rate limiting, security headers, upload serving and channel/agent/MCP management. The WebSocket route bypasses the response-status wrapper so HTTP hijacking works.
 
+### `internal/notify`
+
+Desktop notifications. `notify.Wrap(hub, …)` returns an `events.Broadcaster` that forwards every event to the realtime hub and, as a side effect, turns `approval.created` and terminal `turn.completed` states (`completed`, `error`) into OS notifications delivered asynchronously — the agent loop is never blocked by a desktop popup. Backends are per-OS: `notify-send` with urgency on Linux, `osascript` on macOS, and a hidden PowerShell `NotifyIcon` balloon on Windows (`CREATE_NO_WINDOW`). The `notify.enabled` setting and a shutdown `Mute()` suppress popups for intentionally killed agents.
+
+### `internal/update`
+
+Self-update against GitHub releases. A `Manager` polls `releases/latest` shortly after boot and every 6h, compares versions, persists the result, emits `update.status` events and pushes one OS notification per newly seen version. `Apply` re-fetches the release, downloads the platform asset plus `SHA256SUMS`, verifies the checksum, then swaps the binary: Unix renames over the executable and `syscall.Exec`s itself (same PID, so systemd sees no exit); Windows stages a detached PowerShell helper that swaps the file after the process exits and relaunches it. `go run` temp builds refuse self-update. Reconnected web clients see the version change in the `hello` event and reload to fetch matching assets.
+
 ### `internal/browser`
 
 Lazy headless Chromium (chromedp/CDP, `-browser-exec` or PATH discovery) behind the `/browser/*` routes. One shared browser process, one isolated `BrowserContext`+tab per session, one screencast subscriber per session. Streams JPEG frames over a dedicated WebSocket, forwards CDP input back, and resolves element picks (`DOM.getNodeForLocation` → descriptor extraction → overlay highlight → clipped screenshot → upload) for composer annotations. Sessions idle-expire without a stream; the browser itself stops when session-free. The package never imports chat/httpapi — the upload save path is injected.
@@ -186,7 +194,8 @@ Side-effecting prompts are never blindly replayed by the supervisor; a failed tu
 | `config.updated` | live session configuration |
 | `plan.updated`, `usage.updated` | plan/usage |
 | `notice` | transient warning/error/info |
-| `hello` | WebSocket handshake |
+| `update.status` | update check/apply state (stage, progress, error) |
+| `hello` | WebSocket handshake (carries `version`) |
 
 ## Failure boundaries
 

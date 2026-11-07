@@ -17,6 +17,7 @@ export function openSettings(tab = "") {
   S.agentForm = null;
   S.mcpForm = null;
   S.modal = { type: "settings" };
+  if (S.settingsTab === "account") loadUpdateInfo();
   renderSettings();
 }
 
@@ -213,6 +214,14 @@ export function accountSettings() {
       <div class="about-item"><div class="k">WhatsApp</div><div class="v">${app.whatsappDisabled ? "disabled" : "available"}</div></div>
     </div>
     <div class="settings-section" style="margin-top:24px">
+      <div class="settings-title">Software update</div>
+      ${updateSection()}
+    </div>
+    ${(S.notifySettings || {}).available ? `<div class="settings-section">
+      <div class="settings-title">Desktop notifications</div>
+      ${notificationsSection()}
+    </div>` : ""}
+    <div class="settings-section">
       <div class="settings-title">Change password</div>
       <form data-form="password" style="max-width:420px">
         <div class="field"><label>Current password</label><input class="input" type="password" name="current" autocomplete="current-password" required></div>
@@ -228,6 +237,107 @@ export function accountSettings() {
     <div class="settings-section">
       <div class="danger-zone"><div class="settings-title" style="color:var(--danger)">Danger zone</div><div class="settings-desc">Erase every conversation, message, approval and channel link. Agents, MCP servers and channel pairings are kept.</div><button class="btn btn-danger btn-sm" data-action="delete-all-conversations">Erase conversations</button></div>
     </div>`;
+}
+
+const UPDATE_STAGES = { checking: "Checking release", downloading: "Downloading", verifying: "Verifying checksum", installing: "Installing", restarting: "Restarting" };
+
+function updateSection() {
+  const u = S.updateInfo || {};
+  const checking = S.updateBusy === "check" || u.checking;
+  const applying = S.updateBusy === "apply" || u.applying;
+  const ago = timeAgo(u.checkedAt);
+  const checked = !u.checkedAt ? "Not checked yet" : ago === "now" ? "Checked just now" : `Last checked ${ago} ago`;
+  let rows = `<div class="settings-row"><div><div class="label">Installed version</div><div class="desc">${esc(checked)}</div></div><span class="mono" style="font-size:11px;color:var(--text-soft)">v${esc(u.current || (S.bootstrap?.app?.version) || "?")}</span></div>`;
+  if (u.latest) rows += `<div class="settings-row"><div><div class="label">Latest release</div><div class="desc">${u.available ? "A newer version is available." : "You are on the latest release."}</div></div><span class="badge-soft ${u.available ? "green" : "gray"}">v${esc(u.latest)}</span></div>`;
+  if (u.applying || S.updateBusy === "apply") {
+    const indet = !u.progress && u.stage !== "downloading";
+    const pct = u.stage === "downloading" ? (u.progress || 0) : (u.progress || (u.stage === "restarting" ? 100 : 0));
+    rows += `<div class="update-progress"><div class="update-progress-head"><span>${esc(UPDATE_STAGES[u.stage] || "Working")}${u.detail ? " · " + esc(u.detail) : ""}…</span><span>${u.stage === "downloading" ? pct + "%" : ""}</span></div><div class="update-bar ${indet ? "indet" : ""}"><div class="update-bar-fill" style="width:${pct}%"></div></div></div>`;
+  }
+  if (u.error) rows += `<div class="settings-desc" role="alert" style="color:var(--danger);margin-top:8px">${esc(u.error)}</div>`;
+  rows += `<div class="form-actions" style="justify-content:flex-start;gap:8px;margin-top:14px">
+    <button class="btn btn-secondary btn-sm" data-action="update-check" ${checking || applying ? "disabled" : ""}>${checking ? "Checking…" : "Check for updates"}</button>`;
+  if (u.available && !applying) {
+    if (u.canApply) rows += `<button class="btn btn-primary btn-sm" data-action="update-apply">${icon("download", "sm")} Update to v${esc(u.latest)}</button>`;
+    else if (u.releaseUrl) rows += `<a class="btn btn-secondary btn-sm" href="${esc(u.releaseUrl)}" target="_blank" rel="noopener">Download installer</a>`;
+  }
+  rows += `</div>`;
+  if (u.available && !u.canApply && u.applyBlock) rows += `<div class="settings-desc" style="margin-top:6px">${esc(u.applyBlock)} — use the installer to update this build.</div>`;
+  if (u.stage === "restarting") rows += `<div class="settings-desc" style="margin-top:6px">The app is restarting; this page will reconnect and refresh automatically.</div>`;
+  return rows;
+}
+
+function notificationsSection() {
+  const n = S.notifySettings || {};
+  const backend = n.backend ? ` · via ${esc(n.backend)}` : "";
+  let rows = `<div class="settings-row"><div><div class="label">Host notifications</div><div class="desc">Approval requests, finished turns and agent errors as OS notifications${backend}.</div></div><button role="switch" aria-checked="${!!n.enabled}" class="switch ${n.enabled ? "on" : ""}" data-action="notify-toggle" ${n.available ? "" : "disabled"}></button></div>`;
+  rows += `<div class="form-actions" style="justify-content:flex-start;margin-top:10px"><button class="btn btn-secondary btn-sm" data-action="notify-test">Send test notification</button></div>`;
+  return rows;
+}
+
+export function loadUpdateInfo() {
+  api("/settings").then((d) => {
+    S.notifySettings = d.notifications || S.notifySettings;
+    S.updateInfo = d.update || S.updateInfo;
+    if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
+  }).catch(() => {});
+}
+
+export async function checkUpdate() {
+  if (S.updateBusy) return;
+  S.updateBusy = "check";
+  renderSettings();
+  try {
+    S.updateInfo = await api("/update/check", { method: "POST" });
+    if (!S.updateInfo.available && !S.updateInfo.error) toast("You're up to date", `v${S.updateInfo.latest || S.updateInfo.current} is the latest release.`, "success");
+    if (S.updateInfo.error) toast("Update check failed", S.updateInfo.error, "error");
+  } catch (e) {
+    toast("Update check failed", e.message, "error");
+  } finally {
+    S.updateBusy = "";
+    if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
+  }
+}
+
+export function applyUpdate() {
+  const u = S.updateInfo || {};
+  if (S.updateBusy || !u.available || !u.canApply) return;
+  confirmModal("Install update?", `NusaMation will download v${u.latest}, verify it, replace the binary and restart. This page reconnects and refreshes automatically.`, async () => {
+    S.updateBusy = "apply";
+    renderSettings();
+    try {
+      S.updateInfo = await api("/update/apply", { method: "POST" });
+    } catch (e) {
+      toast("Update failed", e.message, "error");
+    } finally {
+      S.updateBusy = "";
+      if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
+    }
+  }, "Update");
+}
+
+export async function toggleNotifications() {
+  const prev = S.notifySettings || {};
+  const next = !prev.enabled;
+  S.notifySettings = { ...prev, enabled: next };
+  renderSettings();
+  try {
+    const d = await api("/settings", { method: "PUT", body: { notifications: { enabled: next } } });
+    S.notifySettings = d.notifications || S.notifySettings;
+  } catch (e) {
+    S.notifySettings = prev;
+    toast("Could not save notification setting", e.message, "error");
+  }
+  if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
+}
+
+export async function testNotification() {
+  try {
+    const d = await api("/notifications/test", { method: "POST" });
+    toast("Test notification sent", d.backend ? `Delivered via ${d.backend}.` : "", "success");
+  } catch (e) {
+    toast("Could not send notification", e.message, "error", 7000);
+  }
 }
 
 export async function openAgentLogs(id, fromSettings = false) {

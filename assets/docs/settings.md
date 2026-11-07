@@ -20,6 +20,9 @@ nusamation config set <key> '<json>' -validate-json # reject non-JSON values
 | `routing.defaults` | JSON | `{"replyToOrigin":bool,"mirrorFinal":bool,"notifyApprovals":bool}` — per-conversation routing defaults |
 | `agent.defaults` | JSON | `{"agentId":"…","selections":[{"id":"…","value":"…"}]}` — default ACP and ordered session choices |
 | `app.installed_at` | Unix ms (string) | written once at install |
+| `notify.enabled` | `"true"`/`"false"` | desktop notifications; absent means enabled — prefer the Account tab toggle |
+| `update.status` | JSON | last release check (`latest`, `available`, `checkedAt`, `releaseUrl`) — managed by the updater |
+| `update.notified` | tag string | last release version already pushed to the OS — managed by the updater |
 
 Prefer dedicated commands (`whatsapp set`, `agent …`) over raw `config set` —
 the dedicated commands normalize and validate; `config` writes values verbatim.

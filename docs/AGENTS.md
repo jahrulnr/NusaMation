@@ -133,7 +133,7 @@ NusaMation sends per-input application context separately from user text, within
 
 Sending while a turn runs can steer, queue, or cancel-and-resend. The composer's send menu offers three delivery modes:
 
-- **Steer** (default): when the agent advertises mid-turn prompts or `_session/steering`, the text is injected into the running turn and the agent sees it immediately. On the web, an agent that cannot steer leaves the message in the queue. WhatsApp and other channels use steer, and if the agent cannot steer they wait until the running turn's tools finish, cancel that turn, then send.
+- **Steer** (default): when the agent advertises mid-turn prompts or `_session/steering`, the text is injected into the running turn and the agent sees it immediately. An agent that cannot steer — on the web or a channel — waits until the running turn's tools finish, cancels that turn, then sends (the same cancel-and-resend path as "Send after tools").
 - **Add to queue**: the input runs after the current turn finishes.
 - **Send after tools**: cancel-and-resend, not steering. Once the running turn's reported tools are all `completed` or `failed` (or right away if it reported none), NusaMation sends `session/cancel`. It then waits for the agent's answer to the cancelled prompt before the queued input starts, so no two prompts overlap. Late updates from the old prompt still belong to the old turn.
 

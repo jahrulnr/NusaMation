@@ -152,7 +152,7 @@ Without `secret.key`, encrypted agent/MCP secrets cannot be decrypted. Without `
 
 ## Updating
 
-Stop the service, replace the binary, start it. The database schema is migrated idempotently (`schemaV1`). Keep a backup before upgrading across versions that change the schema. Agent and WhatsApp processes are supervised per turn and stop with the app.
+Stop the service, replace the binary, start it. The database schema is migrated idempotently on startup (versioned files under `migrations/`). Keep a backup before upgrading across versions that change the schema. Agent and WhatsApp processes are supervised per turn and stop with the app.
 
 If the admin password is lost:
 

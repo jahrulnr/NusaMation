@@ -1,5 +1,5 @@
-import { $, agentById, isMobile } from "./util.js";
-import { S, saveActivityState, switchComposer } from "./state.js";
+import { $, agentById, isMobile, parseJSON } from "./util.js";
+import { S, composerFor, composerKey, saveActivityState, switchComposer } from "./state.js";
 import { api } from "./api.js";
 import { toast } from "./toast.js";
 import { closeModal, confirmModal, promptModal } from "./modal.js";
@@ -14,7 +14,7 @@ import { closeMobileSidebar, filterSidebar, openMobileSidebar, renderSidebar, to
 import { renderTopbar } from "./topbar.js";
 import { closeWS, connectWS } from "./ws.js";
 import { openAuthTerminal } from "./terminal.js";
-import { deleteAgent, deleteMCP, envRowsHTML, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword } from "./settings.js";
+import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications } from "./settings.js";
 import { loadAutomations, saveAutomation, updateAutomationBuilder } from "./automations.js";
 import { refreshChannels, saveWaSettings, waAction } from "./whatsapp.js";
 import { openPalette, runPalette } from "./palette.js";
@@ -107,7 +107,10 @@ export function bindEvents() {
         else if (S.settingsTab === "defaults") {
           S.defaultDraft = { agentId: S.agentDefaults.agentId || "", selections: (S.agentDefaults.selections || []).map((s) => ({ ...s })) };
           previewAgentDefaults();
-        } else renderSettings();
+        } else {
+          if (S.settingsTab === "account") loadUpdateInfo();
+          renderSettings();
+        }
         break;
       case "default-undo": S.defaultDraft.selections.pop(); previewAgentDefaults(); break;
       case "default-retry": previewAgentDefaults(); break;
@@ -192,6 +195,48 @@ export function bindEvents() {
       case "send-menu": openSendMenu(target); break;
       case "send-mode": setSendMode(target.dataset.mode); break;
       case "stop": await stopTurn(); break;
+      case "queue-cancel": {
+        const convId = S.current?.id;
+        if (!convId || !target.dataset.turn) break;
+        confirmModal("Cancel this queued message?", "The agent will not receive it.", async () => {
+          try {
+            await api(`/conversations/${encodeURIComponent(convId)}/turns/${encodeURIComponent(target.dataset.turn)}/cancel`, { method: "POST" });
+            toast("Queued message cancelled", "", "info");
+          } catch (err) { toast("Could not cancel", err.message, "error"); }
+        }, "Remove");
+        break;
+      }
+      case "queue-edit": {
+        const convId = S.current?.id;
+        if (!convId || !target.dataset.turn) break;
+        // Drop the queued copy first, then pull its text and attachments back
+        // into the composer — the resend creates a fresh turn rather than
+        // mutating the stored message.
+        const m = S.messages.find((x) => x.id === id);
+        try {
+          await api(`/conversations/${encodeURIComponent(convId)}/turns/${encodeURIComponent(target.dataset.turn)}/cancel`, { method: "POST", body: { dropMessage: true } });
+        } catch (err) { toast("Could not edit queued message", err.message, "error"); break; }
+        if (m) {
+          const meta = parseJSON(m.metadata, {}) || {};
+          const anns = (Array.isArray(meta.annotations) ? meta.annotations : []).filter((a) => a && a.pickId);
+          const cropIds = new Set(anns.map((a) => a.uploadId).filter(Boolean));
+          const owner = composerFor(composerKey);
+          owner.draft = m.channel && m.channel !== "web"
+            ? (m.text || "").replace(/^(?:[^\r\n]*?: )?\[In reply to: [^\r\n]*\](?:\r?\n|$)/, "")
+            : (m.text || "");
+          owner.attachments = (m.attachments || []).filter((a) => !cropIds.has(a.id)).map((a) => ({ upload: a }))
+            .concat(anns.map((a) => ({
+              type: "annotation", id: a.pickId, pickId: a.pickId, comment: a.comment || "",
+              tagName: a.descriptor?.tagName || "", label: a.descriptor?.name || a.descriptor?.immediateText || "",
+              selector: a.descriptor?.selector || "", upload: a.uploadId ? { id: a.uploadId } : null,
+            })));
+          const ta = $("#prompt");
+          if (ta) { ta.value = owner.draft; autoGrow(); }
+          renderPendingAttachments();
+          focusComposer();
+        }
+        break;
+      }
       case "retry": await retryTurn(); break;
       case "retry-boot": startApp(); break;
       case "retry-load": await loadConversation(id, false); break;
@@ -322,6 +367,10 @@ export function bindEvents() {
         break;
       }
       case "refresh-channels": await refreshChannels(); break;
+      case "update-check": await checkUpdate(); break;
+      case "update-apply": applyUpdate(); break;
+      case "notify-toggle": await toggleNotifications(); break;
+      case "notify-test": await testNotification(); break;
       case "logout": doLogout(); break;
       case "delete-all-conversations": {
         promptModal("Erase all conversations?", 'Type DELETE to confirm. This cannot be undone.', "", async (v) => {

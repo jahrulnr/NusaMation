@@ -55,6 +55,7 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | `GET` | `/conversations/{id}/messages?after=&before=&limit=` | pagination by `seq` |
 | `POST` | `/conversations/{id}/messages` | `{text, attachments:[{uploadId}], annotations?:[{pickId, comment}], replyToChannel?, replyChannel?, delivery?: "queue" \| "after_tools" \| "steer"}` → `{message, turn}`; `delivery` defaults to `queue`, unknown values return 400 before anything is written |
 | `POST` | `/conversations/{id}/cancel` | cancels running or first queued turn |
+| `POST` | `/conversations/{id}/turns/{turnId}/cancel` | cancels that queued turn without touching the running one → `{turn}`; 404 unknown turn, 409 when it is no longer queued. Optional `{dropMessage:true}` also deletes the user message that queued it (used by "edit queued message"). |
 | `POST` | `/conversations/{id}/retry` | re-queues the last user message |
 | `POST` | `/conversations/{id}/prepare` | starts or resumes the ACP session and returns live configuration options |
 | `POST` | `/conversations/{id}/config` | `{configId, value}` or `{model}` |
@@ -160,13 +161,17 @@ Stream protocol: server→client binary messages are JPEG screencast frames; tex
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/settings` | routing defaults, version, public URL |
-| `PUT` | `/settings` | `{routing}` |
+| `GET` | `/settings` | routing defaults, notifications, update status, version, public URL |
+| `PUT` | `/settings` | `{routing}` and/or `{notifications:{enabled}}` |
+| `GET` | `/update` | current/latest versions, availability, apply state |
+| `POST` | `/update/check` | synchronous release check → update status |
+| `POST` | `/update/apply` | download + verify + install the latest release; 202 on start, 409 when already installing or not updatable |
+| `POST` | `/notifications/test` | send a desktop test notification; 503 when no OS backend exists |
 | `GET` | `/stats` | conversation/approval/channel counters |
 
 ## WebSocket
 
-`GET /events` upgrades to an authenticated WebSocket. The server sends `hello` immediately, then events:
+`GET /events` upgrades to an authenticated WebSocket. The server sends `hello` (with `version`) immediately, then events — including `update.status` while an update check or install runs:
 
 ```json
 {
@@ -178,10 +183,10 @@ Stream protocol: server→client binary messages are JPEG screencast frames; tex
 }
 ```
 
-The socket sends protocol pings every 25s. Clients may send `{"type":"ping"}` for an application-level pong. On disconnect, reconnect with exponential backoff and call `GET /bootstrap` plus `GET /conversations/{id}` to reconcile; deltas are advisory, final `message.updated` events are authoritative.
+The socket sends protocol pings every 25s. Clients may send `{"type":"ping"}` for an application-level pong. On disconnect, reconnect with exponential backoff and call `GET /bootstrap` plus `GET /conversations/{id}` to reconcile; deltas are advisory, final `message.updated` events are authoritative. `message.deleted` carries `{"messageId": "..."}` and fires when a message is removed (for example the dropped copy of a cancelled queued prompt).
 
 ## Idempotency and queues
 
-`POST /messages` creates a new turn, except `delivery: "steer"` while a turn is running and the agent accepts mid-turn input: that message is injected into the running turn and the response's `turn` is the one already running. A web steer the agent cannot accept waits in the queue. A channel steer the agent cannot accept, while a turn is running, waits until that turn's tools finish, cancels it, then sends. `cancel` cancels the running turn or the first queued turn when idle. `retry` reuses the last user message rather than duplicating a bubble.
+`POST /messages` creates a new turn, except `delivery: "steer"` while a turn is running and the agent accepts mid-turn input: that message is injected into the running turn and the response's `turn` is the one already running. A steer the agent cannot accept — web or channel — waits until the running turn's tools finish, cancels it, then sends, the same cancel-and-resend path as `after_tools`. `cancel` cancels the running turn or the first queued turn when idle. `turns/{turnId}/cancel` cancels one queued turn without stopping the running one. `retry` reuses the last user message rather than duplicating a bubble.
 
 Queued inputs run in strict FIFO order; no input is reordered. `delivery: "after_tools"` only changes the running turn: if the new input is the queue head and a turn is running, that turn is cancel-and-resend, not native steering. The running turn is asked to stop once every reported tool is `completed` or `failed` (or immediately if it reported no tools), and only after the agent answers the cancelled prompt does the queue advance. Pending approvals are not skipped. The input's message metadata carries `delivery: "after_tools"` and, when armed, `interruptTurnId`. If the agent does not answer within 15 seconds, the conversation shows one notice and the queue keeps waiting. Tool states are best-effort reports from the agent, so the agent may start a new tool between a report and the cancel.

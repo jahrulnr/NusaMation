@@ -43,12 +43,16 @@ const B = {
   lastHoverSent: 0,
   hoverSeq: 0,
   resizeTimer: null,
+  lastResizeSent: 0,
   observer: null,
   width: 0,               // user-dragged pane width (0 = stylesheet default)
 };
 
 const MOVE_INTERVAL_MS = 33; // ~30fps pointermove forwarding
-const RESIZE_DEBOUNCE_MS = 300;
+// How often viewport resizes are streamed to the server while the pane is
+// being dragged. Throttled rather than debounced so the remote viewport keeps
+// up with a moving pointer instead of only landing on the final size.
+const RESIZE_INTERVAL_MS = 80;
 const CLOSED_LABELS = {
   session_closed: "Browser session closed",
   stream_replaced: "The stream was replaced by another client",
@@ -92,9 +96,15 @@ export function resetBrowserPane() {
 // Called whenever the composer key (visible conversation) changes. The pane is
 // bound to one conversation; a switch hides it — the session keeps running
 // server-side and re-attaches when the pane is reopened for that conversation.
+// A pane opened on the new-conversation draft (key "") is adopted by whatever
+// conversation becomes visible next — including the conversation created by
+// the send itself — instead of being closed mid-flow.
 onComposerSwitch((key) => {
-  if (!B.open) { B.conversationId = key || ""; return; }
-  if ((key || "") !== B.conversationId) closeBrowserPane();
+  const next = key || "";
+  if (!B.open) { B.conversationId = next; return; }
+  if (next === B.conversationId) return;
+  if (B.conversationId === "") { B.conversationId = next; return; }
+  closeBrowserPane();
 });
 
 export function openBrowserPane() {
@@ -521,8 +531,26 @@ function startResizeWatch() {
   const view = $("#browser-view");
   if (!view || typeof ResizeObserver === "undefined") return;
   B.observer = new ResizeObserver(() => {
+    // Stretch the last frame into the new box so the pane does not letterbox
+    // with black bars while the resized screencast stream catches up; the
+    // next real frame replaces the aspect ratio with the true viewport one.
+    const box = viewBox();
+    const img = $("#browser-frame");
+    if (img && box.w && box.h) img.style.aspectRatio = `${box.w} / ${box.h}`;
+    const now = Date.now();
+    const since = now - (B.lastResizeSent || 0);
     clearTimeout(B.resizeTimer);
-    B.resizeTimer = setTimeout(sendViewportResize, RESIZE_DEBOUNCE_MS);
+    B.resizeTimer = null;
+    if (since >= RESIZE_INTERVAL_MS) {
+      B.lastResizeSent = now;
+      sendViewportResize();
+      return;
+    }
+    B.resizeTimer = setTimeout(() => {
+      B.resizeTimer = null;
+      B.lastResizeSent = Date.now();
+      sendViewportResize();
+    }, RESIZE_INTERVAL_MS - since);
   });
   B.observer.observe(view);
 }
@@ -530,6 +558,7 @@ function startResizeWatch() {
 function stopResizeWatch() {
   if (B.observer) { try { B.observer.disconnect(); } catch {} B.observer = null; }
   if (B.resizeTimer) { clearTimeout(B.resizeTimer); B.resizeTimer = null; }
+  B.lastResizeSent = 0;
 }
 
 /* ---------------- annotate mode ---------------- */

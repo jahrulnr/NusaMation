@@ -109,18 +109,25 @@ func TestChannelSteerWithoutCapabilityWaitsForTools(t *testing.T) {
 	}
 }
 
-func TestSteerWithoutCapabilityQueues(t *testing.T) {
+// A web steer the agent cannot take also uses cancel-and-resend: it waits for
+// the running turn's tools to finish, cancels it, then sends — matching the
+// channel path instead of sitting behind the whole turn.
+func TestSteerWithoutCapabilityWaitsForTools(t *testing.T) {
 	e := newAfterToolsEnv(t)
 	_, p1 := e.submit("steer-hold", "")
 	waitFor(t, func() bool { return e.hasText("working") }, "hold prompt to start")
-	_, p2 := e.submit("use usb", deliverySteer)
+	msg, p2 := e.submit("use usb", deliverySteer)
 	if p2.ID == p1.ID || p2.Status != "queued" {
 		t.Fatalf("unsupported steer = %+v, running %s", p2, p1.ID)
 	}
-	e.waitStatus(p1.ID, "completed")
+	var meta map[string]any
+	if json.Unmarshal(msg.Metadata, &meta) != nil || meta["delivery"] != deliveryAfterTools {
+		t.Fatalf("metadata = %s", msg.Metadata)
+	}
+	e.waitStatus(p1.ID, "cancelled")
 	e.waitStatus(p2.ID, "completed")
-	if n := countTrace(e.trace(), "cancel"); n != 0 {
-		t.Fatalf("fallback queue cancelled the turn %d times", n)
+	if n := countTrace(e.trace(), "cancel"); n == 0 {
+		t.Fatal("unsupported steer did not cancel the running turn after its tools")
 	}
 }
 

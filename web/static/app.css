@@ -426,7 +426,9 @@ a:hover { text-decoration: underline; }
 .send-menu-btn[aria-expanded="true"] { background: rgba(23,19,11,.14); }
 .send-menu-btn .icon { width: 14px; height: 14px; stroke-width: 2; }
 .send-btn:focus-visible, .send-menu-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.queue-status { margin-top: 4px; font-size: 11px; color: var(--muted); text-align: right; }
+.queue-status { margin-top: 4px; font-size: 11px; color: var(--muted); display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.queue-actions { display: inline-flex; gap: 2px; }
+.queue-actions .btn { font-size: 11px; padding: 1px 7px; }
 .send-menu .popover-main small { display: block; }
 .stop-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; background: var(--danger-dim); color: var(--danger); font-size: 11px; font-weight: 600; border: 1px solid rgba(255,118,118,.2); }
 .composer-foot { display: flex; justify-content: center; gap: 14px; color: var(--muted-2); font-size: 10px; margin-top: 7px; }
@@ -523,6 +525,12 @@ form[data-form="automation"] :is(input, textarea, select) { scroll-margin-top: 1
 .about-item { border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; background: var(--panel); }
 .about-item .k { font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted-2); }
 .about-item .v { font-size: 12px; margin-top: 2px; }
+.update-progress { margin: 12px 0 4px; }
+.update-progress-head { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--muted-2); margin-bottom: 6px; }
+.update-bar { height: 6px; border-radius: 99px; background: rgba(255,255,255,.07); overflow: hidden; }
+.update-bar-fill { height: 100%; border-radius: inherit; background: var(--accent); transition: width .25s ease; }
+.update-bar.indet .update-bar-fill { width: 30%; animation: updateSlide 1.1s ease-in-out infinite; }
+@keyframes updateSlide { 0% { margin-left: -30% } 100% { margin-left: 100% } }
 
 /* Command palette */
 .palette { width: min(100%, 600px); align-self: flex-start; margin-top: 8vh; background: #101216; border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; animation: modalIn .15s; }

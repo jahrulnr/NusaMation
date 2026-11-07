@@ -160,6 +160,11 @@ In **Control center → Automations**, schedule an ACP prompt once or with a fiv
 
 The server must be running to execute jobs. After downtime, each overdue job runs once when the server returns, then resumes its normal schedule; jobs past their expiry do not run. A repeated job queues turns when its dedicated chat is still busy, and a queued automation turn is cancelled if it reaches the head of the queue after expiry. An execution interrupted between its scheduler claim and linking the turn is recorded as interrupted and is not automatically retried; inspect its linked chat before retrying.
 
+### Notifications & updates
+
+- **Desktop notifications** on the host OS for approval requests, finished turns and agent errors — `notify-send` on Linux, `osascript` on macOS, a hidden PowerShell balloon on Windows. Toggle and test button in **Control center → Account**.
+- **Self-update** from GitHub releases: periodic checks surface a notification once per new version; **Account → Check for updates** runs one on demand. Installing downloads the release asset, verifies it against `SHA256SUMS`, swaps the binary and restarts — progress streams live and the web UI reloads into the new version automatically.
+
 ### Reliability
 
 - Per-conversation turn queue; one active agent session at a time.

@@ -11,6 +11,7 @@ const userHTML = vm.runInNewContext(`(${app.slice(start, end).trim().replace(/^e
   esc: (s) => String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
   renderMarkdown: (s) => `<p>${String(s || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</p>`,
   messageHead: () => '', attachmentsHTML: (a) => a?.length ? '<div class="attach-grid">attachment</div>' : '', queueStatusLabel: () => '',
+  messageAnnotations: () => [], annotationsHTML: () => '', queuedTurnFor: () => null, icon: () => '',
 });
 
 test('quoted media and group attachment-only replies are styled together', () => {

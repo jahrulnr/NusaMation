@@ -61,14 +61,14 @@ func (s *Service) trySteer(ctx context.Context, conv store.Conversation, text, c
 			return msg, turn, true, nil
 		}
 		s.log.Warn("steering was not accepted; queueing the message", "conversation", conv.ID, "error", err, "outcome", res.Outcome)
-		if channel != "web" {
-			msg.Metadata = mustJSON(map[string]any{"delivery": deliveryAfterTools})
-			if uerr := s.store.UpdateMessage(ctx, msg.ID, nil, nil, nil, msg.Metadata); uerr != nil {
-				s.log.Warn("failed to record after_tools fallback", "conversation", conv.ID, "error", uerr)
-			}
+		// A rejected steer becomes cancel-and-resend on every channel: wait
+		// for the running turn's tools, cancel it, then send this input.
+		msg.Metadata = mustJSON(map[string]any{"delivery": deliveryAfterTools})
+		if uerr := s.store.UpdateMessage(ctx, msg.ID, nil, nil, nil, msg.Metadata); uerr != nil {
+			s.log.Warn("failed to record after_tools fallback", "conversation", conv.ID, "error", uerr)
 		}
 		queued, qerr := s.queueStoredMessage(ctx, conv.ID, msg.ID, originChannel, originRef)
-		if qerr == nil && channel != "web" {
+		if qerr == nil {
 			if live := s.activeFor(conv.ID); live != nil {
 				s.armAfterTools(ctx, conv.ID, &msg, queued, live)
 			}

@@ -27,6 +27,18 @@ func (s *Service) processTurn(turn store.Turn) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	// Claim the turn before loading anything it depends on: a queued-cancel
+	// racing this worker must win cleanly instead of letting the loads
+	// fail and be reported as a start error.
+	started, err := s.store.StartTurn(ctx, turn.ID)
+	if err != nil {
+		s.log.Warn("failed to mark turn running", "turn", turn.ID, "error", err)
+	}
+	if err == nil && !started {
+		// The turn left 'queued' before this worker claimed it — a cancel
+		// won the race and already emitted the turn's terminal event.
+		return
+	}
 	conv, err := s.store.GetConversation(ctx, turn.ConversationID)
 	if err != nil {
 		s.failOrphanTurn(turn, err)
@@ -46,21 +58,6 @@ func (s *Service) processTurn(turn store.Turn) {
 	s.setActive(a)
 	go s.watchTurn(a)
 
-	started, err := s.store.StartTurn(ctx, turn.ID)
-	if err != nil {
-		s.log.Warn("failed to mark turn running", "turn", turn.ID, "error", err)
-	}
-	if err == nil && !started {
-		// The turn left 'queued' before this worker claimed it — a cancel
-		// won the race and already emitted the turn's terminal event.
-		a.mu.Lock()
-		a.finished = true
-		close(a.flushStop)
-		close(a.finishedCh)
-		a.mu.Unlock()
-		s.clearActive(a)
-		return
-	}
 	turn.Status = "running"
 	turn.StartedAt = time.Now().UnixMilli()
 	a.mu.Lock()
@@ -81,6 +78,12 @@ func (s *Service) processTurn(turn store.Turn) {
 func (s *Service) failOrphanTurn(turn store.Turn, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if cur, gerr := s.store.GetTurn(ctx, turn.ID); gerr == nil && cur.Status != "queued" && cur.Status != "running" {
+		// A cancel or another worker already finished it — do not clobber the
+		// terminal status or append a spurious error message.
+		s.log.Warn("skipping orphan failure on finished turn", "conversation", turn.ConversationID, "turn", turn.ID, "status", cur.Status)
+		return
+	}
 	msg := store.Message{
 		ConversationID: turn.ConversationID, TurnID: turn.ID, Role: "system", Kind: "error",
 		Status: "error", Text: "Could not start this turn: " + err.Error(),

@@ -10,6 +10,10 @@ Initial release of the ACP-native personal agent mesh: a single local binary tha
 
 ### Added
 
+- **Desktop notifications:** OS-native notifications for approval requests, finished turns and agent errors — `notify-send` with severity-mapped urgency on Linux, `osascript` on macOS, a hidden PowerShell balloon on Windows. Toggle plus test button in Settings → Account; `notify.enabled` setting. Notifications are muted while the server shuts down so intentionally stopped agents stay quiet.
+- **Self-update:** periodic GitHub release check (after boot, then every 6h) with an OS notification once per new version. Settings → Account shows installed/latest versions, a **Check for updates** button, and an install flow that downloads the release asset, verifies it against `SHA256SUMS`, swaps the binary and restarts — progress streams over `update.status` WebSocket events and the web UI reloads itself when the new server version answers. `go run` temp builds refuse self-update and link to the installer instead.
+- **API:** `GET /api/update`, `POST /api/update/check`, `POST /api/update/apply`, `POST /api/notifications/test`; `notifications` and `update` in `GET /api/settings`; `{notifications:{enabled}}` accepted by `PUT /api/settings`.
+- **Queue management:** per-message **Edit** and **Cancel** buttons on queued inputs (`POST /api/conversations/{id}/turns/{turnId}/cancel`, `dropMessage` removes the queued message for the edit flow). Cancelling a queued input no longer requires stopping the running turn.
 - **Agent mesh (ACP core):** ACP v1 client over stdio (newline-delimited JSON-RPC) with `initialize`, sessions, prompts, streaming updates, agent requests and permission flows.
 - **Agent mesh (ACP core):** per-conversation turn queue with one active agent session at a time; cooperative `session/cancel`, queued-turn cancellation, cancel-and-resend, and hard process cleanup.
 - **Agent mesh (ACP core):** session recovery chain (`session/load` → `session/resume` → fresh session with a bounded transcript recap injected into the next prompt) and transcript handoff when switching agents mid-conversation.

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +34,16 @@ type server struct {
 }
 
 func main() {
+	// terminalDemo re-executes this binary as a plain process: print two
+	// chunks with a pause between them and exit 3. Deterministic output and a
+	// nonzero exit code without depending on a system shell, which is not
+	// guaranteed to exist on Windows.
+	if len(os.Args) > 1 && os.Args[1] == "--emit-terminal-demo" {
+		fmt.Print("first")
+		time.Sleep(500 * time.Millisecond)
+		fmt.Print("second")
+		os.Exit(3)
+	}
 	s := &server{
 		out:     bufio.NewWriter(os.Stdout),
 		pending: map[string]chan json.RawMessage{},
@@ -516,13 +525,15 @@ func promptText(prompt []struct {
 // terminalDemo exercises the ACP terminal lifecycle for integration tests.
 func (s *server) terminalDemo(id json.RawMessage, sessionID string, background bool) {
 	s.update(map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{"type": "text", "text": "Checking the command."}})
-	command, args := "sh", []string{"-c", "printf first; sleep 0.5; printf second; exit 3"}
-	if runtime.GOOS == "windows" {
-		// cmd.exe starts instantly and exits deterministically; the
-		// "<nul set /p" trick prints without a trailing newline so the
-		// output stays exactly "firstsecond" with exit code 3.
-		command, args = "cmd.exe", []string{"/d", "/c", "<nul set /p x=first & ping -n 2 127.0.0.1 >nul & <nul set /p x=second & exit /b 3"}
+	// Re-exec this binary: prints "first" then "second" after a pause and
+	// exits 3, giving the terminal pipeline deterministic output on every
+	// platform. A shell command like `sh -c` is not portable to Windows.
+	exe, err := os.Executable()
+	if err != nil {
+		s.respond(id, map[string]any{"stopReason": "end_turn"})
+		return
 	}
+	command, args := exe, []string{"--emit-terminal-demo"}
 	result := s.callClient("terminal/create", map[string]any{"sessionId": sessionID, "command": command, "args": args, "outputByteLimit": 4})
 	var terminal struct {
 		TerminalID string `json:"terminalId"`

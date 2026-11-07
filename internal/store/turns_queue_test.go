@@ -56,6 +56,64 @@ func TestListQueuedTurnsForConversationOnlyReturnsRequestedQueue(t *testing.T) {
 	_ = queuedB
 }
 
+func TestCancelQueuedTurnByID(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	ag := testAgent(t, st)
+	a, err := st.CreateConversation(ctx, ag.ID, "A", ag.Cwd, "web", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.CreateConversation(ctx, ag.ID, "B", ag.Cwd, "web", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := st.CreateTurn(ctx, a.ID, "msg-a1", "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := st.CreateTurn(ctx, a.ID, "msg-a2", "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started, err := st.StartTurn(ctx, head.ID); err != nil || !started {
+		t.Fatalf("StartTurn = %v, %v", started, err)
+	}
+
+	// Cancelling a specific queued turn leaves the running head alone.
+	got, err := st.CancelQueuedTurnByID(ctx, a.ID, queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "cancelled" || got.StopReason != "cancelled" || got.EndedAt == 0 {
+		t.Fatalf("cancelled turn = %#v", got)
+	}
+	if headNow, err := st.GetTurn(ctx, head.ID); err != nil || headNow.Status != "running" {
+		t.Fatalf("running head changed = %#v, %v", headNow, err)
+	}
+	if rest, err := st.ListQueuedTurnsForConversation(ctx, a.ID); err != nil || len(rest) != 0 {
+		t.Fatalf("queue after cancel = %#v, %v", rest, err)
+	}
+
+	// A finished turn and a foreign/missing turn are rejected distinctly.
+	if _, err := st.CancelQueuedTurnByID(ctx, a.ID, head.ID); err != ErrNotQueued {
+		t.Fatalf("cancel running turn err = %v, want ErrNotQueued", err)
+	}
+	if _, err := st.CancelQueuedTurnByID(ctx, a.ID, "turn-missing"); err != ErrNotFound {
+		t.Fatalf("cancel missing turn err = %v, want ErrNotFound", err)
+	}
+	other, err := st.CreateTurn(ctx, b.ID, "msg-b1", "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CancelQueuedTurnByID(ctx, a.ID, other.ID); err != ErrNotFound {
+		t.Fatalf("cancel foreign turn err = %v, want ErrNotFound", err)
+	}
+	if still, err := st.GetTurn(ctx, other.ID); err != nil || still.Status != "queued" {
+		t.Fatalf("foreign turn changed = %#v, %v", still, err)
+	}
+}
+
 func TestStartTurnDoesNotResurrectCancelledTurn(t *testing.T) {
 	st := testStore(t)
 	ctx := context.Background()

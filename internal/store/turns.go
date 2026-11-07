@@ -110,6 +110,28 @@ func (s *Store) CancelQueuedTurn(ctx context.Context, conversationID string) (Tu
 	return s.GetTurn(ctx, t.ID)
 }
 
+// CancelQueuedTurnByID cancels one specific queued turn, unlike
+// CancelQueuedTurn which always targets the queue head. ErrNotFound means the
+// turn does not exist in this conversation; ErrNotQueued means it exists but
+// is no longer waiting (already running or finished).
+func (s *Store) CancelQueuedTurnByID(ctx context.Context, conversationID, turnID string) (Turn, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE turns SET status='cancelled',stop_reason='cancelled',ended_at=? WHERE id=? AND conversation_id=? AND status='queued'`, nowMS(), turnID, conversationID)
+	if err != nil {
+		return Turn{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		t, gerr := s.GetTurn(ctx, turnID)
+		if gerr != nil && !IsNotFound(gerr) {
+			return Turn{}, gerr
+		}
+		if gerr != nil || t.ConversationID != conversationID {
+			return Turn{}, ErrNotFound
+		}
+		return t, ErrNotQueued
+	}
+	return s.GetTurn(ctx, turnID)
+}
+
 func (s *Store) QueuedCount(ctx context.Context, conversationID string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM turns WHERE conversation_id=? AND status='queued'`, conversationID).Scan(&n)

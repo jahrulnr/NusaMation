@@ -62,7 +62,10 @@ export function renderBootError(message) {
 
 export function applyBootstrap(data) {
   S.bootstrap = data;
-  S.appVersion = data.app?.version || S.appVersion;
+  // Version is frozen at page load: if a refresh ever sees a newer server
+  // (post self-update), the hello event triggers a full reload instead of
+  // silently retargeting the baseline it compares against.
+  S.appVersion = S.appVersion || data.app?.version || "";
   S.agents = data.agents || [];
   S.mcp = data.mcp || [];
   S.channels = data.channels || [];

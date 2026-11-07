@@ -221,7 +221,10 @@ func TestOutboundFromBlock(t *testing.T) {
 		t.Fatalf("image block: %#v ok=%v", m, ok)
 	}
 	m, ok = svc.outboundFromBlock(a, acpBlock(t, `{"type":"resource_link","uri":"file://`+filepath.ToSlash(inside)+`","name":"rep.pdf"}`))
-	if !ok || m.Path != inside || m.Name != "rep.pdf" {
+	// resolveOutboundPath returns the symlink-resolved path; on Windows
+	// EvalSymlinks also expands 8.3 short names (RUNNER~1 -> runneradmin).
+	insideResolved, _ := filepath.EvalSymlinks(inside)
+	if !ok || m.Path != insideResolved || m.Name != "rep.pdf" {
 		t.Fatalf("resource_link block: %#v ok=%v", m, ok)
 	}
 	if _, ok = svc.outboundFromBlock(a, acpBlock(t, `{"type":"resource_link","uri":"file:///etc/passwd"}`)); ok {
@@ -243,21 +246,26 @@ func TestResolveOutboundPath(t *testing.T) {
 		return svc.resolveOutboundPath(ref, roots)
 	}
 
+	// resolveOutboundPath returns the symlink-resolved path; on Windows
+	// EvalSymlinks also expands 8.3 short names, so compare against the
+	// resolved form rather than the TempDir spelling.
 	real := filepath.Join(ws, "ok.txt")
 	if err := os.WriteFile(real, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if p, ok := resolve("file://" + filepath.ToSlash(real)); !ok || p != real {
+	realResolved, _ := filepath.EvalSymlinks(real)
+	if p, ok := resolve("file://" + filepath.ToSlash(real)); !ok || p != realResolved {
 		t.Fatalf("allowed file refused: %q ok=%v", p, ok)
 	}
-	if p, ok := resolve(real); !ok || p != real {
+	if p, ok := resolve(real); !ok || p != realResolved {
 		t.Fatalf("bare absolute path refused: %q ok=%v", p, ok)
 	}
 	spaced := filepath.Join(ws, "a b.pdf")
 	if err := os.WriteFile(spaced, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if p, ok := resolve("file://" + filepath.ToSlash(ws) + "/a%20b.pdf"); !ok || p != spaced {
+	spacedResolved, _ := filepath.EvalSymlinks(spaced)
+	if p, ok := resolve("file://" + filepath.ToSlash(ws) + "/a%20b.pdf"); !ok || p != spacedResolved {
 		t.Fatalf("percent-encoded path failed: %q ok=%v", p, ok)
 	}
 	cases := []string{

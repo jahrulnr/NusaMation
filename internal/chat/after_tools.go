@@ -48,7 +48,7 @@ func (s *Service) armAfterTools(ctx context.Context, conversationID string, msg 
 	if head.ID != turn.ID {
 		return
 	}
-	targetID, ok := target.armAfterTools()
+	targetID, ok := target.armAfterTools(turn.ID)
 	if !ok {
 		return
 	}

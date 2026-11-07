@@ -121,6 +121,7 @@ type activeTurn struct {
 	recapApplied    bool
 	cancelRequested bool
 	afterTools      bool
+	afterToolsBy    string
 	finished        bool
 	finalStatus     string
 	finalError      string
@@ -194,15 +195,28 @@ func isClosed(ch chan struct{}) bool {
 
 // armAfterTools marks the turn as the target of a queued after_tools input.
 // It fails once the turn is finished or a cancel is already underway.
-func (a *activeTurn) armAfterTools() (turnID string, ok bool) {
+func (a *activeTurn) armAfterTools(queuedTurnID string) (turnID string, ok bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.finished || a.cancelRequested {
 		return "", false
 	}
 	a.afterTools = true
+	a.afterToolsBy = queuedTurnID
 	a.signal()
 	return a.turn.ID, true
+}
+
+// disarmAfterToolsBy clears the arm when the queued input that armed this
+// turn is cancelled, so the running turn is no longer cancelled on its
+// behalf.
+func (a *activeTurn) disarmAfterToolsBy(queuedTurnID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.afterToolsBy == queuedTurnID {
+		a.afterTools = false
+		a.afterToolsBy = ""
+	}
 }
 
 // afterToolsBoundaryReached reports whether an armed turn may be cancelled:

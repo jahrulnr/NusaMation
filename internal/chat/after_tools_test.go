@@ -355,7 +355,24 @@ func TestArmAfterToolsIgnoresFinishedTurn(t *testing.T) {
 	a := newActiveTurn(store.Conversation{ID: "c"}, store.Turn{ID: "t"}, store.Agent{}, store.Message{},
 		context.Background(), func() {})
 	a.finished = true
-	if _, ok := a.armAfterTools(); ok || a.afterTools {
+	if _, ok := a.armAfterTools("queued-1"); ok || a.afterTools {
 		t.Fatal("finished turn was armed")
+	}
+}
+
+func TestDisarmAfterToolsByMatchesQueuedTurn(t *testing.T) {
+	a := newActiveTurn(store.Conversation{ID: "c"}, store.Turn{ID: "t"}, store.Agent{}, store.Message{},
+		context.Background(), func() {})
+	if _, ok := a.armAfterTools("queued-1"); !ok || !a.afterTools {
+		t.Fatal("turn was not armed")
+	}
+	// A different queued turn's cancel must not clear the arm.
+	a.disarmAfterToolsBy("queued-2")
+	if !a.afterTools {
+		t.Fatal("arm cleared by a different turn id")
+	}
+	a.disarmAfterToolsBy("queued-1")
+	if a.afterTools || a.afterToolsBy != "" {
+		t.Fatal("arm still set after its queued turn was cancelled")
 	}
 }

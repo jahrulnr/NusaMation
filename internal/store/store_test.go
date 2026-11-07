@@ -6,7 +6,20 @@ import (
 	"testing"
 
 	"github.com/jahrulnr/nusamation/internal/security"
+	"github.com/jahrulnr/nusamation/migrations"
 )
+
+func latestMigrationVersion(t *testing.T) int {
+	t.Helper()
+	list, err := migrations.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) == 0 {
+		t.Fatal("no migrations embedded")
+	}
+	return list[len(list)-1].Version
+}
 
 func testStore(t *testing.T) *Store {
 	t.Helper()
@@ -182,7 +195,7 @@ func TestMigrateAppliesVersionedUpgrades(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	latest := migrations[len(migrations)-1].version
+	latest := latestMigrationVersion(t)
 	var version int
 	if err := st.DB().QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
@@ -217,6 +230,64 @@ func TestMigrateAppliesVersionedUpgrades(t *testing.T) {
 		if err != nil || got != name {
 			t.Fatalf("index %s missing after upgrade: %v", name, err)
 		}
+	}
+}
+
+// A database created before a schema object existed must gain it on upgrade:
+// objects were once edited into the base schema in place, so installs stamped
+// at user_version>=1 never received them ("no such table" at runtime).
+func TestMigrateBackfillsObjectsMissingOnOldDatabases(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := latestMigrationVersion(t)
+	ctx := context.Background()
+	ag := testAgent(t, st)
+	conv, err := st.CreateConversation(ctx, ag.ID, "keep", ag.Cwd, "web", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetConversationACPSession(ctx, conv.ID, "sess-1"); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an install predating these objects.
+	if _, err := st.DB().Exec(`DROP TRIGGER automation_turn_update;
+		DROP TRIGGER automation_turn_delete;
+		DROP TABLE automation_runs;
+		DROP TABLE automations;
+		DROP TABLE conversation_acp_sessions;
+		DROP TABLE whatsapp_messages;
+		PRAGMA user_version = 1;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var version int
+	if err := st.DB().QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != latest {
+		t.Fatalf("user_version = %d, want %d", version, latest)
+	}
+	for _, name := range []string{"automations", "automation_runs", "conversation_acp_sessions", "whatsapp_messages"} {
+		var got string
+		if err := st.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&got); err != nil || got != name {
+			t.Fatalf("table %s missing after upgrade: %v", name, err)
+		}
+	}
+	// The recorded ACP session must be backfilled from conversations.acp_session_id.
+	sessions, err := st.ListConversationACPSessions(ctx, conv.ID)
+	if err != nil || len(sessions) != 1 || sessions[0].SessionID != "sess-1" {
+		t.Fatalf("acp sessions = %#v, err=%v", sessions, err)
 	}
 }
 

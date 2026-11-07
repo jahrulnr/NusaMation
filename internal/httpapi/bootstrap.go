@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/jahrulnr/nusamation/internal/channels"
 	"github.com/jahrulnr/nusamation/internal/config"
@@ -102,15 +103,22 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	routing := store.DefaultRouting()
 	_ = s.store.GetJSONSetting(r.Context(), "routing.defaults", &routing)
 	installed, _ := s.store.GetSetting(r.Context(), "app.installed_at")
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"routing": routing, "installedAt": installed, "publicUrl": s.cfg.PublicURL,
-		"version": config.Version,
-	})
+		"version": config.Version, "notifications": s.notificationSettings(r.Context()),
+	}
+	if s.updater != nil {
+		resp["update"] = s.updater.Status()
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Routing *store.Routing `json:"routing"`
+		Routing       *store.Routing `json:"routing"`
+		Notifications *struct {
+			Enabled *bool `json:"enabled"`
+		} `json:"notifications"`
 	}
 	if err := readJSON(w, r, &in, 64<<10); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid settings payload.")
@@ -118,6 +126,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Routing != nil {
 		if err := s.store.SetJSONSetting(r.Context(), "routing.defaults", in.Routing); err != nil {
+			writeError(w, http.StatusInternalServerError, "settings", err.Error())
+			return
+		}
+	}
+	if in.Notifications != nil && in.Notifications.Enabled != nil {
+		if err := s.store.SetSetting(r.Context(), "notify.enabled", strconv.FormatBool(*in.Notifications.Enabled)); err != nil {
 			writeError(w, http.StatusInternalServerError, "settings", err.Error())
 			return
 		}

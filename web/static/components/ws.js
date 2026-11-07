@@ -85,7 +85,17 @@ export function handleEvent(ev) {
     case "hello":
       S.wsState = "online";
       renderOffline();
+      // The server restarted into a new version (self-update): pull fresh
+      // assets so the UI matches the binary.
+      if (data.version && S.appVersion && data.version !== S.appVersion) { location.reload(); break; }
+      S.appVersion = data.version || S.appVersion;
       break;
+    case "update.status": {
+      S.updateInfo = data;
+      if (data.stage === "restarting") toast("Restarting to finish update", "This page reconnects and refreshes automatically.", "info", 15000);
+      if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
+      break;
+    }
     case "conversation.created":
     case "conversation.updated": {
       const conv = data.conversation || data;
@@ -151,6 +161,13 @@ export function handleEvent(ev) {
         if (previous && previous.kind === m.kind && previous.seq === m.seq && previous.turnId === m.turnId && m.role === "assistant" && ["text", "thought"].includes(m.kind) && !m.attachments) scheduleStreamRender(m.id);
         else scheduleChatRender();
       }
+      break;
+    }
+    case "message.deleted": {
+      const mid = data.id;
+      if (!mid || !S.current || convId !== S.current.id) break;
+      const i = S.messages.findIndex((x) => x.id === mid);
+      if (i >= 0) { S.messages.splice(i, 1); scheduleChatRender(); }
       break;
     }
     case "tool.created":

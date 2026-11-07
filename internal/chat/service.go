@@ -215,7 +215,11 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 			return msg, turn, err
 		}
 	}
-	if in.Delivery == deliverySteer && channel != "web" && s.activeFor(conv.ID) != nil {
+	// A steer the agent cannot take falls back to cancel-and-resend: the
+	// queued input waits until the running turn's tools finish, cancels that
+	// turn, then sends. This matches the channel path so a web steer on an
+	// agent without steering support does not just sit behind a long turn.
+	if in.Delivery == deliverySteer && s.activeFor(conv.ID) != nil {
 		in.Delivery = deliveryAfterTools
 	}
 	var target *activeTurn
@@ -328,6 +332,38 @@ func (s *Service) Retry(ctx context.Context, conversationID, channel, originRef 
 		"severity": "info", "title": "Retrying", "description": "Re-running the last request.",
 	})
 	go s.runQueue(conversationID)
+	return turn, nil
+}
+
+// CancelQueued cancels one queued turn without disturbing the running one.
+// With dropMessage the user message that queued the turn is deleted as well —
+// the web "edit queued message" flow uses this so the composer can resend the
+// prompt as a fresh turn instead of rewriting history.
+func (s *Service) CancelQueued(ctx context.Context, conversationID, turnID string, dropMessage bool) (store.Turn, error) {
+	turn, err := s.store.CancelQueuedTurnByID(ctx, conversationID, turnID)
+	if err != nil {
+		return turn, err
+	}
+	// A cancelled queue head must not cancel the running turn it armed.
+	if a := s.activeFor(conversationID); a != nil {
+		a.disarmAfterToolsBy(turn.ID)
+	}
+	if dropMessage && turn.UserMessageID != "" {
+		if derr := s.store.DeleteMessage(ctx, turn.UserMessageID); derr != nil {
+			s.log.Warn("failed to drop queued message", "conversation", conversationID, "message", turn.UserMessageID, "error", derr)
+		} else {
+			s.emit("message.deleted", conversationID, map[string]any{"id": turn.UserMessageID})
+		}
+	}
+	// A queued cancel is not a turn completion: emit turn.updated so the UI
+	// refreshes the queue label without clearing the active running turn.
+	s.emit("turn.updated", conversationID, turn)
+	if s.activeFor(conversationID) == nil {
+		_ = s.store.SetConversationStatus(ctx, conversationID, "idle")
+		if conv, cerr := s.store.GetConversation(ctx, conversationID); cerr == nil {
+			s.emit("conversation.updated", conversationID, conv)
+		}
+	}
 	return turn, nil
 }
 
