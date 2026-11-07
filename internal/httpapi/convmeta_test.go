@@ -129,8 +129,27 @@ func TestConversationMetaAPI(t *testing.T) {
 		t.Fatalf("put draft status=%d meta=%+v", status, m)
 	}
 	status, m = put(`{"title":"Renamed"}`)
-	if status != 200 || m.Title != "Renamed" || m.Draft == nil || m.Browser == nil {
+	if status != 200 || m.Title != "Renamed" || m.Draft == nil || m.Browser == nil || m.Browser.LastURL != "https://ex.test/" {
 		t.Fatalf("merge lost fields status=%d meta=%+v", status, m)
+	}
+
+	// open:false keeps lastUrl. A later lastUrl patch keeps the closed flag.
+	status, m = put(`{"browser":{"open":false}}`)
+	if status != 200 || m.Browser == nil || m.Browser.Open == nil || *m.Browser.Open || m.Browser.LastURL != "https://ex.test/" {
+		t.Fatalf("open false status=%d meta=%+v open=%v", status, m, m.Browser)
+	}
+	status, m = put(`{"browser":{"lastUrl":"https://ex.test/kept"}}`)
+	if status != 200 || m.Browser.LastURL != "https://ex.test/kept" || m.Browser.Open == nil || *m.Browser.Open {
+		t.Fatalf("lastUrl patch cleared open status=%d meta=%+v", status, m)
+	}
+	// about:blank is the session default and must not erase the saved page.
+	status, m = put(`{"browser":{"lastUrl":"about:blank"}}`)
+	if status != 200 || m.Browser.LastURL != "https://ex.test/kept" || m.Browser.Open == nil || *m.Browser.Open {
+		t.Fatalf("about:blank stored status=%d meta=%+v", status, m)
+	}
+	status, m = put(`{"browser":{"open":true}}`)
+	if status != 200 || m.Browser.Open == nil || !*m.Browser.Open || m.Browser.LastURL != "https://ex.test/kept" {
+		t.Fatalf("open true status=%d meta=%+v", status, m)
 	}
 
 	// draft:null clears only the draft.

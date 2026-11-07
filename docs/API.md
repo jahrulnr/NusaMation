@@ -61,8 +61,8 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | `POST` | `/conversations/{id}/config` | `{configId, value}` or `{model}` |
 | `POST` | `/conversations/{id}/elicitations/{requestId}` | `{action:"accept"|"decline"|"cancel", content?}` answers a pending agent input request |
 | `POST` | `/conversations/{id}/agent` | `{agentId}`; starts a handoff recap |
-| `GET` | `/conversations/{id}/meta` | file-backed UI meta: `{title?, browser?:{lastUrl}, draft?:{text, attachments, sendDelivery, replyToChannel, updatedAt}}`; missing file → `{meta:{}}` |
-| `PUT` | `/conversations/{id}/meta` | merge patch `{title?, browser?:{lastUrl}, draft?}`; `draft:null` clears the draft (sent after a successful message send) |
+| `GET` | `/conversations/{id}/meta` | file-backed UI meta: `{title?, browser?:{lastUrl, open?}, draft?:{text, attachments, sendDelivery, replyToChannel, updatedAt}}`; missing file → `{meta:{}}` |
+| `PUT` | `/conversations/{id}/meta` | merge patch `{title?, browser?:{lastUrl, open?}, draft?}`; `lastUrl` and `open` merge independently; `about:blank` does not replace `lastUrl`; `draft:null` clears the draft (sent after a successful message send) |
 | `POST` | `/conversations/{id}/routing` | full `Routing` object |
 | `GET` | `/conversations/{id}/export` | JSON download |
 

@@ -18,6 +18,9 @@ import (
 // without riding SQLite migrations.
 type convMetaBrowser struct {
 	LastURL string `json:"lastUrl,omitempty"`
+	// Open is nil when the client has not said whether the pane was left
+	// open. A pointer keeps an explicit false in the file.
+	Open *bool `json:"open,omitempty"`
 }
 
 type convMetaDraft struct {
@@ -119,11 +122,21 @@ func (s *Server) handlePutConversationMeta(w http.ResponseWriter, r *http.Reques
 	if patch.Title != nil {
 		m.Title = *patch.Title
 	}
-	if patch.Browser != nil && patch.Browser.LastURL != "" {
-		if m.Browser == nil {
-			m.Browser = &convMetaBrowser{}
+	if patch.Browser != nil {
+		// lastUrl and open merge independently. about:blank is the session
+		// default, so storing it would erase the page the user actually visited.
+		if patch.Browser.LastURL != "" && patch.Browser.LastURL != "about:blank" {
+			if m.Browser == nil {
+				m.Browser = &convMetaBrowser{}
+			}
+			m.Browser.LastURL = patch.Browser.LastURL
 		}
-		m.Browser.LastURL = patch.Browser.LastURL
+		if patch.Browser.Open != nil {
+			if m.Browser == nil {
+				m.Browser = &convMetaBrowser{}
+			}
+			m.Browser.Open = patch.Browser.Open
+		}
 	}
 	if len(patch.Draft) > 0 {
 		if string(patch.Draft) == "null" {

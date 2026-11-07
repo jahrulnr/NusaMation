@@ -1,6 +1,6 @@
-import { $, esc, icon } from "./util.js";
-import { S } from "./state.js";
-import { respondElicitation, showPendingRequest } from "./requests.js";
+import { $, esc, icon } from "./util.js?v=33";
+import { S } from "./state.js?v=33";
+import { respondElicitation, showPendingRequest } from "./requests.js?v=33";
 
 /* ---------------- modals ---------------- */
 export function openModal(html, opts = {}) {

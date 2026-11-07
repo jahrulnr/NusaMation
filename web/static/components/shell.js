@@ -1,11 +1,11 @@
-import { $, esc, icon } from "./util.js";
-import { S } from "./state.js";
-import { renderChat } from "./chat.js";
-import { renderComposer } from "./composer.js";
-import { loadOlderMessages } from "./conversations.js";
-import { renderSidebar, sidebarCollapsed } from "./sidebar.js";
-import { renderTopbar } from "./topbar.js";
-import { resetBrowserPane } from "./browser.js";
+import { $, esc, icon } from "./util.js?v=33";
+import { S } from "./state.js?v=33";
+import { renderChat } from "./chat.js?v=33";
+import { renderComposer } from "./composer.js?v=33";
+import { loadOlderMessages } from "./conversations.js?v=33";
+import { renderSidebar, sidebarCollapsed } from "./sidebar.js?v=33";
+import { renderTopbar } from "./topbar.js?v=33";
+import { resetBrowserPane } from "./browser.js?v=33";
 
 /* ---------------- shell ---------------- */
 export function renderShell() {

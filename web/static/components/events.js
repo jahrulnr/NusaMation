@@ -1,33 +1,111 @@
-import { $, agentById, isMobile, parseJSON } from "./util.js";
-import { S, composerFor, composerKey, saveActivityState, switchComposer } from "./state.js";
-import { api } from "./api.js";
-import { toast } from "./toast.js";
-import { closeModal, confirmModal, promptModal } from "./modal.js";
-import { closePopover } from "./popover.js";
-import { openToolMenu, renderChat, toolPreFor } from "./chat.js";
-import { renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js";
-import { autoGrow, editAnnotationComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js";
-import { browserEscape, browserHistory, browserReconnect, cancelAnnotation, closeBrowserPane, submitAnnotation, toggleAnnotate, toggleBrowserPane } from "./browser.js";
-import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, openConversationMenu, openMoreMenu, openRoutingMenu, renameConversation, selectConversation, setRoute, togglePin, toggleRouting } from "./conversations.js";
-import { renderOffline } from "./shell.js";
-import { scheduleDraftSave } from "./convmeta.js";
-import { closeMobileSidebar, filterSidebar, openMobileSidebar, renderSidebar, toggleSidebarCollapsed } from "./sidebar.js";
-import { renderTopbar } from "./topbar.js";
-import { closeWS, connectWS } from "./ws.js";
-import { openAuthTerminal } from "./terminal.js";
-import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications } from "./settings.js";
-import { loadAutomations, saveAutomation, updateAutomationBuilder } from "./automations.js";
-import { refreshChannels, saveWaSettings, waAction } from "./whatsapp.js";
-import { openPalette, runPalette } from "./palette.js";
-import { doLogin, doLogout } from "./auth.js";
-import { startApp } from "./boot.js";
+import { $, agentById, isMobile, parseJSON } from "./util.js?v=33";
+import { S, composerFor, composerKey, saveActivityState, switchComposer } from "./state.js?v=33";
+import { api } from "./api.js?v=33";
+import { toast } from "./toast.js?v=33";
+import { closeModal, confirmModal, promptModal } from "./modal.js?v=33";
+import { closePopover } from "./popover.js?v=33";
+import { openToolMenu, previewAnnotation, renderChat, toolPreFor } from "./chat.js?v=33";
+import { renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js?v=33";
+import { autoGrow, editAnnotationComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js?v=33";
+import { browserEscape, browserHistory, browserReconnect, cancelAnnotation, closeBrowserPane, submitAnnotation, toggleAnnotate, toggleBrowserPane } from "./browser.js?v=33";
+import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, openConversationMenu, openMoreMenu, openRoutingMenu, renameConversation, selectConversation, setRoute, togglePin, toggleRouting } from "./conversations.js?v=33";
+import { renderOffline } from "./shell.js?v=33";
+import { scheduleDraftSave } from "./convmeta.js?v=33";
+import { closeMobileSidebar, filterSidebar, openMobileSidebar, renderSidebar, toggleSidebarCollapsed } from "./sidebar.js?v=33";
+import { renderTopbar } from "./topbar.js?v=33";
+import { closeWS, connectWS } from "./ws.js?v=33";
+import { openAuthTerminal } from "./terminal.js?v=33";
+import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications } from "./settings.js?v=33";
+import { loadAutomations, saveAutomation, updateAutomationBuilder } from "./automations.js?v=33";
+import { refreshChannels, saveWaSettings, waAction } from "./whatsapp.js?v=33";
+import { openPalette, runPalette } from "./palette.js?v=33";
+import { doLogin, doLogout } from "./auth.js?v=33";
+import { startApp } from "./boot.js?v=33";
 
 export const syncAppHeight = () => {
   const vv = window.visualViewport;
   document.documentElement.style.setProperty("--app-h", Math.round(vv && vv.scale === 1 ? vv.height : window.innerHeight) + "px");
 };
 
+const ROW_HOLD_MS = 500;
+const ROW_HOLD_SLOP = 12;
+let rowHold = null;
+let rowMenuGuard = null;
+
+function clearRowHold() {
+  if (!rowHold) return;
+  clearTimeout(rowHold.timer);
+  rowHold.row.classList.remove("holding");
+  rowHold = null;
+}
+
+function guardRowMenuClick(row) {
+  rowMenuGuard = { row, until: performance.now() + 700 };
+}
+
+function openRowMenu(row) {
+  if (!row?.dataset?.id || !row.isConnected) return;
+  openConversationMenu(row, row.dataset.id);
+  guardRowMenuClick(row);
+}
+
+function bindConversationGestures() {
+  document.addEventListener("click", (e) => {
+    const row = e.target.closest?.(".conv-item");
+    if (!row || !rowMenuGuard || row !== rowMenuGuard.row || performance.now() > rowMenuGuard.until) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+
+  document.addEventListener("contextmenu", (e) => {
+    const row = e.target.closest?.(".conv-item");
+    if (!row) return;
+    e.preventDefault();
+    const opened = rowHold?.opened && rowHold.row === row;
+    clearRowHold();
+    if (opened) guardRowMenuClick(row);
+    else openRowMenu(row);
+  });
+
+  document.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" || e.button !== 0) return;
+    const row = e.target.closest?.(".conv-item");
+    if (!row) return;
+    clearRowHold();
+    row.classList.add("holding");
+    const timer = setTimeout(() => {
+      if (!rowHold || rowHold.row !== row || !row.isConnected) { clearRowHold(); return; }
+      rowHold.opened = true;
+      row.classList.remove("holding");
+      openRowMenu(row);
+    }, ROW_HOLD_MS);
+    rowHold = { timer, row, x: e.clientX, y: e.clientY, pointerId: e.pointerId, opened: false };
+  }, true);
+
+  document.addEventListener("pointermove", (e) => {
+    if (!rowHold || e.pointerId !== rowHold.pointerId || rowHold.opened) return;
+    if (Math.hypot(e.clientX - rowHold.x, e.clientY - rowHold.y) > ROW_HOLD_SLOP) clearRowHold();
+  }, true);
+
+  const endHold = (e) => {
+    if (!rowHold || e.pointerId !== rowHold.pointerId) return;
+    if (rowHold.opened) {
+      clearTimeout(rowHold.timer);
+      rowHold.row.classList.remove("holding");
+      rowHold = null;
+      return;
+    }
+    clearRowHold();
+  };
+  document.addEventListener("pointerup", endHold, true);
+  document.addEventListener("pointercancel", (e) => {
+    if (!rowHold || e.pointerId !== rowHold.pointerId) return;
+    clearRowHold();
+  }, true);
+}
+
 export function bindEvents() {
+  bindConversationGestures();
   /* ---------------- event delegation ---------------- */
   document.addEventListener("submit", (e) => {
     const form = e.target.closest("form[data-form]");
@@ -397,6 +475,10 @@ export function bindEvents() {
       case "annotation-submit": submitAnnotation(); break;
       case "annotation-cancel": cancelAnnotation(); break;
       case "annotation-edit": editAnnotationComment(id); break;
+      case "preview-annotation":
+        e.preventDefault();
+        previewAnnotation(target.dataset.upload, target.dataset.caption || "");
+        break;
       default: break;
     }
   });

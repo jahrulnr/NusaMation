@@ -1,14 +1,14 @@
-import { $, $$, AGENT_COLORS, agentById, agentOrb, configChoices, esc, icon, timeAgo } from "./util.js";
-import { S } from "./state.js";
-import { api } from "./api.js";
-import { toast } from "./toast.js";
-import { confirmModal, modalHead, openModal } from "./modal.js";
-import { closePopover } from "./popover.js";
-import { renderChat } from "./chat.js";
-import { renderComposer } from "./composer.js";
-import { renderTopbar } from "./topbar.js";
-import { automationsSettings } from "./automations.js";
-import { startQRTimer, whatsappPanel } from "./whatsapp.js";
+import { $, $$, AGENT_COLORS, agentById, agentOrb, configChoices, esc, icon, timeAgo } from "./util.js?v=33";
+import { S } from "./state.js?v=33";
+import { api } from "./api.js?v=33";
+import { toast } from "./toast.js?v=33";
+import { confirmModal, modalHead, openModal } from "./modal.js?v=33";
+import { closePopover } from "./popover.js?v=33";
+import { renderChat } from "./chat.js?v=33";
+import { renderComposer } from "./composer.js?v=33";
+import { renderTopbar } from "./topbar.js?v=33";
+import { automationsSettings } from "./automations.js?v=33";
+import { startQRTimer, whatsappPanel } from "./whatsapp.js?v=33";
 
 /* ---------------- settings ---------------- */
 export function openSettings(tab = "") {

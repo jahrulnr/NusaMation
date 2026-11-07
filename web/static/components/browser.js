@@ -1,10 +1,10 @@
-import { $, clamp, esc, icon, truncate } from "./util.js";
-import { S, onComposerSwitch } from "./state.js";
-import { saveLastURL, scheduleDraftSave } from "./convmeta.js";
-import { api } from "./api.js";
-import { toast } from "./toast.js";
-import { closePopover, openPopover } from "./popover.js";
-import { focusComposer, renderPendingAttachments } from "./composer.js";
+import { $, clamp, esc, icon, truncate } from "./util.js?v=33";
+import { S, composerKey, onComposerSwitch } from "./state.js?v=33";
+import { cachedBrowserMeta, onBrowserMetaRestored, saveBrowserOpen, saveLastURL, scheduleDraftSave, usableBrowserURL, whenBrowserMeta } from "./convmeta.js?v=33";
+import { api } from "./api.js?v=33";
+import { toast } from "./toast.js?v=33";
+import { closePopover, openPopover } from "./popover.js?v=33";
+import { focusComposer, renderPendingAttachments } from "./composer.js?v=33";
 
 /* ---------------- embedded browser pane ----------------
  * Wire protocol: tmp/browser-api-contract.md
@@ -35,6 +35,9 @@ const B = {
   frameUrl: "",
   prevFrameUrl: "",       // may still be displayed while frameUrl loads
   navigating: false,
+  paneGen: 0,
+  restoreURL: "",
+  savedURL: "",
   lastMove: null,
   moveTimer: null,
   lastMoveSent: 0,
@@ -88,6 +91,11 @@ export function resetBrowserPane() {
   B.picking = false;
   B.gotFrame = false;
   B.navigating = false;
+  B.paneGen += 1;
+  B.restoreURL = "";
+  B.savedURL = "";
+  bootDone = false;
+  bootSkip.clear();
   if (B.hoverTimer) { clearTimeout(B.hoverTimer); B.hoverTimer = null; }
   B.lastHover = null;
   B.hoverBusy = false;
@@ -104,23 +112,42 @@ onComposerSwitch((key) => {
   const next = key || "";
   if (!B.open) { B.conversationId = next; return; }
   if (next === B.conversationId) return;
-  if (B.conversationId === "") { B.conversationId = next; return; }
-  closeBrowserPane();
+  if (B.conversationId === "") {
+    B.conversationId = next;
+    if (next) {
+      saveBrowserOpen(next, true);
+      const url = usableBrowserURL(B.nav.url);
+      if (url) saveLastURL(next, url);
+    }
+    return;
+  }
+  // Hiding on switch is not the close control, so the pane still restores
+  // when this conversation is the one on screen after a refresh.
+  closeBrowserPane({ persist: false });
+  B.conversationId = next;
 });
 
-export function openBrowserPane() {
+export function openBrowserPane(initialURL) {
   if (B.open) return;
+  const pane = $("#browser-pane");
+  if (!pane) return;
+  B.paneGen += 1;
   B.open = true;
   B.conversationId = S.current?.id || "";
-  const pane = $("#browser-pane");
-  if (!pane) { B.open = false; return; }
+  B.savedURL = "";
+  const known = usableBrowserURL(initialURL) || usableBrowserURL(cachedBrowserMeta(B.conversationId)?.lastUrl);
+  B.restoreURL = known;
+  if (known) B.nav = { ...B.nav, url: known };
+  if (B.conversationId) saveBrowserOpen(B.conversationId, true);
   buildPane(pane);
   setPaneVisible(true);
   attachOrCreate();
 }
 
-export function closeBrowserPane() {
+export function closeBrowserPane(opts = {}) {
   if (!B.open) return;
+  const key = B.conversationId;
+  const persist = opts.persist !== false;
   if (B.pendingPick && !B.annotate) postClearHighlight();
   setAnnotate(false);
   if (B.hoverTimer) { clearTimeout(B.hoverTimer); B.hoverTimer = null; }
@@ -131,13 +158,39 @@ export function closeBrowserPane() {
   stopResizeWatch();
   closePopover();
   B.open = false;
+  B.paneGen += 1;
   B.annotate = false;
   B.pendingPick = null;
   B.picking = false;
   B.meta = null;
   B.gotFrame = false;
   B.status = "idle";
+  if (persist && key) {
+    bootSkip.add(key);
+    saveBrowserOpen(key, false);
+  }
   setPaneVisible(false);
+}
+
+let bootDone = false;
+const bootSkip = new Set();
+
+function stillPane(gen, key) {
+  return B.open && B.paneGen === gen && B.conversationId === key;
+}
+
+function noteURL(url) {
+  const u = usableBrowserURL(url);
+  if (!u || !B.conversationId || u === B.savedURL) return;
+  B.savedURL = u;
+  saveLastURL(B.conversationId, u);
+}
+
+async function startURL(key) {
+  const pinned = usableBrowserURL(B.restoreURL);
+  if (pinned) return pinned;
+  const browser = await whenBrowserMeta(key);
+  return usableBrowserURL(browser?.lastUrl);
 }
 
 function setPaneVisible(on) {
@@ -163,7 +216,6 @@ function buildPane(pane) {
       <button class="icon-btn sm" data-action="browser-forward" title="Forward" aria-label="Forward">${icon("chevron-right", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-reload" title="Reload" aria-label="Reload">${icon("refresh", "sm")}</button>
       <div class="browser-addr"><input class="input" id="browser-url" placeholder="Enter a URL" spellcheck="false" autocomplete="off" aria-label="Browser address"></div>
-      <span class="browser-title" id="browser-title" title=""></span>
       <button class="icon-btn sm" data-action="browser-annotate" title="Annotate an element" aria-label="Annotate an element" aria-pressed="false">${icon("pin", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-close" title="Close pane" aria-label="Close pane">${icon("x", "sm")}</button>
     </div>
@@ -215,45 +267,70 @@ function applyBrowserWidth() {
 /* ---------------- session lifecycle ---------------- */
 
 async function attachOrCreate() {
+  const gen = B.paneGen;
+  const key = B.conversationId;
   setStatus("connecting", "Looking for a browser session…");
   try {
     const d = await api("/browser/sessions");
-    if (!B.open) return;
+    if (!stillPane(gen, key)) return;
     const sessions = d.sessions || [];
-    const usable = (s) => (s.conversationId || "") === B.conversationId || !s.conversationId;
-    const live = sessions.find((s) => s.status !== "crashed" && (s.conversationId || "") === B.conversationId)
+    const usable = (s) => (s.conversationId || "") === key || !s.conversationId;
+    const live = sessions.find((s) => s.status !== "crashed" && (s.conversationId || "") === key)
       || sessions.find((s) => s.status !== "crashed" && !s.conversationId);
-    if (live) { attach(live); return; }
+    if (live) {
+      const blank = !usableBrowserURL(live.url);
+      if (blank) {
+        const saved = await startURL(key);
+        if (!stillPane(gen, key)) return;
+        if (saved) {
+          B.restoreURL = saved;
+          B.nav = { ...B.nav, url: saved };
+        }
+        attach(live);
+        if (saved) await browserNavigate(saved);
+        return;
+      }
+      attach(live);
+      return;
+    }
     const crashed = sessions.find((s) => s.status === "crashed" && usable(s));
     if (crashed) {
       try { await api(`/browser/sessions/${encodeURIComponent(crashed.id)}`, { method: "DELETE" }); } catch {}
     }
-    await createSession();
+    if (!stillPane(gen, key)) return;
+    await createSession(gen, key);
   } catch (e) {
-    if (B.open) setStatus("error", e.message || "Could not reach the browser service.");
+    if (stillPane(gen, key)) setStatus("error", e.message || "Could not reach the browser service.");
   }
 }
 
-async function createSession() {
+async function createSession(gen, key) {
   setStatus("connecting", "Starting the browser…");
+  const url = await startURL(key);
+  if (!stillPane(gen, key)) return;
+  if (url) {
+    B.restoreURL = url;
+    B.nav = { ...B.nav, url };
+    updateToolbar();
+  }
   const box = viewBox();
+  const body = {
+    conversationId: key || "",
+    width: clamp(Math.round(box.w) || 1280, 200, 4096),
+    height: clamp(Math.round(box.h) || 800, 200, 4096),
+  };
+  if (url) body.url = url;
   try {
-    const d = await api("/browser/sessions", {
-      method: "POST",
-      body: {
-        conversationId: B.conversationId || "",
-        width: clamp(Math.round(box.w) || 1280, 200, 4096),
-        height: clamp(Math.round(box.h) || 800, 200, 4096),
-      },
-    });
-    if (!B.open) {
-      // The pane closed while Chromium launched — release the fresh session.
+    const d = await api("/browser/sessions", { method: "POST", body });
+    if (!stillPane(gen, key)) {
+      // The pane closed or the conversation changed while Chromium launched.
       try { await api(`/browser/sessions/${encodeURIComponent(d.session.id)}`, { method: "DELETE" }); } catch {}
       return;
     }
+    B.restoreURL = "";
     attach(d.session);
   } catch (e) {
-    if (B.open) setStatus("error", e.message || "The browser could not be started.");
+    if (stillPane(gen, key)) setStatus("error", e.message || "The browser could not be started.");
   }
 }
 
@@ -360,9 +437,10 @@ function applyMeta() {
   if (!m) return;
   const img = $("#browser-frame");
   if (img && m.deviceWidth && m.deviceHeight) img.style.aspectRatio = `${m.deviceWidth} / ${m.deviceHeight}`;
-  if (typeof m.url === "string" && m.url) {
+  if (typeof m.url === "string" && m.url && (usableBrowserURL(m.url) || !usableBrowserURL(B.nav.url))) {
     B.nav.url = m.url;
     B.nav.title = m.title || "";
+    noteURL(m.url);
   }
   if (typeof m.canGoBack === "boolean") {
     B.nav.canGoBack = m.canGoBack;
@@ -373,10 +451,11 @@ function applyMeta() {
 
 function applyNavState(v) {
   if (!v) return;
-  if (typeof v.url === "string") B.nav.url = v.url;
+  if (typeof v.url === "string" && (usableBrowserURL(v.url) || !usableBrowserURL(B.restoreURL))) B.nav.url = v.url;
   if (typeof v.title === "string") B.nav.title = v.title;
   B.nav.canGoBack = !!v.canGoBack;
   B.nav.canGoForward = !!v.canGoForward;
+  noteURL(B.nav.url);
   updateToolbar();
 }
 
@@ -390,7 +469,6 @@ export async function browserNavigate(url) {
   try {
     const d = await api(`/browser/sessions/${encodeURIComponent(B.session.id)}/navigate`, { method: "POST", body: { url } });
     applyNavState(d);
-    saveLastURL(B.conversationId, B.nav.url || url);
   } catch (e) {
     browserApiError(e, "Navigation failed");
   } finally {
@@ -406,7 +484,6 @@ export async function browserHistory(action) {
   try {
     const d = await api(`/browser/sessions/${encodeURIComponent(B.session.id)}/history`, { method: "POST", body: { action } });
     applyNavState(d);
-    saveLastURL(B.conversationId, B.nav.url);
   } catch (e) {
     browserApiError(e, action === "reload" ? "Reload failed" : "Could not navigate history");
   } finally {
@@ -855,8 +932,6 @@ function renderState() {
 function updateToolbar() {
   const url = $("#browser-url");
   if (url && document.activeElement !== url) url.value = B.nav.url || "";
-  const title = $("#browser-title");
-  if (title) { title.textContent = B.nav.title || ""; title.title = B.nav.title || ""; }
   const live = B.status === "live";
   const active = B.session && B.status !== "closed" && B.status !== "error";
   const back = $(`[data-action="browser-back"]`);
@@ -870,3 +945,16 @@ function updateToolbar() {
   if (annotate) annotate.disabled = !live;
   updateAnnotateUI();
 }
+
+// First meta load of the conversation on screen. Later switches hide the pane
+// and leave it hidden until the user opens it; a refresh is a new page, so
+// bootDone starts false again and this runs once.
+onBrowserMetaRestored((key, browser) => {
+  if (bootDone || composerKey !== key) return;
+  bootDone = true;
+  if (bootSkip.has(key)) return;
+  if (!browser || browser.open === false) return;
+  const url = usableBrowserURL(browser.lastUrl);
+  if (!url) return;
+  openBrowserPane(url);
+});

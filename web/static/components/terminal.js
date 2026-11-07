@@ -1,8 +1,8 @@
-import { $, agentById, agentName } from "./util.js";
-import { S } from "./state.js";
-import { toast } from "./toast.js";
-import { closeModal, modalHead, openModal } from "./modal.js";
-import { prepareComposer } from "./composer.js";
+import { $, agentById, agentName } from "./util.js?v=33";
+import { S } from "./state.js?v=33";
+import { toast } from "./toast.js?v=33";
+import { closeModal, modalHead, openModal } from "./modal.js?v=33";
+import { prepareComposer } from "./composer.js?v=33";
 
 export let xtermLoading = null;
 

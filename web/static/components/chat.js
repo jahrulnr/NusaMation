@@ -1,10 +1,11 @@
-import { $, $$, TOOL_KINDS, agentById, agentName, agentOrb, clock, currentAgent, dayLabel, esc, fmtBytes, icon, parseJSON, pretty, truncate } from "./util.js";
-import { S } from "./state.js";
-import { enhanceMarkdown, plainMarkdown, renderMarkdown } from "./markdown.js";
-import { closeDetachedPopovers, openPopover } from "./popover.js";
-import { approvalCard } from "./requests.js";
-import { isBusyTurn, queuedTurnFor, queueStatusLabel } from "./composer.js";
-import { loadConversation, renderHistoryControl } from "./conversations.js";
+import { $, $$, TOOL_KINDS, agentById, agentName, agentOrb, clock, currentAgent, dayLabel, esc, fmtBytes, icon, parseJSON, pretty, truncate } from "./util.js?v=33";
+import { S } from "./state.js?v=33";
+import { enhanceMarkdown, plainMarkdown, renderMarkdown } from "./markdown.js?v=33";
+import { closeDetachedPopovers, openPopover } from "./popover.js?v=33";
+import { openModal } from "./modal.js?v=33";
+import { approvalCard } from "./requests.js?v=33";
+import { isBusyTurn, queuedTurnFor, queueStatusLabel } from "./composer.js?v=33";
+import { loadConversation, renderHistoryControl } from "./conversations.js?v=33";
 
 /* ---------------- chat ---------------- */
 export function renderChat(skeleton = false) {
@@ -397,11 +398,34 @@ export function annotationsHTML(anns) {
     const tag = d.tagName || "element";
     const label = d.name || d.immediateText || "";
     const title = [label, d.selector, d.pageUrl].filter(Boolean).join(" · ");
+    const caption = [tag, a.comment].filter(Boolean).join(": ").replace(/\s+/g, " ");
     const inner = `${a.uploadId ? `<span class="thumb"><img src="/api/uploads/${encodeURIComponent(a.uploadId)}" alt="" loading="lazy">${a.marker ? `<span class="n">${esc(a.marker)}</span>` : ""}</span>` : icon("pin", "sm")}
       <span class="annot-chip-text"><b>${esc(tag)}</b>${a.comment ? `<span>: ${esc(a.comment)}</span>` : ""}</span>`;
-    if (a.uploadId) return `<a class="annot-chip" href="/api/uploads/${encodeURIComponent(a.uploadId)}" target="_blank" rel="noopener" title="${esc(title)}">${inner}</a>`;
+    if (a.uploadId) return `<button type="button" class="annot-chip" data-action="preview-annotation" data-upload="${esc(a.uploadId)}" data-caption="${esc(caption)}" title="${esc(title)}" aria-label="Preview annotation screenshot">${inner}</button>`;
     return `<span class="annot-chip" title="${esc(title)}">${inner}</span>`;
   }).join("")}</div>`;
+}
+
+export function previewAnnotation(uploadId, caption) {
+  if (!uploadId) return;
+  const src = `/api/uploads/${encodeURIComponent(uploadId)}`;
+  S.modal = { type: "image-preview" };
+  openModal(`<button type="button" class="icon-btn image-preview-close" data-action="close-modal" aria-label="Close preview" autofocus>${icon("x")}</button>
+    <div class="image-preview-status" role="status">Loading screenshot…</div>
+    <img alt="${esc(caption || "Annotation screenshot")}" hidden>
+    <p class="image-preview-error" hidden>Could not load this screenshot.</p>
+    ${caption ? `<div class="image-preview-caption">${esc(caption)}</div>` : ""}`, { size: "image-preview" });
+  const root = $("#modal-root");
+  const img = $("img", root);
+  const status = $(".image-preview-status", root);
+  const err = $(".image-preview-error", root);
+  if (!img) return;
+  const show = () => { if (status) status.hidden = true; img.hidden = false; };
+  const fail = () => { if (status) status.hidden = true; img.hidden = true; if (err) err.hidden = false; };
+  img.addEventListener("load", show);
+  img.addEventListener("error", fail);
+  img.src = src;
+  if (img.complete && img.naturalWidth) show();
 }
 
 export function typingHTML() {

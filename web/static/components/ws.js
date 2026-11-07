@@ -1,18 +1,18 @@
-import { agentById, parseConfigs } from "./util.js";
-import { S, composers, switchComposer } from "./state.js";
-import { ApiError } from "./api.js";
-import { toast } from "./toast.js";
-import { closeModal } from "./modal.js";
-import { applyStreamDelta, currentApprovals, renderChat, scheduleChatRender, scheduleStreamRender, scheduleStreamResync } from "./chat.js";
-import { refreshApprovalModal, renderApprovalsModal, showAgentBlocker, showPendingRequest, showSlowAgent } from "./requests.js";
-import { renderComposer, upsertTurn } from "./composer.js";
-import { loadConversation, normalizeMessage, setRoute, touchConversationFromMessage, upsertConversation, upsertMessage } from "./conversations.js";
-import { renderOffline } from "./shell.js";
-import { renderSidebar } from "./sidebar.js";
-import { renderTopbar } from "./topbar.js";
-import { renderSettings } from "./settings.js";
-import { updateWhatsAppPanel } from "./whatsapp.js";
-import { refreshBootstrap } from "./boot.js";
+import { agentById, parseConfigs } from "./util.js?v=33";
+import { S, composers, switchComposer } from "./state.js?v=33";
+import { ApiError } from "./api.js?v=33";
+import { toast } from "./toast.js?v=33";
+import { closeModal } from "./modal.js?v=33";
+import { applyStreamDelta, currentApprovals, renderChat, scheduleChatRender, scheduleStreamRender, scheduleStreamResync } from "./chat.js?v=33";
+import { refreshApprovalModal, renderApprovalsModal, showAgentBlocker, showPendingRequest, showSlowAgent } from "./requests.js?v=33";
+import { renderComposer, upsertTurn } from "./composer.js?v=33";
+import { loadConversation, normalizeMessage, setRoute, touchConversationFromMessage, upsertConversation, upsertMessage } from "./conversations.js?v=33";
+import { renderOffline } from "./shell.js?v=33";
+import { renderSidebar } from "./sidebar.js?v=33";
+import { renderTopbar } from "./topbar.js?v=33";
+import { renderSettings } from "./settings.js?v=33";
+import { updateWhatsAppPanel } from "./whatsapp.js?v=33";
+import { refreshBootstrap } from "./boot.js?v=33";
 
 /* ---------------- live stream ---------------- */
 export function connectWS() {

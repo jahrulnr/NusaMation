@@ -1,4 +1,4 @@
-import { S } from "./state.js";
+import { S } from "./state.js?v=33";
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 

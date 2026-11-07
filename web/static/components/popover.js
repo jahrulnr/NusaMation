@@ -1,4 +1,4 @@
-import { esc, icon } from "./util.js";
+import { esc, icon } from "./util.js?v=33";
 
 /* ---------------- popovers ---------------- */
 export function closePopover() {
