@@ -134,7 +134,14 @@ func SafePath(root, path string, mustExist bool) (string, error) {
 		check = parent
 	}
 	if resolved, err := filepath.EvalSymlinks(check); err == nil {
-		if rel, err := filepath.Rel(rootAbs, resolved); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		// Resolve the root the same way: EvalSymlinks normalizes Windows
+		// 8.3 short names (e.g. RUNNER~1 -> runneradmin), which would
+		// otherwise make a legitimately inside path look like an escape.
+		rootCmp := rootAbs
+		if r, err := filepath.EvalSymlinks(rootAbs); err == nil {
+			rootCmp = r
+		}
+		if rel, err := filepath.Rel(rootCmp, resolved); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("path %q escapes the workspace via symlink", path)
 		}
 	}

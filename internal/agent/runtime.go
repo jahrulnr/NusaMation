@@ -737,7 +737,11 @@ func (r *Runtime) handleNotification(method, sessionID string, raw json.RawMessa
 				if json.Unmarshal(raw, &u) == nil {
 					switch u.SessionUpdate {
 					case "config_option_update":
-						if len(u.ConfigOptions) > 0 {
+						// The session/new catalog push can arrive after a replay
+						// already applied newer choices (slow pipe, loaded host);
+						// once selections are applied the response-driven config
+						// is authoritative, so drop late pushes.
+						if len(u.ConfigOptions) > 0 && len(p.applied) == 0 {
 							p.configs, p.legacy = mergeLegacyModes(u.ConfigOptions, p.modes)
 						}
 					case "current_mode_update":

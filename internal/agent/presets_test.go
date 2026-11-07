@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -38,7 +39,7 @@ func TestDetectFindsKnownCLIs(t *testing.T) {
 		t.Fatalf("gemini args = %#v", bySlug["gemini"].Args)
 	}
 	// codex-acp binary wins over the codex fallback candidate.
-	if filepath.Base(bySlug["codex"].Command) != "codex-acp" || len(bySlug["codex"].Args) != 0 {
+	if strings.TrimSuffix(filepath.Base(bySlug["codex"].Command), ".exe") != "codex-acp" || len(bySlug["codex"].Args) != 0 {
 		t.Fatalf("codex = %#v", bySlug["codex"])
 	}
 	// Catalog order is preserved.
@@ -57,7 +58,7 @@ func TestDetectPrefersFirstCandidate(t *testing.T) {
 	for _, d := range found {
 		bySlug[d.Slug] = d
 	}
-	if filepath.Base(bySlug["claude"].Command) != "claude-code-acp" {
+	if strings.TrimSuffix(filepath.Base(bySlug["claude"].Command), ".exe") != "claude-code-acp" {
 		t.Fatalf("claude = %#v", bySlug["claude"])
 	}
 	if _, ok := bySlug["codex"]; ok {

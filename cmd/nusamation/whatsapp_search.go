@@ -159,8 +159,10 @@ func whatsappContacts(args []string) error {
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("WhatsApp database: %w", err)
 	}
-	uri := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro&_pragma=busy_timeout(8000)"}
-	db, err := sql.Open("sqlite", uri.String())
+	// Plain concatenation, not url.URL: URL-escaped backslashes make the
+	// sqlite URI parser reject Windows paths ("invalid uri authority").
+	dsn := "file:" + path + "?mode=ro&_pragma=busy_timeout(8000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return err
 	}

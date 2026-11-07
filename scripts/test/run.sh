@@ -57,6 +57,9 @@ export HOME="$TESTROOT/home"
 export NUSAMATION_VERSION=0.1.0
 export NUSAMATION_NO_SERVICE=1
 export NUSAMATION_REPO="local/fake"
+# GitHub Actions runners hardcode XDG_CONFIG_HOME=/home/runner/.config even
+# when HOME is overridden; clear it so install paths stay under $HOME.
+unset XDG_CONFIG_HOME
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok: $*"; }

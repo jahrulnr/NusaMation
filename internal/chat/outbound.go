@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -84,8 +85,16 @@ func (s *Service) resolveOutboundPath(raw string, roots []string) (string, bool)
 		if err != nil {
 			return "", false
 		}
+		if runtime.GOOS == "windows" {
+			// file://C:/path and file:///C:/path both carry a Windows drive
+			// letter that url.Parse does not fold into u.Path.
+			if u.Host != "" && !strings.Contains(dec, ":") {
+				dec = u.Host + dec
+			}
+			dec = strings.TrimPrefix(dec, "/")
+		}
 		p = dec
-	case strings.HasPrefix(raw, "/"):
+	case filepath.IsAbs(raw):
 		p = raw
 	default:
 		return "", false

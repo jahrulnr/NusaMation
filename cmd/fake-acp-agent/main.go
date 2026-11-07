@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -515,7 +516,11 @@ func promptText(prompt []struct {
 // terminalDemo exercises the ACP terminal lifecycle for integration tests.
 func (s *server) terminalDemo(id json.RawMessage, sessionID string, background bool) {
 	s.update(map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{"type": "text", "text": "Checking the command."}})
-	result := s.callClient("terminal/create", map[string]any{"sessionId": sessionID, "command": "/bin/sh", "args": []string{"-c", "printf first; sleep 0.5; printf second; exit 3"}, "outputByteLimit": 4})
+	command, args := "sh", []string{"-c", "printf first; sleep 0.5; printf second; exit 3"}
+	if runtime.GOOS == "windows" {
+		command, args = "powershell", []string{"-NoProfile", "-Command", "[Console]::Write('first'); Start-Sleep -Milliseconds 500; [Console]::Write('second'); exit 3"}
+	}
+	result := s.callClient("terminal/create", map[string]any{"sessionId": sessionID, "command": command, "args": args, "outputByteLimit": 4})
 	var terminal struct {
 		TerminalID string `json:"terminalId"`
 	}
