@@ -38,6 +38,7 @@ export function renderSidebar() {
         <span class="brand-mark">N</span>
         <div><div class="brand-name">NusaMation</div><div class="brand-tag">agent mesh</div></div>
         <button class="icon-btn sm" style="margin-left:auto" data-action="open-settings" title="Settings">${icon("settings", "sm")}</button>
+        <button class="icon-btn sm sidebar-collapse-btn" data-action="toggle-sidebar" title="Collapse sidebar">${icon("panel-left", "sm")}</button>
       </div>
       <button class="new-chat" data-action="new-chat">${icon("plus")} New conversation</button>
       <div class="sidebar-search">${icon("search")}<input id="conv-search" type="search" placeholder="Search conversations…" value="${esc(S.query)}" data-input="conv-search" autocomplete="off"></div>
@@ -108,7 +109,24 @@ export function filterSidebar() {
   }
 }
 
+const SIDEBAR_COLLAPSED_KEY = "nusamation:sidebar-collapsed";
+
+export function sidebarCollapsed() {
+  try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"; } catch { return false; }
+}
+
+export function setSidebarCollapsed(on) {
+  $(".app")?.classList.toggle("sidebar-collapsed", on);
+  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, on ? "1" : "0"); } catch {}
+}
+
+export function toggleSidebarCollapsed() {
+  setSidebarCollapsed(!$(".app")?.classList.contains("sidebar-collapsed"));
+}
+
 export function openMobileSidebar() {
+  // The topbar menu button is the expand affordance on collapsed desktop too.
+  setSidebarCollapsed(false);
   $("#sidebar")?.classList.add("open");
   $("#scrim")?.classList.add("show");
 }

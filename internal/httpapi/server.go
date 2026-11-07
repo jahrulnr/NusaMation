@@ -19,6 +19,7 @@ import (
 
 	"github.com/jahrulnr/nusamation/internal/agent"
 	"github.com/jahrulnr/nusamation/internal/auth"
+	"github.com/jahrulnr/nusamation/internal/browser"
 	"github.com/jahrulnr/nusamation/internal/channels"
 	"github.com/jahrulnr/nusamation/internal/chat"
 	"github.com/jahrulnr/nusamation/internal/config"
@@ -35,6 +36,7 @@ type Server struct {
 	store    *store.Store
 	chat     *chat.Service
 	agents   *agent.Manager
+	browser  *browser.Manager
 	channels *channels.Manager
 	hub      *realtime.Hub
 	log      *slog.Logger
@@ -49,6 +51,7 @@ type Options struct {
 	Store    *store.Store
 	Chat     *chat.Service
 	Agents   *agent.Manager
+	Browser  *browser.Manager
 	Channels *channels.Manager
 	Hub      *realtime.Hub
 	Log      *slog.Logger
@@ -66,7 +69,7 @@ func New(opts Options) (*Server, error) {
 	}
 	s := &Server{
 		cfg: opts.Config, store: opts.Store, chat: opts.Chat, agents: opts.Agents,
-		channels: opts.Channels, hub: opts.Hub, log: log.With("component", "http"),
+		browser: opts.Browser, channels: opts.Channels, hub: opts.Hub, log: log.With("component", "http"),
 		started: time.Now(), limiter: newLoginLimiter(8, 5*time.Minute), static: static, index: index,
 	}
 	if opts.Config.PublicURL != "" && s.hub != nil {
@@ -144,6 +147,17 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("POST /api/uploads", s.protected(s.handleUpload))
 	mux.HandleFunc("GET /api/uploads/{id}", s.protected(s.handleGetUpload))
+
+	mux.HandleFunc("POST /api/browser/sessions", s.protected(s.handleBrowserSessionCreate))
+	mux.HandleFunc("GET /api/browser/sessions", s.protected(s.handleBrowserSessionList))
+	mux.HandleFunc("GET /api/browser/sessions/{id}", s.protected(s.handleBrowserSessionGet))
+	mux.HandleFunc("DELETE /api/browser/sessions/{id}", s.protected(s.handleBrowserSessionDelete))
+	mux.HandleFunc("POST /api/browser/sessions/{id}/navigate", s.protected(s.handleBrowserNavigate))
+	mux.HandleFunc("POST /api/browser/sessions/{id}/history", s.protected(s.handleBrowserHistory))
+	mux.HandleFunc("POST /api/browser/sessions/{id}/annotate", s.protected(s.handleBrowserAnnotate))
+	mux.HandleFunc("POST /api/browser/sessions/{id}/annotate/preview", s.protected(s.handleBrowserAnnotatePreview))
+	mux.HandleFunc("POST /api/browser/sessions/{id}/annotate/clear", s.protected(s.handleBrowserAnnotateClear))
+	mux.HandleFunc("GET /api/browser/sessions/{id}/stream", s.protected(s.handleBrowserStream))
 
 	mux.HandleFunc("GET /api/settings", s.protected(s.handleGetSettings))
 	mux.HandleFunc("PUT /api/settings", s.protected(s.handleUpdateSettings))

@@ -843,3 +843,96 @@ textarea, input, select { caret-color: var(--accent); }
   .menu-btn { display: inline-grid; }
   .topbar-sub { display: none; }
 }
+
+/* Embedded browser pane (components/browser.js) */
+.app.browser-open { grid-template-columns: 286px minmax(400px, 1fr) minmax(320px, var(--browser-w, min(560px, 44vw))); }
+.browser-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--border); background: var(--sidebar); position: relative; }
+.browser-pane[hidden] { display: none; }
+.browser-resize { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; }
+.browser-resize:hover, .browser-resize:active { background: var(--accent-dim); }
+.browser-toolbar { display: flex; align-items: center; gap: 4px; padding: 8px 9px; border-bottom: 1px solid var(--border); flex: none; }
+.browser-toolbar .icon-btn[disabled] { opacity: .4; pointer-events: none; }
+.browser-addr { flex: 1; min-width: 0; }
+.browser-addr .input { width: 100%; padding: 6px 10px; font-size: 12px; border-radius: 8px; font-family: var(--mono); }
+.browser-title { flex: none; max-width: 150px; font-size: 11px; color: var(--muted-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.browser-title:empty { display: none; }
+@media (max-width: 1300px) { .browser-title { display: none; } }
+.browser-view { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #060708; overflow: hidden; outline: none; user-select: none; }
+.browser-view.annotate, .browser-view.annotate .browser-frame { cursor: crosshair; }
+.browser-frame { max-width: 100%; max-height: 100%; width: auto; height: auto; display: block; user-select: none; -webkit-user-drag: none; }
+.browser-state { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; gap: 10px; background: rgba(8,9,11,.78); color: var(--muted); font-size: 12px; padding: 22px; text-align: center; }
+.browser-state.show { display: flex; }
+.browser-msg { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.browser-msg .icon { color: var(--accent); width: 20px; height: 20px; margin-bottom: 2px; }
+.browser-msg b { font-size: 13px; color: var(--text-soft); font-weight: 650; }
+.browser-msg p { color: var(--muted-2); font-size: 11.5px; margin: 2px 0 12px; max-width: 300px; line-height: 1.55; overflow-wrap: anywhere; }
+.browser-anchor { position: absolute; width: 3px; height: 3px; }
+.browser-pick-marker { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; border: 2px solid var(--accent); box-shadow: 0 0 0 4px rgba(245,181,68,.18); animation: pickPulse 1s ease-in-out infinite; pointer-events: none; }
+@keyframes pickPulse { 50% { box-shadow: 0 0 0 8px rgba(245,181,68,.06); } }
+
+/* Annotate-mode hover marker: element under the cursor, before the click. */
+.browser-hover { position: absolute; display: none; pointer-events: none; z-index: 4; background: rgba(66,133,244,.16); border: 1.5px solid rgba(66,133,244,.85); border-radius: 3px; }
+.browser-hover.show { display: block; }
+.browser-hover-label { position: absolute; left: -2px; bottom: calc(100% + 4px); background: #18202c; border: 1px solid var(--border-strong); color: #cfe0ff; font-size: 10px; font-family: var(--mono); padding: 2px 7px; border-radius: 5px; white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.browser-hover-label.below { bottom: auto; top: 4px; }
+.browser-hover.pinned { border-color: var(--accent); background: rgba(245,181,68,.14); }
+.browser-hover.pinned .browser-hover-label { color: var(--accent); border-color: var(--accent-line); }
+
+/* Annotate comment popover */
+.annotate-pop { display: flex; flex-direction: column; gap: 8px; padding: 4px; }
+.annotate-head { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.annotate-head img { width: 46px; height: 34px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); flex: none; }
+.annotate-head .icon { color: var(--accent); width: 16px; height: 16px; }
+.annotate-id { min-width: 0; }
+.annotate-id b { display: block; font-size: 12px; font-family: var(--mono); font-weight: 600; color: var(--accent); }
+.annotate-id small { display: block; color: var(--muted-2); font-size: 10.5px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.annotate-comment { font-size: 12px; min-height: 52px; resize: vertical; }
+.annotate-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* Annotation chips — composer (pending) and sent messages */
+.pending-attach.annot { border-color: var(--accent-line); }
+.pending-attach.annot > .icon { color: var(--accent); }
+.annot-grid { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+.annot-chip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--accent-line); background: var(--accent-dim); border-radius: 9px; padding: 4px 10px 4px 4px; max-width: 330px; color: var(--text-soft); font-size: 11.5px; transition: border-color .15s, background .15s; }
+a.annot-chip:hover { border-color: var(--accent); background: rgba(245,181,68,.2); }
+.annot-chip img { width: 54px; height: 40px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); flex: none; display: block; }
+.annot-chip > .icon { color: var(--accent); width: 15px; height: 15px; flex: none; }
+.annot-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.annot-chip-text b { color: var(--accent); font-family: var(--mono); font-weight: 600; }
+.annot-chip-text span { color: var(--text-soft); }
+
+@media (max-width: 980px) {
+  .app.browser-open { grid-template-columns: 250px minmax(400px, 1fr) minmax(320px, var(--browser-w, min(500px, 46vw))); }
+}
+@media (max-width: 800px) {
+  .app.browser-open { grid-template-columns: 1fr; }
+  .browser-pane { position: fixed; inset: 0; z-index: 60; border-left: 0; }
+  .browser-resize { display: none; }
+}
+/* Too narrow for sidebar+chat-min+pane-min: dock the pane as a drawer over the right edge. */
+@media (min-width: 801px) and (max-width: 980px) {
+  .app:not(.sidebar-collapsed).browser-open { grid-template-columns: 250px minmax(0, 1fr); }
+}
+@media (min-width: 981px) and (max-width: 1005px) {
+  .app:not(.sidebar-collapsed).browser-open { grid-template-columns: 286px minmax(0, 1fr); }
+}
+@media (min-width: 801px) and (max-width: 1005px) {
+  .app:not(.sidebar-collapsed).browser-open .browser-pane { position: fixed; top: 0; right: 0; bottom: 0; left: auto; width: min(560px, 92vw); z-index: 60; border-left: 1px solid var(--border); }
+  .app:not(.sidebar-collapsed).browser-open .browser-resize { display: none; }
+}
+@media (min-width: 801px) and (max-height: 500px) and (pointer: coarse) {
+  .app.browser-open { grid-template-columns: 1fr; }
+  .browser-pane { position: fixed; inset: 0; z-index: 60; border-left: 0; }
+  .browser-resize { display: none; }
+}
+
+/* Collapsed sidebar (components/sidebar.js) — desktop only; mobile uses the overlay sidebar. */
+@media (min-width: 801px) {
+  .app.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
+  .app.sidebar-collapsed.browser-open { grid-template-columns: minmax(400px, 1fr) minmax(320px, var(--browser-w, min(560px, 44vw))); }
+  .app.sidebar-collapsed .sidebar { display: none; }
+  .app.sidebar-collapsed .menu-btn { display: inline-grid; }
+}
+@media (max-width: 800px), (min-width: 801px) and (max-height: 500px) and (pointer: coarse) {
+  .sidebar-collapse-btn { display: none; }
+}

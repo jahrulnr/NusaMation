@@ -3,6 +3,8 @@ module github.com/jahrulnr/nusamation
 go 1.27.3
 
 require (
+	github.com/chromedp/cdproto v0.159.0
+	github.com/chromedp/chromedp v0.23.0
 	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
 	github.com/robfig/cron/v3 v3.0.1
@@ -18,6 +20,7 @@ require (
 	github.com/beeper/argo-go v1.1.2 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/elliotchance/orderedmap/v3 v3.1.0 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

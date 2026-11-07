@@ -99,6 +99,10 @@ Authenticated WebSocket hub. Every event has a monotonic ID, type, conversation 
 
 `net/http` API and embedded SPA. Single-admin auth, CSRF, rate limiting, security headers, upload serving and channel/agent/MCP management. The WebSocket route bypasses the response-status wrapper so HTTP hijacking works.
 
+### `internal/browser`
+
+Lazy headless Chromium (chromedp/CDP, `-browser-exec` or PATH discovery) behind the `/browser/*` routes. One shared browser process, one isolated `BrowserContext`+tab per session, one screencast subscriber per session. Streams JPEG frames over a dedicated WebSocket, forwards CDP input back, and resolves element picks (`DOM.getNodeForLocation` → descriptor extraction → overlay highlight → clipped screenshot → upload) for composer annotations. Sessions idle-expire without a stream; the browser itself stops when session-free. The package never imports chat/httpapi — the upload save path is injected.
+
 ### `web`
 
 Vanilla JS control center. Vendored `marked`, `DOMPurify` and `highlight.js`; no Node build. Renders streaming messages, thoughts, tool cards, plans, approvals, channel settings and the agent/MCP studio. Reconnects the event stream with exponential backoff and resynchronises state on reconnect.

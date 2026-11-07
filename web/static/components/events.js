@@ -6,10 +6,11 @@ import { closeModal, confirmModal, promptModal } from "./modal.js";
 import { closePopover } from "./popover.js";
 import { openToolMenu, renderChat, toolPreFor } from "./chat.js";
 import { renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js";
-import { autoGrow, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js";
+import { autoGrow, editAnnotationComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js";
+import { browserEscape, browserHistory, browserReconnect, cancelAnnotation, closeBrowserPane, submitAnnotation, toggleAnnotate, toggleBrowserPane } from "./browser.js";
 import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, openConversationMenu, openMoreMenu, openRoutingMenu, renameConversation, selectConversation, setRoute, togglePin, toggleRouting } from "./conversations.js";
 import { renderOffline } from "./shell.js";
-import { closeMobileSidebar, filterSidebar, openMobileSidebar, renderSidebar } from "./sidebar.js";
+import { closeMobileSidebar, filterSidebar, openMobileSidebar, renderSidebar, toggleSidebarCollapsed } from "./sidebar.js";
 import { renderTopbar } from "./topbar.js";
 import { closeWS, connectWS } from "./ws.js";
 import { openAuthTerminal } from "./terminal.js";
@@ -95,6 +96,7 @@ export function bindEvents() {
       }
       case "new-chat": e.preventDefault(); newConversation(); break;
       case "open-sidebar": openMobileSidebar(); break;
+      case "toggle-sidebar": toggleSidebarCollapsed(); break;
       case "close-sidebar": closeMobileSidebar(); break;
       case "open-settings": openSettings(target.dataset.tab || ""); break;
       case "open-account": openSettings("account"); break;
@@ -334,6 +336,16 @@ export function bindEvents() {
         break;
       }
       case "palette-run": await runPalette(target.dataset.kind, target.dataset.id); break;
+      case "toggle-browser": toggleBrowserPane(); break;
+      case "browser-back": await browserHistory("back"); break;
+      case "browser-forward": await browserHistory("forward"); break;
+      case "browser-reload": await browserHistory("reload"); break;
+      case "browser-annotate": toggleAnnotate(); break;
+      case "browser-close": closeBrowserPane(); break;
+      case "browser-reconnect": browserReconnect(); break;
+      case "annotation-submit": submitAnnotation(); break;
+      case "annotation-cancel": cancelAnnotation(); break;
+      case "annotation-edit": editAnnotationComment(id); break;
       default: break;
     }
   });
@@ -348,6 +360,7 @@ export function bindEvents() {
     if (e.key === "Escape") {
       if ($("#modal-root").innerHTML) { closeModal(); return; }
       if ($(".popover")) { closePopover(); return; }
+      if (browserEscape()) return;
       closeMobileSidebar();
       return;
     }

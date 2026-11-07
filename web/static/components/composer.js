@@ -2,7 +2,7 @@ import { $, $$, agentById, agentName, agentOrb, configChoices, configLabel, curr
 import { S, composerFor, composerKey, moveComposer } from "./state.js";
 import { api } from "./api.js";
 import { toast } from "./toast.js";
-import { closeModal } from "./modal.js";
+import { closeModal, promptModal } from "./modal.js";
 import { closePopover, menuItem, openPopover } from "./popover.js";
 import { renderChat } from "./chat.js";
 import { showAgentBlocker, showSlowAgent } from "./requests.js";
@@ -226,6 +226,17 @@ export function renderPendingAttachments() {
   const el = $("#pending-attachments");
   if (!el) return;
   el.innerHTML = S.attachments.map((a) => {
+    if (a.type === "annotation") {
+      const u = a.upload || {};
+      const label = `${a.tagName || a.label || "element"}${a.comment ? ": " + a.comment : ""}`;
+      const title = [a.label, a.comment, a.selector].filter(Boolean).join(" · ");
+      return `<div class="pending-attach annot" title="${esc(title || label)}">
+        ${u.id ? `<img src="/api/uploads/${encodeURIComponent(u.id)}" alt="">` : icon("pin", "sm")}
+        <span class="name">${esc(label)}</span>
+        <button data-action="annotation-edit" data-id="${esc(a.pickId)}" aria-label="Edit comment" title="Edit comment">${icon("edit", "sm")}</button>
+        <button data-action="remove-attachment" data-id="${esc(u.id || a.pickId)}" aria-label="Remove">${icon("x", "sm")}</button>
+      </div>`;
+    }
     const u = a.upload || a;
     const isImg = String(u.mime || "").startsWith("image/");
     return `<div class="pending-attach" title="${esc(u.name)}">
@@ -235,6 +246,16 @@ export function renderPendingAttachments() {
     </div>`;
   }).join("");
   updateComposerState();
+}
+
+export function editAnnotationComment(pickId) {
+  const chip = S.attachments.find((a) => a.type === "annotation" && a.pickId === pickId);
+  if (!chip) return;
+  promptModal("Edit annotation comment", "Comment", chip.comment || "", async (value) => {
+    chip.comment = (value || "").trim();
+    renderPendingAttachments();
+    closeModal();
+  }, "Comment for the agent…", true);
 }
 
 export function focusComposer() {
@@ -310,13 +331,18 @@ export async function sendMessage() {
       owner.pendingSelections = [];
     }
     const links = (conversation.links || []).filter((l) => l.channel !== "web");
+    // Annotation chips are NOT uploads: they ride as annotations[{pickId,comment}]
+    // and the server binds each pick's crop upload itself (contract §3.9/§6.3).
+    const files = attachments.filter((a) => a.type !== "annotation");
+    const annotations = attachments.filter((a) => a.type === "annotation");
     const body = {
       text,
-      attachments: attachments.map((a) => ({ uploadId: (a.upload || a).id })),
+      attachments: files.map((a) => ({ uploadId: (a.upload || a).id })),
       replyToChannel: !!(owner.replyToChannel && links.length),
       replyChannel: links.length ? links[0].channel : "",
       delivery,
     };
+    if (annotations.length) body.annotations = annotations.map((a) => ({ pickId: a.pickId, comment: a.comment || "" }));
     const d = await api(`/conversations/${encodeURIComponent(conversation.id)}/messages`, { method: "POST", body });
     owner.sending = false;
     if (owner.draft.trim() === text) { owner.draft = ""; if (composerFor(composerKey) === owner) $("#prompt").value = ""; }

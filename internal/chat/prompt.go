@@ -278,6 +278,9 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 		text = "Please review the attachment(s) and continue."
 	}
 	blocks = append(blocks, acp.ContentBlock{Type: "text", Text: text})
+	if block := annotationBlock(a.user.Metadata); block != "" {
+		blocks = append(blocks, acp.ContentBlock{Type: "text", Text: block})
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -350,6 +353,78 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 		})
 	}
 	return blocks
+}
+
+// annotationBlock serializes metadata.annotations into the contract §7 text
+// block: one numbered line per annotation plus Comment/Nearby text lines, the
+// first 4 fully described, capped at 8000 chars total.
+func annotationBlock(metadata json.RawMessage) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var meta struct {
+		Annotations []store.MessageAnnotation `json:"annotations"`
+	}
+	if json.Unmarshal(metadata, &meta) != nil || len(meta.Annotations) == 0 {
+		return ""
+	}
+	const (
+		maxDescribed = 4
+		maxChars     = 8000
+	)
+	trunc := func(s string, n int) string {
+		return textfmt.Truncate(strings.TrimSpace(s), n)
+	}
+	var b strings.Builder
+	b.WriteString("Page annotations — the user marked elements on a web page; each element's screenshot is attached as an image.\n")
+	described := len(meta.Annotations)
+	if described > maxDescribed {
+		described = maxDescribed
+	}
+	for i := 0; i < described; i++ {
+		an := meta.Annotations[i]
+		d := an.Descriptor
+		label := d.Name
+		if label == "" {
+			label = d.ImmediateText
+		}
+		label = trunc(label, 80)
+		b.WriteString("\n[")
+		b.WriteString(fmt.Sprintf("%d", i+1))
+		b.WriteString("] <")
+		b.WriteString(trunc(d.TagName, 40))
+		b.WriteString(">")
+		if label != "" {
+			b.WriteString(" \"")
+			b.WriteString(label)
+			b.WriteString("\"")
+		}
+		if sel := trunc(d.Selector, 240); sel != "" {
+			b.WriteString(" — selector `")
+			b.WriteString(sel)
+			b.WriteString("`")
+		}
+		if pageURL := trunc(d.PageURL, 300); pageURL != "" {
+			b.WriteString(" — ")
+			b.WriteString(pageURL)
+		}
+		if comment := trunc(an.Comment, 600); comment != "" {
+			b.WriteString("\n    Comment: ")
+			b.WriteString(comment)
+		}
+		if nearby := trunc(d.NearbyText, 300); nearby != "" {
+			b.WriteString("\n    Nearby text: ")
+			b.WriteString(nearby)
+		}
+		if d.Selector == "" && d.ElementPath != "" {
+			b.WriteString("\n    Element path: ")
+			b.WriteString(trunc(d.ElementPath, 300))
+		}
+	}
+	if extra := len(meta.Annotations) - described; extra > 0 {
+		b.WriteString(fmt.Sprintf("\n[+%d more annotation(s) attached but not described]", extra))
+	}
+	return textfmt.Truncate(b.String(), maxChars)
 }
 
 func (s *Service) responseRules(a *activeTurn) string {

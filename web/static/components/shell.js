@@ -3,12 +3,14 @@ import { S } from "./state.js";
 import { renderChat } from "./chat.js";
 import { renderComposer } from "./composer.js";
 import { loadOlderMessages } from "./conversations.js";
-import { renderSidebar } from "./sidebar.js";
+import { renderSidebar, sidebarCollapsed } from "./sidebar.js";
 import { renderTopbar } from "./topbar.js";
+import { resetBrowserPane } from "./browser.js";
 
 /* ---------------- shell ---------------- */
 export function renderShell() {
   const app = $("#app");
+  resetBrowserPane();
   app.className = "";
   app.innerHTML = `
     <div class="mobile-scrim" id="scrim" data-action="close-sidebar"></div>
@@ -20,7 +22,9 @@ export function renderShell() {
         <div class="chat-scroll" id="chat-scroll"><div class="chat-inner" id="chat"></div></div>
         <div class="composer-wrap" id="composer-wrap"></div>
       </main>
+      <aside class="browser-pane" id="browser-pane" hidden></aside>
     </div>`;
+  $(".app")?.classList.toggle("sidebar-collapsed", sidebarCollapsed());
   document.title = "NusaMation";
   const sc = $("#chat-scroll");
   let userScrollAt = 0;

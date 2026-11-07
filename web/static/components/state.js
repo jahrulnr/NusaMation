@@ -99,7 +99,18 @@ for (const field of ["draft", "attachments", "sendDelivery", "replyToChannel", "
   });
 }
 
-export function switchComposer(key) { composerKey = key || ""; }
+const composerSwitchListeners = new Set();
+
+// Registered by feature modules (e.g. the browser pane) that must react when the
+// visible conversation — and with it the composer key — changes.
+export function onComposerSwitch(fn) { composerSwitchListeners.add(fn); }
+
+export function switchComposer(key) {
+  composerKey = key || "";
+  for (const fn of composerSwitchListeners) {
+    try { fn(composerKey); } catch (e) { console.warn("composer switch listener failed", e); }
+  }
+}
 
 export function moveComposer(from, to) {
   composers.set(to, composerFor(from));

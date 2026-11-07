@@ -4,9 +4,11 @@ import { REQUEST_TIMEOUT_MS, api } from "./api.js";
 import { closeModal } from "./modal.js";
 import { closeWS } from "./ws.js";
 import { startApp } from "./boot.js";
+import { resetBrowserPane } from "./browser.js";
 
 export function renderLogin(error = "") {
   S.booted = false;
+  resetBrowserPane();
   document.title = "Sign in · NusaMation";
   $("#modal-root").innerHTML = "";
   $("#app").className = "";

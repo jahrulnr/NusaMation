@@ -148,8 +148,11 @@ type SubmitInput struct {
 	// steer injects the text into the running turn when the agent accepts
 	// mid-turn input. A channel message that cannot be steered waits until
 	// the running turn's tools finish, then cancels that turn and sends.
-	Delivery        string `json:"delivery,omitempty"`
-	AutomationRunID string `json:"-"`
+	Delivery string `json:"delivery,omitempty"`
+	// Annotations carries resolved browser picks (pickId → descriptor + crop
+	// upload); the http layer resolves them so chat sees plain data.
+	Annotations     []store.AnnotationInput `json:"-"`
+	AutomationRunID string                  `json:"-"`
 }
 
 type messagePayload struct {
@@ -164,7 +167,7 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 		return store.Message{}, store.Turn{}, ErrInvalidDelivery
 	}
 	text := strings.TrimSpace(in.Text)
-	if text == "" && len(in.Attachments) == 0 {
+	if text == "" && len(in.Attachments) == 0 && len(in.Annotations) == 0 {
 		return store.Message{}, store.Turn{}, ErrInvalidPrompt
 	}
 	if len(text) > 200000 {
@@ -202,6 +205,11 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 	if err != nil {
 		return store.Message{}, store.Turn{}, err
 	}
+	// Annotation crop uploads bind after client attachments, in
+	// annotations[] order (browser-api-contract §3.9).
+	for _, a := range in.Annotations {
+		uploads = append(uploads, a.Upload)
+	}
 	if in.Delivery == deliverySteer && len(uploads) == 0 {
 		if msg, turn, handled, err := s.trySteer(ctx, conv, text, channel, originChannel, originRef); err != nil || handled {
 			return msg, turn, err
@@ -226,6 +234,16 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 			})
 		}
 		meta["attachments"] = list
+	}
+	if len(in.Annotations) > 0 {
+		list := make([]store.MessageAnnotation, 0, len(in.Annotations))
+		for _, a := range in.Annotations {
+			list = append(list, store.MessageAnnotation{
+				PickID: a.PickID, Comment: a.Comment, UploadID: a.Upload.ID,
+				Descriptor: a.Descriptor,
+			})
+		}
+		meta["annotations"] = list
 	}
 	if in.Delivery == deliveryAfterTools {
 		meta["delivery"] = deliveryAfterTools

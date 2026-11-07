@@ -53,7 +53,7 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | `DELETE` | `/conversations/{id}` | cancels a live turn, then deletes |
 | `DELETE` | `/conversations` | `{confirm:"DELETE"}` erases all conversations |
 | `GET` | `/conversations/{id}/messages?after=&before=&limit=` | pagination by `seq` |
-| `POST` | `/conversations/{id}/messages` | `{text, attachments:[{uploadId}], replyToChannel?, replyChannel?, delivery?: "queue" \| "after_tools" \| "steer"}` → `{message, turn}`; `delivery` defaults to `queue`, unknown values return 400 before anything is written |
+| `POST` | `/conversations/{id}/messages` | `{text, attachments:[{uploadId}], annotations?:[{pickId, comment}], replyToChannel?, replyChannel?, delivery?: "queue" \| "after_tools" \| "steer"}` → `{message, turn}`; `delivery` defaults to `queue`, unknown values return 400 before anything is written |
 | `POST` | `/conversations/{id}/cancel` | cancels running or first queued turn |
 | `POST` | `/conversations/{id}/retry` | re-queues the last user message |
 | `POST` | `/conversations/{id}/prepare` | starts or resumes the ACP session and returns live configuration options |
@@ -134,6 +134,27 @@ WhatsApp settings:
 |---|---|---|
 | `POST` | `/uploads` | multipart `file`, optional `conversationId`; max 25 MB |
 | `GET` | `/uploads/{id}` | authenticated file bytes; images inline |
+
+## Embedded browser
+
+Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser context per session). Requires a Chrome/Chromium binary (`-browser-exec` / `NUSAMATION_BROWSER_EXEC`, otherwise PATH discovery).
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/browser/sessions` | `{url?, conversationId?, width?, height?}` → `{session}` (201) |
+| `GET` | `/browser/sessions` | `{sessions}` incl. `status:"crashed"` tombstones |
+| `GET` | `/browser/sessions/{id}` | `{session}` with live nav state |
+| `DELETE` | `/browser/sessions/{id}` | closes the session and its browser context |
+| `POST` | `/browser/sessions/{id}/navigate` | `{url}` → `{url,title,canGoBack,canGoForward}`; bare domains get `https://`; 409 `busy` during in-flight nav/pick |
+| `POST` | `/browser/sessions/{id}/history` | `{action:"back"\|"forward"\|"reload"}`; missing entry is a 200 no-op |
+| `POST` | `/browser/sessions/{id}/annotate` | `{x,y}` viewport CSS px → `{pickId, descriptor, upload}` (element crop PNG); 422 `pick_missed` |
+| `POST` | `/browser/sessions/{id}/annotate/preview` | `{x,y}` → `{missed, skipped, rect, tagName, name, selector}` hover probe; no paint/upload/pick; `skipped` while busy instead of 409 |
+| `POST` | `/browser/sessions/{id}/annotate/clear` | clears the painted highlight; picks/uploads persist |
+| WebSocket | `/browser/sessions/{id}/stream` | one live stream per session; a new attach sends the old one `closed/stream_replaced` |
+
+Stream protocol: server→client binary messages are JPEG screencast frames; text messages are `{type:"meta"|"closed"|"pong"}`. `meta` carries `deviceWidth/deviceHeight/pageScaleFactor/scrollOffsetX/scrollOffsetY/url/title/canGoBack/canGoForward` on change. Client→server text messages: `{type:"mousemove"|"click"|"wheel"|"text"|"key"|"resize"|"ping"}` with coordinates in viewport CSS px (the client scales the displayed frame using the latest `meta`).
+
+`annotations` on `POST /messages` reference `{pickId}` values returned by `annotate`; the server resolves each pick to its descriptor + crop upload (400 `annotation_invalid` for unknown/stale picks), stores them in `message.metadata.annotations`, and adds an annotation context block plus the crop image blocks to the agent prompt.
 
 ## Settings and stats
 

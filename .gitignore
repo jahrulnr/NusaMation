@@ -23,4 +23,5 @@
 # test artifacts
 /tmp/
 .playwright/
+.playwright-mcp/
 coverage.out

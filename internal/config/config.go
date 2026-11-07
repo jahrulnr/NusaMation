@@ -28,6 +28,7 @@ type Config struct {
 	DisableWhatsApp bool
 	OpenBrowser     bool
 	Dev             bool
+	BrowserExec     string
 }
 
 func newFlagSet(cfg *Config) *flag.FlagSet {
@@ -44,6 +45,7 @@ func newFlagSet(cfg *Config) *flag.FlagSet {
 	fs.BoolVar(&cfg.DisableWhatsApp, "no-whatsapp", envBool("NUSAMATION_NO_WHATSAPP", false), "disable the WhatsApp channel")
 	fs.BoolVar(&cfg.OpenBrowser, "open", envBool("NUSAMATION_OPEN", false), "open the web UI in a browser after starting")
 	fs.BoolVar(&cfg.Dev, "dev", envBool("NUSAMATION_DEV", false), "development mode (no asset caching)")
+	fs.StringVar(&cfg.BrowserExec, "browser-exec", env("NUSAMATION_BROWSER_EXEC", ""), "Chromium/Chrome executable for the embedded browser pane")
 	return fs
 }
 

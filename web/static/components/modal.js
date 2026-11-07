@@ -42,7 +42,10 @@ export function confirmModal(title, message, onConfirm, confirmLabel = "Confirm"
   openModal(`${modalHead(title, "")}<div class="modal-body" style="padding:18px"><p class="muted" style="margin:0;font-size:13px;line-height:1.6">${esc(message)}</p></div><div class="modal-foot"><button class="btn btn-secondary" data-action="close-modal">Cancel</button><button class="btn btn-danger" data-action="confirm-action">${esc(confirmLabel)}</button></div>`, { size: "sm" });
 }
 
-export function promptModal(title, label, value, onSave, placeholder = "") {
+export function promptModal(title, label, value, onSave, placeholder = "", multiline = false) {
   S.promptAction = onSave;
-  openModal(`${modalHead(title, "")}<div class="modal-body" style="padding:18px"><div class="field"><label>${esc(label)}</label><input class="input" id="prompt-modal-input" value="${esc(value || "")}" placeholder="${esc(placeholder)}" autofocus></div></div><div class="modal-foot"><button class="btn btn-secondary" data-action="close-modal">Cancel</button><button class="btn btn-primary" data-action="prompt-save">Save</button></div>`, { size: "sm" });
+  const field = multiline
+    ? `<textarea class="input" id="prompt-modal-input" rows="3" placeholder="${esc(placeholder)}" autofocus>${esc(value || "")}</textarea>`
+    : `<input class="input" id="prompt-modal-input" value="${esc(value || "")}" placeholder="${esc(placeholder)}" autofocus>`;
+  openModal(`${modalHead(title, "")}<div class="modal-body" style="padding:18px"><div class="field"><label>${esc(label)}</label>${field}</div></div><div class="modal-foot"><button class="btn btn-secondary" data-action="close-modal">Cancel</button><button class="btn btn-primary" data-action="prompt-save">Save</button></div>`, { size: "sm" });
 }

@@ -1,6 +1,7 @@
 import { $, agentName, agentOrb, configLabel, currentAgent, esc, icon } from "./util.js";
 import { S } from "./state.js";
 import { closeDetachedPopovers } from "./popover.js";
+import { browserIsOpen } from "./browser.js";
 
 /* ---------------- topbar ---------------- */
 export function renderTopbar() {
@@ -27,6 +28,7 @@ export function renderTopbar() {
       ${c ? `<button class="pill-btn agent-pill" data-action="agent-menu">${agentOrb(agent)}<span class="pill-label">${esc(agentName(agent))}</span>${icon("chevron-down", "sm chev")}</button>` : ""}
       ${c ? `<button class="pill-btn" data-action="config-menu" title="Session configuration">${icon("sparkles", "sm")}<span class="pill-label">${esc(model)}</span>${icon("chevron-down", "sm chev")}</button>` : ""}
       ${c && links.length ? `<button class="pill-btn accent" data-action="routing-menu" title="Channel routing">${icon("link", "sm")}<span class="pill-label">${esc(links[0].channel)}</span></button>` : ""}
+      <button class="icon-btn ${browserIsOpen() ? "active" : ""}" data-action="toggle-browser" title="Embedded browser — annotate page elements for the agent" aria-pressed="${browserIsOpen()}">${icon("globe")}</button>
       <button class="icon-btn approval-bell" data-action="open-approvals" title="Approvals">${icon("shield")}${pending ? `<span class="badge">${pending > 9 ? "9+" : pending}</span>` : ""}</button>
       ${c ? `<button class="icon-btn" data-action="more-menu" title="Conversation actions">${icon("more")}</button>` : `<button class="icon-btn" data-action="open-settings" title="Settings">${icon("settings")}</button>`}
     </div>`;

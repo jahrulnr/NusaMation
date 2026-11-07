@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jahrulnr/nusamation/internal/agent"
+	"github.com/jahrulnr/nusamation/internal/browser"
 	"github.com/jahrulnr/nusamation/internal/chat"
 	"github.com/jahrulnr/nusamation/internal/store"
 )
@@ -269,20 +270,37 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Text           string                  `json:"text"`
-		Attachments    []store.AttachmentInput `json:"attachments"`
-		ReplyToChannel bool                    `json:"replyToChannel"`
-		ReplyChannel   string                  `json:"replyChannel"`
-		Delivery       string                  `json:"delivery"`
+		Text        string                  `json:"text"`
+		Attachments []store.AttachmentInput `json:"attachments"`
+		Annotations []struct {
+			PickID  string `json:"pickId"`
+			Comment string `json:"comment"`
+		} `json:"annotations"`
+		ReplyToChannel bool   `json:"replyToChannel"`
+		ReplyChannel   string `json:"replyChannel"`
+		Delivery       string `json:"delivery"`
 	}
 	if err := readJSON(w, r, &in, 1<<20); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid message payload.")
 		return
 	}
+	convID := r.PathValue("id")
+	var annotations []store.AnnotationInput
+	for _, a := range in.Annotations {
+		pick, ok := s.resolvePick(a.PickID)
+		if !ok || (pick.ConversationID != "" && pick.ConversationID != convID) {
+			writeError(w, http.StatusBadRequest, "annotation_invalid",
+				"Unknown annotation pick or it belongs to another conversation.")
+			return
+		}
+		annotations = append(annotations, store.AnnotationInput{
+			PickID: pick.ID, Comment: a.Comment, Descriptor: pick.Descriptor, Upload: pick.Upload,
+		})
+	}
 	msg, turn, err := s.chat.Submit(r.Context(), chat.SubmitInput{
-		ConversationID: r.PathValue("id"), Text: in.Text, Attachments: in.Attachments,
+		ConversationID: convID, Text: in.Text, Attachments: in.Attachments,
 		Channel: "web", ReplyToChannel: in.ReplyToChannel, ReplyChannel: in.ReplyChannel,
-		Delivery: in.Delivery,
+		Delivery: in.Delivery, Annotations: annotations,
 	})
 	if err != nil {
 		status := http.StatusBadRequest
@@ -293,6 +311,15 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"message": s.hydrateMessagesOne(r, msg), "turn": turn})
+}
+
+// resolvePick resolves a browser annotation pick id; the pick store is the
+// single source of truth for descriptors (client-submitted ones are ignored).
+func (s *Server) resolvePick(pickID string) (*browser.Pick, bool) {
+	if s.browser == nil || pickID == "" {
+		return nil, false
+	}
+	return s.browser.Pick(pickID)
 }
 
 func (s *Server) hydrateMessagesOne(r *http.Request, m store.Message) messageView {

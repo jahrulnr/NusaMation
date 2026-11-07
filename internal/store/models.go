@@ -269,6 +269,55 @@ type AttachmentInput struct {
 	Size     int64  `json:"size,omitempty"`
 }
 
+// AnnotationPoint/AnnotationRect are viewport CSS px (browser API contract).
+type AnnotationPoint struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+type AnnotationRect struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+// AnnotationDescriptor is the element descriptor captured at pick time
+// (browser-api-contract §6.1). backendNodeId stays server-side and is never
+// serialized.
+type AnnotationDescriptor struct {
+	Selector      string          `json:"selector"`
+	ElementPath   string          `json:"elementPath"`
+	TagName       string          `json:"tagName"`
+	Role          string          `json:"role"`
+	Name          string          `json:"name"`
+	ImmediateText string          `json:"immediateText"`
+	NearbyText    string          `json:"nearbyText"`
+	Rect          AnnotationRect  `json:"rect"`
+	IsFixed       bool            `json:"isFixed"`
+	FramePath     []string        `json:"framePath"`
+	Point         AnnotationPoint `json:"point"`
+	PageURL       string          `json:"pageUrl"`
+	Title         string          `json:"title"`
+}
+
+// AnnotationInput is the resolved pick passed httpapi → chat on SubmitInput;
+// the client only submits {pickId, comment} and the server resolves the rest.
+type AnnotationInput struct {
+	PickID     string
+	Comment    string
+	Descriptor AnnotationDescriptor
+	Upload     Upload
+}
+
+// MessageAnnotation is the persisted metadata.annotations[] entry (§6.4).
+type MessageAnnotation struct {
+	PickID     string               `json:"pickId"`
+	Comment    string               `json:"comment"`
+	UploadID   string               `json:"uploadId"`
+	Descriptor AnnotationDescriptor `json:"descriptor"`
+}
+
 type AgentInput struct {
 	Name            string     `json:"name"`
 	Slug            string     `json:"slug"`

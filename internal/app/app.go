@@ -21,6 +21,7 @@ import (
 	"github.com/jahrulnr/nusamation/internal/agent"
 	"github.com/jahrulnr/nusamation/internal/auth"
 	"github.com/jahrulnr/nusamation/internal/automation"
+	"github.com/jahrulnr/nusamation/internal/browser"
 	"github.com/jahrulnr/nusamation/internal/channels"
 	webchannel "github.com/jahrulnr/nusamation/internal/channels/web"
 	"github.com/jahrulnr/nusamation/internal/channels/whatsapp"
@@ -37,6 +38,7 @@ type App struct {
 	log      *slog.Logger
 	store    *store.Store
 	agents   *agent.Manager
+	browser  *browser.Manager
 	channels *channels.Manager
 	chat     *chat.Service
 	hub      *realtime.Hub
@@ -99,6 +101,10 @@ func New(cfg config.Config) (*App, error) {
 		Store: st, Agents: agentMgr, Channels: chanMgr, Events: hub, Log: logger,
 		UploadDir: cfg.UploadDir(), Workspace: cfg.WorkspaceDir(),
 	})
+	browserMgr := browser.NewManager(browser.Options{
+		ExecPath: cfg.BrowserExec, Log: logger,
+		SaveAttachment: chatSvc.SaveInboundAttachment,
+	})
 	if !cfg.DisableWhatsApp {
 		if err := registerWhatsApp(chanMgr, chatSvc, st, cfg, logger); err != nil {
 			logger.Warn("WhatsApp channel disabled", "error", err)
@@ -110,8 +116,8 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	a := &App{
-		cfg: cfg, log: logger, store: st, agents: agentMgr, channels: chanMgr,
-		chat: chatSvc, hub: hub, logFile: logFile,
+		cfg: cfg, log: logger, store: st, agents: agentMgr, browser: browserMgr,
+		channels: chanMgr, chat: chatSvc, hub: hub, logFile: logFile,
 	}
 	if created {
 		printBootstrap(cfg, password)
@@ -122,7 +128,7 @@ func New(cfg config.Config) (*App, error) {
 func (a *App) Serve(ctx context.Context) error {
 	api, err := httpapi.New(httpapi.Options{
 		Config: a.cfg, Store: a.store, Chat: a.chat, Agents: a.agents,
-		Channels: a.channels, Hub: a.hub, Log: a.log,
+		Browser: a.browser, Channels: a.channels, Hub: a.hub, Log: a.log,
 	})
 	if err != nil {
 		return err
@@ -179,6 +185,9 @@ func (a *App) Serve(ctx context.Context) error {
 }
 
 func (a *App) Close() {
+	if a.browser != nil {
+		a.browser.Close()
+	}
 	if a.channels != nil {
 		a.channels.StopAll()
 	}

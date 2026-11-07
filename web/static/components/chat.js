@@ -160,7 +160,10 @@ export function userHTML(m) {
   const format = m.channel === "whatsapp" ? "whatsapp" : "markdown";
   const quote = match ? `<div class="reply-quote"><div class="reply-quote-label">In reply to</div><div class="reply-quote-text markdown">${renderMarkdown(match[2], "quote-" + m.id, format)}</div></div>` : "";
   const text = match ? m.text.slice(match[0].length) : m.text;
-  const attachments = attachmentsHTML(m.attachments);
+  const anns = messageAnnotations(m);
+  const cropIds = new Set(anns.map((a) => a.uploadId).filter(Boolean));
+  const visible = (m.attachments || []).filter((a) => !cropIds.has(a.id));
+  const attachments = attachmentsHTML(visible) + annotationsHTML(anns);
   return `<div class="msg user" data-msg-id="${esc(m.id)}">
     <div class="msg-body">
       ${messageHead(m)}
@@ -372,6 +375,30 @@ export function attachmentsHTML(atts) {
     const isImg = String(a.mime || "").startsWith("image/");
     if (isImg) return `<a class="attach-thumb" href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${esc(a.name)}" loading="lazy"></a>`;
     return `<a class="attach-file" href="${url}" target="_blank" rel="noopener">${icon("file", "sm")}<span class="name">${esc(a.name)}</span><span class="size">${fmtBytes(a.size)}</span></a>`;
+  }).join("")}</div>`;
+}
+
+// Page annotations sent with the message (contract §6.4): metadata.annotations
+// carries {pickId, comment, uploadId, descriptor}; the pick's crop upload is
+// also bound as a regular attachment but renders inside the chip, not as a
+// standalone thumb (caller filters it out of the attachment list).
+export function messageAnnotations(m) {
+  const meta = parseJSON(m.metadata, {}) || {};
+  const anns = Array.isArray(meta.annotations) ? meta.annotations : [];
+  return anns.filter((a) => a && a.pickId);
+}
+
+export function annotationsHTML(anns) {
+  if (!anns.length) return "";
+  return `<div class="annot-grid">${anns.map((a) => {
+    const d = a.descriptor || {};
+    const tag = d.tagName || "element";
+    const label = d.name || d.immediateText || "";
+    const title = [label, d.selector, d.pageUrl].filter(Boolean).join(" · ");
+    const inner = `${a.uploadId ? `<img src="/api/uploads/${encodeURIComponent(a.uploadId)}" alt="" loading="lazy">` : icon("pin", "sm")}
+      <span class="annot-chip-text"><b>${esc(tag)}</b>${a.comment ? `<span>: ${esc(a.comment)}</span>` : ""}</span>`;
+    if (a.uploadId) return `<a class="annot-chip" href="/api/uploads/${encodeURIComponent(a.uploadId)}" target="_blank" rel="noopener" title="${esc(title)}">${inner}</a>`;
+    return `<span class="annot-chip" title="${esc(title)}">${inner}</span>`;
   }).join("")}</div>`;
 }
 
