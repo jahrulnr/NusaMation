@@ -29,6 +29,7 @@ type Config struct {
 	OpenBrowser     bool
 	Dev             bool
 	BrowserExec     string
+	HideConsole     bool
 }
 
 func newFlagSet(cfg *Config) *flag.FlagSet {
@@ -46,6 +47,7 @@ func newFlagSet(cfg *Config) *flag.FlagSet {
 	fs.BoolVar(&cfg.OpenBrowser, "open", envBool("NUSAMATION_OPEN", false), "open the web UI in a browser after starting")
 	fs.BoolVar(&cfg.Dev, "dev", envBool("NUSAMATION_DEV", false), "development mode (no asset caching)")
 	fs.StringVar(&cfg.BrowserExec, "browser-exec", env("NUSAMATION_BROWSER_EXEC", ""), "Chromium/Chrome executable for the embedded browser pane")
+	fs.BoolVar(&cfg.HideConsole, "hide-console", envBool("NUSAMATION_HIDE_CONSOLE", false), "hide the process console window (Windows service task)")
 	return fs
 }
 

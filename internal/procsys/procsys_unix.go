@@ -15,6 +15,9 @@ func StartInOwnGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
+// HideConsole is a no-op off Windows: there is no console window to hide.
+func HideConsole() {}
+
 // Signal sends sig to the child's process group when the child was started in
 // its own group; otherwise it signals the child directly.
 func Signal(cmd *exec.Cmd, sig syscall.Signal) {

@@ -12,6 +12,7 @@ import (
 	"github.com/jahrulnr/nusamation/internal/app"
 	"github.com/jahrulnr/nusamation/internal/auth"
 	"github.com/jahrulnr/nusamation/internal/config"
+	"github.com/jahrulnr/nusamation/internal/procsys"
 	"github.com/jahrulnr/nusamation/internal/security"
 )
 
@@ -54,6 +55,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		fmt.Fprintf(os.Stderr, "run '%s --help' for usage\n", progName())
 		os.Exit(2)
+	}
+	if cfg.HideConsole {
+		procsys.HideConsole()
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

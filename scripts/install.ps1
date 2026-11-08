@@ -7,8 +7,9 @@
     installs it under %LOCALAPPDATA%\NusaMation\bin, adds that directory to
     the user PATH, creates the data directory and registers a hidden
     "NusaMation" scheduled task that starts the app at logon (and starts it
-    right away). Re-running is safe: data is kept and the task is
-    re-registered.
+    right away). The app hides its console window on launch, so closing a
+    terminal can never kill the server. Re-running is safe: data is kept
+    and the task is re-registered.
 
     Quick install (latest release):
         irm https://github.com/jahrulnr/NusaMation/releases/latest/download/install.ps1 | iex
@@ -132,16 +133,21 @@ if (-not $hasEntry) {
 New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
 
 # Hidden logon task: autostart at logon without a console window.
+# The action stays the binary itself (with -hide-console so the app hides
+# its own window right after launch) so 'schtasks /End /TN NusaMation'
+# still stops the real process — a wrapper would orphan it.
 if (-not $NoService) {
-    $action = New-ScheduledTaskAction -Execute $binary
+    $action = New-ScheduledTaskAction -Execute $binary -Argument '-hide-console'
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $settings = New-ScheduledTaskSettingsSet -Hidden `
         -ExecutionTimeLimit ([TimeSpan]::Zero) `
         -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
         -MultipleInstances IgnoreNew
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+    # Kill a previous task/console instance so the new hidden one can bind.
+    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     Start-ScheduledTask -TaskName $taskName
-    Write-Host "Registered and started scheduled task '$taskName' (logon autostart)."
+    Write-Host "Registered and started scheduled task '$taskName' (logon autostart, runs hidden)."
 } else {
     Write-Host "Skipped scheduled task (-NoService). Start NusaMation manually with: $binary"
 }

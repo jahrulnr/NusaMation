@@ -43,11 +43,23 @@ journalctl --user -u nusamation.service -n 60 --no-pager
 Get-Content (Join-Path $env:USERPROFILE '.nusamation\logs\nusamation.log')
 ```
 
-Forgot it? Stop NusaMation and reset it:
+Forgot it? Stop NusaMation and reset it (the data dir defaults to `~/.nusamation`):
 
 ```bash
-nusamation reset-password -data-dir ~/.nusamation
+# Linux (systemd user service)
+systemctl --user stop nusamation.service
+nusamation reset-password
+systemctl --user start nusamation.service
 ```
+
+```powershell
+# Windows (PowerShell)
+schtasks /End /TN NusaMation
+& "$env:LOCALAPPDATA\NusaMation\bin\nusamation.exe" reset-password
+schtasks /Run /TN NusaMation
+```
+
+On Windows the user `PATH` only reaches terminals opened after the install — in older windows use the full binary path above.
 
 On first run NusaMation also scans `PATH` for popular ACP CLIs (Devin, Claude Agent, Codex, Gemini, Copilot, OpenCode, Auggie, goose, Kimi, Cursor, Kilo, Qwen, Mistral Vibe, Kiro) and seeds every one it finds as an agent. Add more manually in **Control center → Agents** or with `nusamation agent add`.
 

@@ -4,6 +4,12 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-08
+
+### Fixed
+
+- **Windows installer:** the `NusaMation` logon task no longer shows a console window. The task still launches the binary itself (now with `-hide-console`, which makes the server hide its own console window right after startup), so the registration works without elevation and `schtasks /End /TN NusaMation` still stops the real process. Previously a visible console window appeared at logon and closing it killed the server. Re-running `install.ps1` also stops a previous task/console instance before starting the hidden one, so the port is free.
+
 ## [0.2.0] - 2026-11-08
 
 ### Added

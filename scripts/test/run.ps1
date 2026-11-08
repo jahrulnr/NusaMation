@@ -56,7 +56,10 @@ function Invoke-WebRequest {
     if (-not (Test-Path $src)) { throw "stub: missing asset $name" }
     Copy-Item $src $OutFile
 }
-function New-ScheduledTaskAction { param([string]$Execute) }
+function New-ScheduledTaskAction {
+    param([string]$Execute, [string]$Argument)
+    Set-Content -Path (Join-Path $markerDir 'action.txt') -Value "$Execute`t$Argument"
+}
 function New-ScheduledTaskTrigger { param() }
 function New-ScheduledTaskSettingsSet { param() }
 function Register-ScheduledTask { Set-Content -Path (Join-Path $markerDir 'registered') -Value '1' }
@@ -93,6 +96,12 @@ try {
         Pass 'scheduled task registered and started'
     } else {
         Fail 'scheduled task stubs not invoked'
+    }
+    $actionLine = Get-Content (Join-Path $markerDir 'action.txt') -ErrorAction SilentlyContinue
+    if (($actionLine -split "`t")[0] -eq $binary -and ($actionLine -split "`t")[1] -eq '-hide-console') {
+        Pass 'task runs the binary directly with -hide-console'
+    } else {
+        Fail "task action wrong (wrapper would orphan the process): $actionLine"
     }
     if (([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains $installDir.TrimEnd('\')) {
         Pass 'user PATH updated'
