@@ -1,5 +1,5 @@
-import { composerFor, composerKey, onComposerSwitch } from "./state.js?v=44";
-import { api } from "./api.js?v=44";
+import { composerFor, composerKey, onComposerSwitch } from "./state.js?v=45";
+import { api } from "./api.js?v=45";
 
 /* ---------------- per-conversation meta (file-backed on the server) --------
    Draft text + attachments + composer toggles persist to
@@ -149,7 +149,7 @@ async function restoreDraft(key) {
   if (gen !== metaGen || composerKey !== key) return;
   const ta = document.querySelector("#prompt");
   if (ta) ta.value = owner.draft;
-  const { renderPendingAttachments, updateComposerState, autoGrow } = await import("./composer.js?v=44");
+  const { renderPendingAttachments, updateComposerState, autoGrow } = await import("./composer.js?v=45");
   renderPendingAttachments();
   updateComposerState();
   autoGrow();

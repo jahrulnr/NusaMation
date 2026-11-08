@@ -118,13 +118,14 @@ func toolList() []map[string]any {
 	num := map[string]any{"type": "number"}
 	str := map[string]any{"type": "string"}
 	return []map[string]any{
-		{"name": "navigate", "description": "Open a URL in this conversation's NusaMation browser pane. Returns the page URL, title, viewport size, and a JPEG of the viewport. Coordinates in later calls are CSS pixels of that viewport.", "inputSchema": obj(map[string]any{"url": str}, "url")},
+		{"name": "navigate", "description": "Open a URL in this conversation's NusaMation browser pane. Returns the page URL, title, viewport size, and a JPEG of the viewport. Coordinates in later calls are viewport fractions 0-1 (preferred) or CSS pixels.", "inputSchema": obj(map[string]any{"url": str}, "url")},
 		{"name": "snapshot", "description": "Read the current page without changing it: URL, title, viewport size, and a JPEG of the viewport.", "inputSchema": obj(map[string]any{})},
-		{"name": "move", "description": "Move the pointer to viewport CSS pixels. The user sees this pointer on the pane.", "inputSchema": obj(map[string]any{"x": num, "y": num}, "x", "y")},
-		{"name": "click", "description": "Click at viewport CSS pixels. button is left, middle, or right. clickCount defaults to 1.", "inputSchema": obj(map[string]any{"x": num, "y": num, "button": str, "clickCount": map[string]any{"type": "integer"}}, "x", "y")},
+		{"name": "emulate", "description": "Set device emulation for the pane: a preset name (desktop, mobile, tablet) or explicit fields — width, height, dpr, mobile, ua, touch. Mobile/tablet presets enable touch input and a mobile user agent; clicks become taps.", "inputSchema": obj(map[string]any{"preset": str, "width": num, "height": num, "dpr": num, "mobile": map[string]any{"type": "boolean"}, "ua": str, "touch": map[string]any{"type": "boolean"}})},
+		{"name": "move", "description": "Move the pointer. x/y are viewport fractions 0-1 or CSS pixels. The user sees this pointer on the pane.", "inputSchema": obj(map[string]any{"x": num, "y": num}, "x", "y")},
+		{"name": "click", "description": "Click (or tap, in a mobile profile). x/y are viewport fractions 0-1 or CSS pixels. button is left, middle, or right. clickCount defaults to 1.", "inputSchema": obj(map[string]any{"x": num, "y": num, "button": str, "clickCount": map[string]any{"type": "integer"}}, "x", "y")},
 		{"name": "type", "description": "Insert text into the focused element.", "inputSchema": obj(map[string]any{"text": str}, "text")},
 		{"name": "press", "description": "Press a key. Use a DOM key name (Enter, Tab, Escape, Backspace, ArrowDown) or a single character.", "inputSchema": obj(map[string]any{"key": str}, "key")},
-		{"name": "scroll", "description": "Scroll the wheel at viewport CSS pixels. deltaY is positive downward. x and y default to the viewport center.", "inputSchema": obj(map[string]any{"x": num, "y": num, "deltaX": num, "deltaY": num})},
+		{"name": "scroll", "description": "Scroll the wheel. x/y are viewport fractions 0-1 or CSS pixels, defaulting to the viewport center. deltaY is positive downward.", "inputSchema": obj(map[string]any{"x": num, "y": num, "deltaX": num, "deltaY": num})},
 	}
 }
 

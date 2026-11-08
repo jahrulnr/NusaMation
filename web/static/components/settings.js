@@ -1,14 +1,14 @@
-import { $, $$, AGENT_COLORS, agentById, agentOrb, configChoices, esc, icon, timeAgo } from "./util.js?v=44";
-import { S } from "./state.js?v=44";
-import { api } from "./api.js?v=44";
-import { toast } from "./toast.js?v=44";
-import { confirmModal, modalHead, openModal } from "./modal.js?v=44";
-import { closePopover } from "./popover.js?v=44";
-import { renderChat } from "./chat.js?v=44";
-import { renderComposer } from "./composer.js?v=44";
-import { renderTopbar } from "./topbar.js?v=44";
-import { automationsSettings } from "./automations.js?v=44";
-import { startQRTimer, whatsappPanel } from "./whatsapp.js?v=44";
+import { $, $$, AGENT_COLORS, agentById, agentOrb, configChoices, esc, icon, timeAgo } from "./util.js?v=45";
+import { S } from "./state.js?v=45";
+import { api } from "./api.js?v=45";
+import { toast } from "./toast.js?v=45";
+import { confirmModal, modalHead, openModal } from "./modal.js?v=45";
+import { closePopover } from "./popover.js?v=45";
+import { renderChat } from "./chat.js?v=45";
+import { renderComposer } from "./composer.js?v=45";
+import { renderTopbar } from "./topbar.js?v=45";
+import { automationsSettings } from "./automations.js?v=45";
+import { startQRTimer, whatsappPanel } from "./whatsapp.js?v=45";
 
 /* ---------------- settings ---------------- */
 export function openSettings(tab = "") {

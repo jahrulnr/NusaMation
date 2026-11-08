@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -51,8 +52,18 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "snapshot":
+	case "emulate":
+		if _, err := sess.ApplyDevicePatch(in.Preset, in.devicePatch()); err != nil {
+			if errors.Is(err, browser.ErrUnknownPreset) {
+				writeError(w, http.StatusBadRequest, "bad_request", "Unknown preset. Try desktop, mobile, or tablet.")
+				return
+			}
+			s.browserError(w, err, false)
+			return
+		}
 	case "move":
 		x, y, _ := in.point()
+		x, y = in.resolvePoint(sess.View(false), x, y)
 		if err := sess.MouseMove(x, y); err != nil {
 			s.browserError(w, err, false)
 			return
@@ -63,6 +74,7 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 		}{x, y, "move"}
 	case "click":
 		x, y, _ := in.point()
+		x, y = in.resolvePoint(sess.View(false), x, y)
 		if err := sess.Click(x, y, in.Button, in.ClickCount); err != nil {
 			s.browserError(w, err, false)
 			return
@@ -86,6 +98,8 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			view := sess.View(false)
 			x, y = float64(view.Width)/2, float64(view.Height)/2
+		} else {
+			x, y = in.resolvePoint(sess.View(false), x, y)
 		}
 		if err := sess.Wheel(x, y, in.DeltaX, in.DeltaY); err != nil {
 			s.browserError(w, err, false)
@@ -105,7 +119,7 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 	view := sess.View(true)
 	s.noteBrowserDriven(convID, view.URL)
 	if s.hub != nil {
-		data := map[string]any{"sessionId": view.ID, "url": view.URL}
+		data := map[string]any{"sessionId": view.ID, "url": view.URL, "tool": in.Tool}
 		if pointer != nil {
 			data["x"] = pointer.x
 			data["y"] = pointer.y
@@ -140,15 +154,39 @@ type browserUseRequest struct {
 	Key        string   `json:"key"`
 	DeltaX     float64  `json:"deltaX"`
 	DeltaY     float64  `json:"deltaY"`
+	Preset     string   `json:"preset"`
+	Width      *int64   `json:"width"`
+	Height     *int64   `json:"height"`
+	DPR        *float64 `json:"dpr"`
+	Mobile     *bool    `json:"mobile"`
+	UA         *string  `json:"ua"`
+	Touch      *bool    `json:"touch"`
 }
 
 func knownBrowserUseTool(name string) bool {
 	switch name {
-	case "navigate", "snapshot", "move", "click", "type", "press", "scroll":
+	case "navigate", "snapshot", "move", "click", "type", "press", "scroll", "emulate":
 		return true
 	default:
 		return false
 	}
+}
+
+// devicePatch is the request's optional device fields; nil keeps the base.
+func (in browserUseRequest) devicePatch() browser.DevicePatch {
+	return browser.DevicePatch{
+		Width: in.Width, Height: in.Height, DPR: in.DPR,
+		Mobile: in.Mobile, UserAgent: in.UA, Touch: in.Touch,
+	}
+}
+
+// resolvePoint maps 0–1 fractions onto the viewport; anything larger stays an
+// absolute CSS-px coordinate so older callers keep working.
+func (in browserUseRequest) resolvePoint(v browser.View, x, y float64) (float64, float64) {
+	if x >= 0 && x <= 1 && y >= 0 && y <= 1 {
+		return x * float64(v.Width), y * float64(v.Height)
+	}
+	return x, y
 }
 
 func (in browserUseRequest) invalid() string {
@@ -159,6 +197,10 @@ func (in browserUseRequest) invalid() string {
 		}
 		if _, ok := normalizeBrowserURL(in.URL); !ok {
 			return "Invalid URL."
+		}
+	case "emulate":
+		if in.Preset == "" && in.Width == nil && in.Height == nil && in.DPR == nil && in.Mobile == nil && in.UA == nil && in.Touch == nil {
+			return "preset or device fields are required."
 		}
 	case "move", "click":
 		if _, _, ok := in.point(); !ok {

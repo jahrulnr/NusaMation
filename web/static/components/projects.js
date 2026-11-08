@@ -1,16 +1,16 @@
-import { esc, icon } from "./util.js?v=44";
-import { S, setSelectedProject } from "./state.js?v=44";
-import { api } from "./api.js?v=44";
-import { toast } from "./toast.js?v=44";
-import { closeAllModals, closeModal, modalHead, onModalClose, openModal, stackModal } from "./modal.js?v=44";
-import { menuItem, openPopover } from "./popover.js?v=44";
-import { renderSidebar } from "./sidebar.js?v=44";
-import { renderComposer } from "./composer.js?v=44";
-import { renderTopbar } from "./topbar.js?v=44";
+import { esc, icon } from "./util.js?v=45";
+import { S, setSelectedProject } from "./state.js?v=45";
+import { api } from "./api.js?v=45";
+import { toast } from "./toast.js?v=45";
+import { closeAllModals, closeModal, modalHead, onModalClose, openModal, stackModal } from "./modal.js?v=45";
+import { menuItem, openPopover } from "./popover.js?v=45";
+import { renderSidebar } from "./sidebar.js?v=45";
+import { renderComposer } from "./composer.js?v=45";
+import { renderTopbar } from "./topbar.js?v=45";
 import {
   appendSource, baseName, buildSaveBody, makeSourcePrimary, projectSources, removeSourceAt,
   staleProjectSnapshot,
-} from "./projectmodel.js?v=44";
+} from "./projectmodel.js?v=45";
 
 let editor = null;
 let sessionSeq = 0;

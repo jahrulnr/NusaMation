@@ -4,6 +4,10 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+### Added
+
+- **Device emulation for the embedded browser.** `browser_use` gains an `emulate` tool — preset `desktop`, `mobile`, or `tablet`, or explicit `width/height/dpr/mobile/ua/touch` — applied through CDP device metrics, user-agent and touch overrides. On a mobile profile, clicks become real touch taps. `move`/`click`/`scroll` coordinates now accept viewport fractions `0`–`1` (values above `1` stay CSS pixels, so existing calls are unchanged), and stream `meta` reports the active `mobile`/`dpr` profile. The pane gains a device row under the address bar — **Relative** follows the pane size with the plain profile (no letterboxing), the presets pin a fixed device, and a readout shows the live viewport — so a human can see or take back the device an agent set.
+
 ### Fixed
 
 - **`browser_use` MCP server:** the stdio transport now mirrors the client's framing. The spec's stdio transport is newline-delimited JSON; real MCP clients (Claude Code SDK, Devin) speak NDJSON while the server only replied with LSP-style `Content-Length` headers, so clients timed out waiting for a line they could parse — `mcp_list_tools` failed while spawning the server by hand worked. Replies now come back in the request's framing, and the reader still tolerates blank lines between messages.

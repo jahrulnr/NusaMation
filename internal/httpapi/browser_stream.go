@@ -102,6 +102,11 @@ type browserInput struct {
 	Modifiers  int64   `json:"modifiers"`
 	Width      int64   `json:"width"`
 	Height     int64   `json:"height"`
+	Preset     string  `json:"preset"`
+	DPR        float64 `json:"dpr"`
+	Mobile     *bool   `json:"mobile"`
+	UA         *string `json:"ua"`
+	Touch      *bool   `json:"touch"`
 }
 
 func (s *Server) browserInput(sess *browser.Session, sub *browser.Stream, msg browserInput) {
@@ -119,6 +124,21 @@ func (s *Server) browserInput(sess *browser.Session, sub *browser.Stream, msg br
 		err = sess.Key(msg.Key, msg.Modifiers)
 	case "resize":
 		err = sess.Resize(msg.Width, msg.Height)
+	case "emulate":
+		var w, h *int64
+		var dpr *float64
+		if msg.Width != 0 {
+			w = &msg.Width
+		}
+		if msg.Height != 0 {
+			h = &msg.Height
+		}
+		if msg.DPR != 0 {
+			dpr = &msg.DPR
+		}
+		_, err = sess.ApplyDevicePatch(msg.Preset, browser.DevicePatch{
+			Width: w, Height: h, DPR: dpr, Mobile: msg.Mobile, UserAgent: msg.UA, Touch: msg.Touch,
+		})
 	case "ping":
 		b, _ := json.Marshal(map[string]any{"type": "pong", "at": time.Now().UnixMilli()})
 		sub.Send(b)

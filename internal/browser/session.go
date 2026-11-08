@@ -65,6 +65,9 @@ type Meta struct {
 	Type            string  `json:"type"`
 	DeviceWidth     int64   `json:"deviceWidth"`
 	DeviceHeight    int64   `json:"deviceHeight"`
+	Mobile          bool    `json:"mobile,omitempty"`
+	Touch           bool    `json:"touch,omitempty"`
+	DPR             float64 `json:"dpr,omitempty"`
 	PageScaleFactor float64 `json:"pageScaleFactor"`
 	ScrollOffsetX   float64 `json:"scrollOffsetX"`
 	ScrollOffsetY   float64 `json:"scrollOffsetY"`
@@ -140,12 +143,14 @@ type Session struct {
 	createdAt      int64
 
 	mu           sync.Mutex
+	emuMu        sync.Mutex // serializes device-profile changes (emulate/resize)
 	url          string
 	title        string
 	status       string
 	errText      string
 	width        int
 	height       int
+	device       DeviceOpts
 	canBack      bool
 	canFwd       bool
 	lastActivity time.Time
@@ -555,7 +560,8 @@ func (s *Session) maybeNavCheck() {
 // meta builds the current {type:"meta"} payload. Callers hold s.mu.
 func (s *Session) metaLocked() Meta {
 	m := Meta{Type: "meta", URL: s.url, Title: s.title, CanGoBack: s.canBack, CanGoForward: s.canFwd,
-		DeviceWidth: int64(s.width), DeviceHeight: int64(s.height)}
+		DeviceWidth: int64(s.width), DeviceHeight: int64(s.height),
+		Mobile: s.device.Mobile, Touch: s.device.Touch, DPR: s.device.DPR}
 	if fm := s.lastFrame; fm != nil {
 		m.DeviceWidth = int64(fm.DeviceWidth)
 		m.DeviceHeight = int64(fm.DeviceHeight)
@@ -766,6 +772,12 @@ func (s *Session) MouseMove(x, y float64) error {
 }
 
 func (s *Session) Click(x, y float64, button string, clickCount int64) error {
+	s.mu.Lock()
+	mobile := s.device.Mobile
+	s.mu.Unlock()
+	if mobile {
+		return s.Tap(x, y)
+	}
 	if err := s.MouseMove(x, y); err != nil {
 		return err
 	}
@@ -847,8 +859,67 @@ func (s *Session) Key(name string, modifiers int64) error {
 	return nil
 }
 
-// Resize overrides the device metrics; each dimension clamps to [200, 4096].
-func (s *Session) Resize(width, height int64) error {
+// Tap emits a single touch tap — the click equivalent when the session runs
+// a mobile device profile. touchStart carries the point; touchEnd none.
+func (s *Session) Tap(x, y float64) error {
+	ctx, cancel := s.ioCtx()
+	defer cancel()
+	if _, err := chromedp.Call(ctx, input.DispatchTouchEvent,
+		input.DispatchTouchEventParams{Type: input.DispatchTouchEventTypeTouchStart,
+			TouchPoints: []*input.TouchPoint{{X: x, Y: y}}}); err != nil {
+		return err
+	}
+	_, err := chromedp.Call(ctx, input.DispatchTouchEvent,
+		input.DispatchTouchEventParams{Type: input.DispatchTouchEventTypeTouchEnd,
+			TouchPoints: []*input.TouchPoint{}})
+	return err
+}
+
+// DeviceOpts is one emulation state for a session: viewport metrics plus the
+// mobile/UA/touch flags CDP applies together for device simulation.
+type DeviceOpts struct {
+	Width     int64
+	Height    int64
+	DPR       float64
+	Mobile    bool
+	UserAgent string
+	Touch     bool
+}
+
+// Device returns the session's current emulation state.
+func (s *Session) Device() DeviceOpts {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.device
+}
+
+// ApplyDevicePatch resolves preset+patch against the current device profile
+// and applies the result, serialized with every other profile change so a
+// concurrent resize cannot interleave CDP calls or commits.
+func (s *Session) ApplyDevicePatch(preset string, p DevicePatch) (DeviceOpts, error) {
+	s.emuMu.Lock()
+	defer s.emuMu.Unlock()
+	s.mu.Lock()
+	cur := s.device
+	s.mu.Unlock()
+	o, err := ResolveDevice(cur, preset, p)
+	if err != nil {
+		return o, err
+	}
+	return o, s.emulate(o)
+}
+
+// Emulate applies a full device profile in one state change: viewport
+// metrics, device scale factor, the mobile flag, the user agent override
+// (empty restores the real UA), and touch emulation.
+func (s *Session) Emulate(o DeviceOpts) error {
+	s.emuMu.Lock()
+	defer s.emuMu.Unlock()
+	return s.emulate(o)
+}
+
+// emulate applies o; callers hold emuMu so profile changes serialize.
+func (s *Session) emulate(o DeviceOpts) error {
 	clamp := func(v int64) int64 {
 		if v < 200 {
 			return 200
@@ -858,18 +929,56 @@ func (s *Session) Resize(width, height int64) error {
 		}
 		return v
 	}
-	width, height = clamp(width), clamp(height)
-	ctx, cancel := s.ioCtx()
-	_, err := chromedp.Call(ctx, emulation.SetDeviceMetricsOverride,
-		emulation.SetDeviceMetricsOverrideParams{Width: width, Height: height, DeviceScaleFactor: 1, Mobile: false})
-	cancel()
-	if err != nil {
-		return err
+	o.Width, o.Height = clamp(o.Width), clamp(o.Height)
+	if o.DPR <= 0 {
+		o.DPR = 1
+	}
+	if o.DPR > 5 {
+		o.DPR = 5
 	}
 	s.mu.Lock()
-	s.width, s.height = int(width), int(height)
+	prev := s.device
 	s.mu.Unlock()
+	ctx, cancel := s.ioCtx()
+	defer cancel()
+	if _, err := chromedp.Call(ctx, emulation.SetDeviceMetricsOverride,
+		emulation.SetDeviceMetricsOverrideParams{Width: o.Width, Height: o.Height, DeviceScaleFactor: o.DPR, Mobile: o.Mobile}); err != nil {
+		return err
+	}
+	// UA and touch overrides are profile state, not per-resize state — skip
+	// the calls when nothing changed so a pane-drag resize stays one CDP call.
+	if o.UserAgent != prev.UserAgent {
+		if _, err := chromedp.Call(ctx, emulation.SetUserAgentOverride,
+			emulation.SetUserAgentOverrideParams{UserAgent: o.UserAgent}); err != nil {
+			return err
+		}
+	}
+	if o.Touch != prev.Touch {
+		if _, err := chromedp.Call(ctx, emulation.SetTouchEmulationEnabled,
+			emulation.SetTouchEmulationEnabledParams{Enabled: o.Touch, MaxTouchPoints: 5}); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	s.device = o
+	s.width, s.height = int(o.Width), int(o.Height)
+	s.mu.Unlock()
+	// Publish the profile change immediately; the viewport dims inside meta
+	// may briefly lag until the next screencast frame, which is fine.
+	s.maybeMeta()
 	return nil
+}
+
+// Resize changes the viewport metrics, keeping the rest of the device profile
+// (mobile flag, UA, touch) that an emulate call may have set.
+func (s *Session) Resize(width, height int64) error {
+	s.emuMu.Lock()
+	defer s.emuMu.Unlock()
+	s.mu.Lock()
+	o := s.device
+	s.mu.Unlock()
+	o.Width, o.Height = width, height
+	return s.emulate(o)
 }
 
 // Close tears the session down (DELETE, idle GC, shutdown): the stream gets

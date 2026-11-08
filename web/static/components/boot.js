@@ -1,12 +1,12 @@
-import { $, esc, icon } from "./util.js?v=44";
-import { S, setSelectedProject } from "./state.js?v=44";
-import { api } from "./api.js?v=44";
-import { selectInitialConversation } from "./conversations.js?v=44";
-import { renderShell } from "./shell.js?v=44";
-import { renderSidebar } from "./sidebar.js?v=44";
-import { renderTopbar } from "./topbar.js?v=44";
-import { connectWS } from "./ws.js?v=44";
-import { renderLogin } from "./auth.js?v=44";
+import { $, esc, icon } from "./util.js?v=45";
+import { S, setSelectedProject } from "./state.js?v=45";
+import { api } from "./api.js?v=45";
+import { selectInitialConversation } from "./conversations.js?v=45";
+import { renderShell } from "./shell.js?v=45";
+import { renderSidebar } from "./sidebar.js?v=45";
+import { renderTopbar } from "./topbar.js?v=45";
+import { connectWS } from "./ws.js?v=45";
+import { renderLogin } from "./auth.js?v=45";
 
 /* ---------------- boot / auth ---------------- */
 export async function boot() {

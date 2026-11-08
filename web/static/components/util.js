@@ -1,4 +1,4 @@
-import { S } from "./state.js?v=44";
+import { S } from "./state.js?v=45";
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -23,7 +23,7 @@ export function icon(name, cls = "") {
 }
 
 export function brandImage(className) {
-  return `<img class="${className}" src="/static/mark.png?v=44" alt="">`;
+  return `<img class="${className}" src="/static/mark.png?v=45" alt="">`;
 }
 
 export const AGENT_COLORS = {

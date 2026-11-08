@@ -1,10 +1,10 @@
-import { $, clamp, esc, icon, truncate } from "./util.js?v=44";
-import { S, composerKey, onComposerSwitch } from "./state.js?v=44";
-import { cachedBrowserMeta, onBrowserMetaRestored, saveBrowserOpen, saveLastURL, scheduleDraftSave, usableBrowserURL, whenBrowserMeta } from "./convmeta.js?v=44";
-import { api } from "./api.js?v=44";
-import { toast } from "./toast.js?v=44";
-import { closePopover, openPopover } from "./popover.js?v=44";
-import { focusComposer, renderPendingAttachments } from "./composer.js?v=44";
+import { $, clamp, esc, icon, truncate } from "./util.js?v=45";
+import { S, composerKey, onComposerSwitch } from "./state.js?v=45";
+import { cachedBrowserMeta, onBrowserMetaRestored, saveBrowserOpen, saveLastURL, scheduleDraftSave, usableBrowserURL, whenBrowserMeta } from "./convmeta.js?v=45";
+import { api } from "./api.js?v=45";
+import { toast } from "./toast.js?v=45";
+import { closePopover, openPopover } from "./popover.js?v=45";
+import { focusComposer, renderPendingAttachments } from "./composer.js?v=45";
 
 /* ---------------- embedded browser pane ----------------
  * Wire protocol: tmp/browser-api-contract.md
@@ -12,7 +12,7 @@ import { focusComposer, renderPendingAttachments } from "./composer.js?v=44";
  *   .../annotate, .../annotate/preview (hover marker probe), .../annotate/clear
  * - Stream: dedicated per-session WS at /api/browser/sessions/{id}/stream.
  *   server→client: binary JPEG frames + JSON text {type: meta|closed|pong}
- *   client→server: JSON text {type: mousemove|click|wheel|text|key|resize|ping}
+ *   client→server: JSON text {type: mousemove|click|wheel|text|key|resize|emulate|ping}
  * - Coordinates are viewport CSS px; the client scales display→viewport with
  *   the latest meta {deviceWidth, deviceHeight}.
  * - The session survives a WS disconnect; only DELETE destroys it.
@@ -52,6 +52,8 @@ const B = {
   lastResizeSent: 0,
   observer: null,
   width: 0,               // user-dragged pane width (0 = stylesheet default)
+  deviceBar: true,        // second toolbar row with device controls
+  deviceChoice: "relative", // relative | desktop | mobile | tablet | "" (agent-set)
 };
 
 const MOVE_INTERVAL_MS = 33; // ~30fps pointermove forwarding
@@ -96,6 +98,7 @@ export function resetBrowserPane() {
   B.paneGen += 1;
   B.restoreURL = "";
   B.savedURL = "";
+  B.deviceChoice = "relative";
   bootDone = false;
   bootSkip.clear();
   if (B.hoverTimer) { clearTimeout(B.hoverTimer); B.hoverTimer = null; }
@@ -219,7 +222,15 @@ function buildPane(pane) {
       <button class="icon-btn sm" data-action="browser-reload" title="Reload" aria-label="Reload">${icon("refresh", "sm")}</button>
       <div class="browser-addr"><input class="input" id="browser-url" placeholder="Enter a URL" spellcheck="false" autocomplete="off" aria-label="Browser address"></div>
       <button class="icon-btn sm" data-action="browser-annotate" title="Annotate an element" aria-label="Annotate an element" aria-pressed="false">${icon("pin", "sm")}</button>
+      <button class="icon-btn sm" data-action="browser-device" title="Device emulation" aria-label="Device emulation" aria-pressed="true">${icon("smartphone", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-close" title="Close pane" aria-label="Close pane">${icon("x", "sm")}</button>
+    </div>
+    <div class="browser-device-bar" id="browser-device-bar">
+      <button class="device-chip" data-action="browser-device-mode" data-device="relative" title="The remote viewport follows this pane — no fixed size, no letterboxing">Relative</button>
+      <button class="device-chip" data-action="browser-device-mode" data-device="desktop" title="Fixed 1280×800 desktop profile">Desktop</button>
+      <button class="device-chip" data-action="browser-device-mode" data-device="mobile" title="Fixed 390×844 mobile profile with a touch UA">Mobile</button>
+      <button class="device-chip" data-action="browser-device-mode" data-device="tablet" title="Fixed 768×1024 tablet profile with a touch UA">Tablet</button>
+      <span class="browser-device-readout" id="browser-device-readout"></span>
     </div>
     <div class="browser-view" id="browser-view" tabindex="0" aria-label="Remote browser view">
       <img class="browser-frame" id="browser-frame" alt="Remote page" draggable="false">
@@ -349,9 +360,14 @@ export function browserReconnect() { attachOrCreate(); }
 
 // showAgentBrowser opens this conversation's pane onto the session the
 // browser_use tool is driving, and remembers a pointer until a frame can place it.
-export async function showAgentBrowser(sessionId, pointer) {
+export async function showAgentBrowser(sessionId, pointer, tool) {
   if (!S.current) return;
   B.holdViewport = true;
+  if (tool === "emulate") {
+    // The agent changed the device profile itself — drop the user's chip.
+    B.deviceChoice = "";
+    updateDeviceBar();
+  }
   stopResizeWatch();
   if (pointer && Number.isFinite(pointer.x) && Number.isFinite(pointer.y)) {
     B.pendingPointer = pointer;
@@ -390,10 +406,8 @@ function connectStream() {
   ws.onopen = () => {
     if (B.socket !== ws) return;
     setStatus("live");
-    if (!B.holdViewport) {
-      startResizeWatch();
-      sendViewportResize();
-    }
+    if (B.holdViewport) return;
+    applyDeviceChoice();
   };
   ws.onmessage = (e) => {
     if (B.socket !== ws) return;
@@ -490,6 +504,7 @@ function placeAgentPointer() {
 function applyMeta() {
   const m = B.meta;
   if (!m) return;
+  updateDeviceBar();
   const img = $("#browser-frame");
   if (img && m.deviceWidth && m.deviceHeight) img.style.aspectRatio = `${m.deviceWidth} / ${m.deviceHeight}`;
   if (typeof m.url === "string" && m.url && (usableBrowserURL(m.url) || !usableBrowserURL(B.nav.url))) {
@@ -652,6 +667,60 @@ function onViewKey(e) {
 function viewBox() {
   const v = $("#browser-view");
   return { w: v?.clientWidth || 0, h: v?.clientHeight || 0 };
+}
+
+/* ---------------- device emulation ---------------- */
+
+// The second toolbar row: how the remote viewport's size and device profile
+// are chosen. "relative" streams the pane's own size (the default); the fixed
+// presets emulate a concrete device with UA and touch.
+export function toggleDeviceBar() {
+  B.deviceBar = !B.deviceBar;
+  updateDeviceBar();
+}
+
+export function browserDeviceMode(mode) {
+  if (!["relative", "desktop", "mobile", "tablet"].includes(mode)) return;
+  B.deviceChoice = mode;
+  B.holdViewport = false;
+  updateDeviceBar();
+  applyDeviceChoice();
+}
+
+// applyDeviceChoice pushes the user's selection to the stream — on chip
+// clicks and on (re)connect, so intent is never lost when the socket was not
+// yet open. Relative clears the whole profile (plain desktop at pane size,
+// not a mobile UA stretched to fit); presets pin a fixed device.
+function applyDeviceChoice() {
+  if (!B.socket || B.socket.readyState !== WebSocket.OPEN) return;
+  if (B.deviceChoice && B.deviceChoice !== "relative") {
+    stopResizeWatch();
+    sendCtl({ type: "emulate", preset: B.deviceChoice });
+    return;
+  }
+  const box = viewBox();
+  if (box.w && box.h) {
+    sendCtl({ type: "emulate", mobile: false, ua: "", touch: false, dpr: 1, width: Math.round(box.w), height: Math.round(box.h) });
+  }
+  startResizeWatch();
+}
+
+function updateDeviceBar() {
+  const bar = $("#browser-device-bar");
+  if (!bar) return;
+  bar.hidden = !B.deviceBar;
+  const toggle = $(`[data-action="browser-device"]`);
+  if (toggle) toggle.setAttribute("aria-pressed", String(B.deviceBar));
+  for (const chip of $$(".device-chip", bar)) {
+    chip.classList.toggle("active", chip.dataset.device === B.deviceChoice);
+  }
+  const w = B.meta?.deviceWidth || B.session?.width || 0;
+  const h = B.meta?.deviceHeight || B.session?.height || 0;
+  const ro = $("#browser-device-readout");
+  if (ro) {
+    const tag = B.meta?.mobile ? "mobile" : B.meta?.touch ? "touch" : "";
+    ro.textContent = w ? `${w}×${h}${tag ? " · " + tag : ""}` : "";
+  }
 }
 
 function sendViewportResize() {
@@ -998,7 +1067,10 @@ function updateToolbar() {
   if (url) url.disabled = !active;
   const annotate = $(`[data-action="browser-annotate"]`);
   if (annotate) annotate.disabled = !live;
+  const device = $(`[data-action="browser-device"]`);
+  if (device) device.disabled = !active;
   updateAnnotateUI();
+  updateDeviceBar();
 }
 
 // First meta load of the conversation on screen. Later switches hide the pane
