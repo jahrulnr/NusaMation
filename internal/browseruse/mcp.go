@@ -201,11 +201,19 @@ func callTool(client *http.Client, baseURL, token, name string, args json.RawMes
 }
 
 func readMessage(r *bufio.Reader) ([]byte, error) {
-	line, err := r.ReadString('\n')
-	if err != nil {
-		return nil, err
+	// Some transports separate framed messages with blank lines; skip them
+	// instead of treating the empty line as a missing Content-Length.
+	var trim string
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		trim = strings.TrimSpace(line)
+		if trim != "" {
+			break
+		}
 	}
-	trim := strings.TrimSpace(line)
 	if strings.HasPrefix(trim, "{") {
 		return []byte(trim), nil
 	}

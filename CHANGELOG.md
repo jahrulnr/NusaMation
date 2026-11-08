@@ -6,7 +6,9 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ### Fixed
 
-- **Browser pane on Windows:** the embedded browser now finds Chrome-family executables installed in the standard locations (`Program Files` / `LOCALAPPDATA` — Chrome, Chromium, Edge) instead of only searching PATH, where Windows installers never put them. Previously the pane reported "no Chromium executable found" on a stock Windows install.
+- **`browser_use` MCP server:** the stdio framing reader no longer dies on blank lines between messages. Transports that emit a stray newline after each message body — observed on Windows — killed the process right after `initialize`, so the agent saw the server registered but every `tools/list`/`tools/call` failed.
+
+- **Send menu:** the composer's delivery menu now has just **Steer** and **Add to queue**. "Steer" is one concept again: the agent gets the input mid-turn when it supports steering, otherwise NusaMation waits for the current tools, cancels, and resends — the path previously shown as a separate "Send after tools" item.
 
 ## [0.2.1] - 2026-11-08
 
@@ -14,6 +16,7 @@ All notable changes to the Go core will be documented in this file. The format i
 
 - **Windows installer:** the `NusaMation` logon task no longer shows a console window. The task still launches the binary itself (now with `-hide-console`, which makes the server hide its own console window right after startup), so the registration works without elevation and `schtasks /End /TN NusaMation` still stops the real process. Previously a visible console window appeared at logon and closing it killed the server.
 - **Windows installer:** re-installing while the server is running no longer fails at `Copy-Item` — the installer stops the scheduled task and any running copy of the binary before replacing it, since Windows locks a running exe.
+- **Browser pane on Windows:** the embedded browser now finds Chrome-family executables installed in the standard locations (`Program Files` / `LOCALAPPDATA` — Chrome, Chromium, Edge) instead of only searching PATH, where Windows installers never put them. Previously the pane reported "no Chromium executable found" on a stock Windows install.
 
 ## [0.2.0] - 2026-11-08
 

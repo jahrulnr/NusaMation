@@ -1,6 +1,6 @@
-import { $, esc, icon } from "./util.js?v=43";
-import { S } from "./state.js?v=43";
-import { respondElicitation, showPendingRequest } from "./requests.js?v=43";
+import { $, esc, icon } from "./util.js?v=44";
+import { S } from "./state.js?v=44";
+import { respondElicitation, showPendingRequest } from "./requests.js?v=44";
 
 /* ---------------- modals ---------------- */
 const modalCloseHooks = new Set();

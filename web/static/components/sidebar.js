@@ -1,7 +1,7 @@
-import { $, $$, brandImage, esc, icon, timeAgo, truncate } from "./util.js?v=43";
-import { S } from "./state.js?v=43";
-import { closeDetachedPopovers } from "./popover.js?v=43";
-import { groupProjectless, partitionProjects, sortConversations, visibleProjectId } from "./projectmodel.js?v=43";
+import { $, $$, brandImage, esc, icon, timeAgo, truncate } from "./util.js?v=44";
+import { S } from "./state.js?v=44";
+import { closeDetachedPopovers } from "./popover.js?v=44";
+import { groupProjectless, partitionProjects, sortConversations, visibleProjectId } from "./projectmodel.js?v=44";
 
 let expandedReady = false;
 

@@ -1,15 +1,15 @@
-import { $, $$, agentById, agentName, agentOrb, configChoices, configLabel, currentAgent, esc, icon, isMobile, isShort, parseConfigs } from "./util.js?v=43";
-import { S, composerFor, composerKey, moveComposer } from "./state.js?v=43";
-import { api } from "./api.js?v=43";
-import { toast } from "./toast.js?v=43";
-import { closeModal, promptModal } from "./modal.js?v=43";
-import { closePopover, menuItem, openPopover } from "./popover.js?v=43";
-import { renderChat } from "./chat.js?v=43";
-import { showAgentBlocker, showSlowAgent } from "./requests.js?v=43";
-import { loadConversation, normalizeMessage, setRoute, upsertConversation, upsertMessage } from "./conversations.js?v=43";
-import { clearDraft, saveDraftNow, scheduleDraftSave } from "./convmeta.js?v=43";
-import { renderTopbar } from "./topbar.js?v=43";
-import { openSettings } from "./settings.js?v=43";
+import { $, $$, agentById, agentName, agentOrb, configChoices, configLabel, currentAgent, esc, icon, isMobile, isShort, parseConfigs } from "./util.js?v=44";
+import { S, composerFor, composerKey, moveComposer } from "./state.js?v=44";
+import { api } from "./api.js?v=44";
+import { toast } from "./toast.js?v=44";
+import { closeModal, promptModal } from "./modal.js?v=44";
+import { closePopover, menuItem, openPopover } from "./popover.js?v=44";
+import { renderChat } from "./chat.js?v=44";
+import { showAgentBlocker, showSlowAgent } from "./requests.js?v=44";
+import { loadConversation, normalizeMessage, setRoute, upsertConversation, upsertMessage } from "./conversations.js?v=44";
+import { clearDraft, saveDraftNow, scheduleDraftSave } from "./convmeta.js?v=44";
+import { renderTopbar } from "./topbar.js?v=44";
+import { openSettings } from "./settings.js?v=44";
 
 /* ---------------- composer ---------------- */
 export function renderComposer() {
@@ -171,7 +171,6 @@ export function isBusyTurn() {
 
 export function sendTitle() {
   if (!isBusyTurn()) return "Send";
-  if (S.sendDelivery === "after_tools") return "Send after tools";
   if (S.sendDelivery === "queue") return "Add to queue";
   return "Steer";
 }
@@ -179,8 +178,10 @@ export function sendTitle() {
 export function openSendMenu(anchor) {
   if (!isBusyTurn()) return;
   if ($(".send-menu-popover")) { closePopover(); return; }
-  const choice = (mode, label, help) => `<button class="menu-item" role="menuitemradio" aria-checked="${S.sendDelivery === mode}" data-action="send-mode" data-mode="${mode}"><span class="popover-main"><b>${label}</b><small>${help}</small></span>${S.sendDelivery === mode ? icon("check", "sm") : ""}</button>`;
-  openPopover(anchor, `<div class="popover-list send-menu" role="menu" aria-label="Send mode">${choice("steer", "Steer", "The agent sees this while it is working")}${choice("queue", "Add to queue", "Runs after the current turn finishes")}${choice("after_tools", "Send after tools", "Finish current tools, cancel, then send")}</div>`, { width: 280, class: "composer-popover send-menu-popover" });
+  const choice = (mode, label, help, checked = S.sendDelivery === mode) => `<button class="menu-item" role="menuitemradio" aria-checked="${checked}" data-action="send-mode" data-mode="${mode}"><span class="popover-main"><b>${label}</b><small>${help}</small></span>${checked ? icon("check", "sm") : ""}</button>`;
+  const items = choice("steer", "Steer", "As soon as the agent can take it — mid-turn or after current tools", S.sendDelivery !== "queue")
+    + choice("queue", "Add to queue", "Runs after the current turn finishes");
+  openPopover(anchor, `<div class="popover-list send-menu" role="menu" aria-label="Send mode">${items}</div>`, { width: 280, class: "composer-popover send-menu-popover" });
   anchor.setAttribute("aria-expanded", "true");
   const el = $(".send-menu-popover");
   el.addEventListener("keydown", (e) => sendMenuKeys(e, anchor, el));

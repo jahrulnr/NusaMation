@@ -131,11 +131,12 @@ NusaMation sends per-input application context separately from user text, within
 
 ## Queued input and cancel-and-resend
 
-Sending while a turn runs can steer, queue, or cancel-and-resend. The composer's send menu offers three delivery modes:
+Sending while a turn runs can steer or queue. The composer's send menu offers two delivery modes:
 
-- **Steer** (default): when the agent advertises mid-turn prompts or `_session/steering`, the text is injected into the running turn and the agent sees it immediately. An agent that cannot steer — on the web or a channel — waits until the running turn's tools finish, cancels that turn, then sends (the same cancel-and-resend path as "Send after tools").
+- **Steer** (default): the agent gets the input as soon as it can take it. When it advertises mid-turn prompts or `_session/steering`, the text is injected into the running turn immediately. Otherwise NusaMation forces the same outcome: it waits until the running turn's reported tools all finish (`completed` or `failed`, or right away if it reported none), sends `session/cancel`, waits for the agent's answer to the cancelled prompt, then sends the input — so no two prompts overlap. Late updates from the old prompt still belong to the old turn.
 - **Add to queue**: the input runs after the current turn finishes.
-- **Send after tools**: cancel-and-resend, not steering. Once the running turn's reported tools are all `completed` or `failed` (or right away if it reported none), NusaMation sends `session/cancel`. It then waits for the agent's answer to the cancelled prompt before the queued input starts, so no two prompts overlap. Late updates from the old prompt still belong to the old turn.
+
+The `after_tools` delivery value in the API is that forced-steer path.
 
 Limits: tool states are best-effort reports, so the agent may start a new tool before the cancel lands. A pending approval is not skipped: the cancel waits until the user resolves it. If the agent does not answer within 15 seconds, the conversation shows one notice and the queue keeps waiting. Chat channels receive one message when the turn finishes; thoughts and raw tool output stay on the web.
 

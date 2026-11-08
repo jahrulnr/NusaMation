@@ -6,9 +6,32 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+// Transports that separate framed messages with blank lines must not kill the
+// server: previously a blank line between bodies was read as a missing
+// Content-Length and the process exited, so every later request failed.
+func TestReadMessageSkipsBlankLines(t *testing.T) {
+	body := `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+	frame := "Content-Length: " + strconv.Itoa(len(body)) + "\r\n\r\n" + body
+	stream := frame + "\r\n" + frame + "\r\n"
+	r := bufio.NewReader(strings.NewReader(stream))
+	for i := 0; i < 2; i++ {
+		got, err := readMessage(r)
+		if err != nil {
+			t.Fatalf("message %d: %v", i, err)
+		}
+		if string(got) != body {
+			t.Fatalf("message %d = %s", i, got)
+		}
+	}
+	if _, err := readMessage(r); err != io.EOF {
+		t.Fatalf("expected io.EOF, got %v", err)
+	}
+}
 
 func TestMCPNavigate(t *testing.T) {
 	var gotAuth, gotTool string
