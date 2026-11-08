@@ -40,6 +40,23 @@ export const AGENT_COLORS = {
 export const TOOL_KINDS = new Set(["read", "edit", "delete", "move", "search", "execute", "think", "fetch", "switch_mode", "other"]);
 
 /* ---------------- time / formatting ---------------- */
+// previewText flattens a markdown message into a plain one-line snippet
+// for list previews — headings, marks, links and list markers become text.
+export function previewText(raw, max = 70) {
+  if (!raw) return "No messages yet";
+  const t = String(raw)
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s*[-+•]\s+/gm, "")
+    .replace(/^\s*\d+[.)]\s+/gm, "")
+    .replace(/[*_~`#>|]+/g, "")
+    .replace(/-{3,}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return truncate(t, max);
+}
+
 export function timeAgo(ms) {
   if (!ms) return "";
   const d = Math.max(0, now() - ms);

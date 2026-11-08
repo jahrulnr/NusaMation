@@ -1,4 +1,4 @@
-import { $, $$, brandImage, esc, icon, timeAgo, truncate } from "./util.js";
+import { $, $$, brandImage, esc, icon, previewText, timeAgo } from "./util.js";
 import { S } from "./state.js";
 import { closeDetachedPopovers } from "./popover.js";
 import { groupProjectless, partitionProjects, sortConversations, visibleProjectId } from "./projectmodel.js";
@@ -105,7 +105,7 @@ function projectBlockHTML(project) {
       <button type="button" class="icon-btn sm project-menu-btn" data-action="project-menu" data-id="${id}" title="Project menu" aria-label="Project menu: ${name}">${icon("more", "sm")}</button>
     </div>
     <div class="project-chats">
-      ${chats.length ? chats.map(convItemHTML).join("") : `<p class="project-none">No chats yet</p>`}
+      ${chats.length ? chats.map(convChildHTML).join("") : `<p class="project-none">No chats yet</p>`}
       <button type="button" class="project-new" data-action="project-new-chat" data-id="${id}">${icon("plus", "sm")} New conversation</button>
     </div>
   </div>`;
@@ -124,7 +124,7 @@ export function convItemHTML(c) {
   const external = links.find((l) => l.channel !== "web");
   const channel = external ? external.channel : (c.originChannel && c.originChannel !== "web" ? c.originChannel : "");
   const unread = S.unread.get(c.id) || 0;
-  const preview = c.lastMessage ? truncate(c.lastMessage.replace(/\s+/g, " "), 70) : "No messages yet";
+  const preview = previewText(c.lastMessage, 70);
   return `<div class="conv-item ${S.current && S.current.id === c.id ? "active" : ""}" role="button" tabindex="0" data-action="select-conv" data-id="${esc(c.id)}" data-title="${esc((c.title || "").toLowerCase())}" data-preview="${esc((c.lastMessage || "").toLowerCase())}">
     <div class="conv-title-row">
       ${c.pinned ? icon("pin", "conv-pin") : ""}
@@ -136,6 +136,18 @@ export function convItemHTML(c) {
       ${channel ? `<span class="conv-channel" title="${esc(channel)}">${channel === "whatsapp" ? icon("message") : icon("globe")}</span>` : ""}
       <button class="icon-btn sm" data-action="conv-menu" data-id="${esc(c.id)}" title="Conversation menu">${icon("more", "sm")}</button>
     </div>
+  </div>`;
+}
+
+// convChildHTML renders a project child as a single-line tree row (no
+// preview) — VSCode-style compact nesting instead of the full card.
+function convChildHTML(c) {
+  const unread = S.unread.get(c.id) || 0;
+  return `<div class="conv-item conv-child ${S.current && S.current.id === c.id ? "active" : ""}" role="button" tabindex="0" data-action="select-conv" data-id="${esc(c.id)}" data-title="${esc((c.title || "").toLowerCase())}" data-preview="${esc((c.lastMessage || "").toLowerCase())}" title="${esc(c.title || "Untitled")}">
+    ${c.pinned ? icon("pin", "conv-pin") : ""}
+    <span class="conv-title">${esc(c.title || "Untitled")}</span>
+    ${unread ? `<span class="conv-badge">${unread > 9 ? "9+" : unread}</span>` : `<span class="conv-time">${timeAgo(c.lastMessageAt || c.updatedAt)}</span>`}
+    <button class="icon-btn sm conv-child-menu" data-action="conv-menu" data-id="${esc(c.id)}" title="Conversation menu">${icon("more", "sm")}</button>
   </div>`;
 }
 
@@ -235,9 +247,9 @@ export function patchSidebarConversations() {
     if (!node) { renderSidebar(); return; }
     const host = node.closest("[data-project-id]")?.dataset.projectId || "";
     if (host !== visibleProjectId(c, S.projects)) { renderSidebar(); return; }
-    const previewText = c.lastMessage ? truncate(c.lastMessage.replace(/\s+/g, " "), 70) : "No messages yet";
+    const text = previewText(c.lastMessage, 70);
     const preview = $(".conv-preview", node);
-    if (preview && preview.textContent !== previewText) preview.textContent = previewText;
+    if (preview && preview.textContent !== text) preview.textContent = text;
     const title = $(".conv-title", node);
     if (title && title.textContent !== (c.title || "Untitled")) title.textContent = c.title || "Untitled";
     const time = $(".conv-time", node);
