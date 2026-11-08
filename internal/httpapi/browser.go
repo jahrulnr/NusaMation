@@ -17,6 +17,10 @@ func (s *Server) browserError(w http.ResponseWriter, err error, annotate bool) {
 		writeError(w, http.StatusNotFound, "not_found", "Browser session not found.")
 	case errors.Is(err, browser.ErrBusy):
 		writeError(w, http.StatusConflict, "busy", "A navigation or annotation is still in flight; retry after it commits.")
+	case errors.Is(err, browser.ErrNotActionable):
+		writeError(w, http.StatusConflict, "not_actionable", err.Error())
+	case errors.Is(err, browser.ErrInvalidAction):
+		writeError(w, http.StatusBadRequest, "invalid_action", err.Error())
 	case errors.Is(err, browser.ErrPickMissed):
 		writeError(w, http.StatusUnprocessableEntity, "pick_missed", "No element resolved at that point.")
 	case errors.As(err, &navErr):

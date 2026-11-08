@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -154,6 +156,38 @@ func TestBrowserUseInvalid(t *testing.T) {
 			}
 			if tc.want != "" && !strings.Contains(got, tc.want) {
 				t.Fatalf("invalid() = %q, want containing %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A refused ref action and a bad select/fill argument must not fall through to
+// the generic navigate_failed envelope: agents need to distinguish "retry after
+// dismissing the overlay" from "your argument is wrong".
+func TestBrowserErrorActionability(t *testing.T) {
+	s := &Server{}
+	cases := []struct {
+		name string
+		err  error
+		want int
+		code string
+	}{
+		{"not actionable", fmt.Errorf("%w: e3 is covered by #overlay", browser.ErrNotActionable), http.StatusConflict, "not_actionable"},
+		{"invalid action", fmt.Errorf("%w: no matching option", browser.ErrInvalidAction), http.StatusBadRequest, "invalid_action"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			s.browserError(rr, tc.err, false)
+			if rr.Code != tc.want {
+				t.Fatalf("status = %d, want %d", rr.Code, tc.want)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+				t.Fatalf("body: %v", err)
+			}
+			if body["code"] != tc.code {
+				t.Fatalf("code = %v, want %q", body["code"], tc.code)
 			}
 		})
 	}

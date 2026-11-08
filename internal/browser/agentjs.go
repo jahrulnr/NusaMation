@@ -18,7 +18,11 @@ const consoleTapJS = `(function(){
   if (window.__nusaConsole) return;
   const buf = [];
   Object.defineProperty(window, '__nusaConsole', {value: buf});
-  const fmt = a => { try { return typeof a === 'string' ? a : JSON.stringify(a); } catch (e) { return String(a); } };
+  const fmt = a => {
+    if (typeof a === 'string') return a;
+    if (a instanceof Error) return a.stack || a.message || String(a);
+    try { const s = JSON.stringify(a); return s === undefined ? String(a) : s; } catch (e) { return String(a); }
+  };
   const push = (level, text) => { try { buf.push({level: level, text: text, ts: Date.now()}); if (buf.length > 200) buf.shift(); } catch (e) {} };
   for (const lvl of ['log', 'info', 'warn', 'error', 'debug']) {
     const orig = console[lvl] && console[lvl].bind(console);
@@ -37,6 +41,8 @@ const snapshotJS = `(() => {
   document.querySelectorAll('[' + REF + ']').forEach(e => e.removeAttribute(REF));
   let n = 0;
   const lines = [];
+  const refs = new Map();
+  window.__nusaRefs = refs;
   const skip = new Set(['SCRIPT','STYLE','NOSCRIPT','TEMPLATE','META','LINK','BR','HR','SVG','CANVAS','PATH','HEAD']);
   const roleFor = el => {
     const r = el.getAttribute('role');
@@ -85,8 +91,37 @@ const snapshotJS = `(() => {
     if (el.hasAttribute('tabindex') && el.tabIndex >= 0) return true;
     return false;
   };
+  const rootOf = el => { try { return el.getRootNode(); } catch (e) { return document; } };
+  const byId = (root, id) => {
+    if (!root) return null;
+    if (root.getElementById) return root.getElementById(id);
+    try { return root.querySelector('#' + CSS.escape(id)); } catch (e) { return null; }
+  };
+  const labelledBy = el => {
+    const ids = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
+    const root = rootOf(el);
+    let s = '';
+    for (const id of ids) {
+      const n = byId(root, id);
+      if (n) s += ' ' + (n.innerText || n.textContent || '');
+    }
+    return s.replace(/\s+/g, ' ').trim();
+  };
+  const labelFor = el => {
+    let s = '';
+    try { if (el.labels) for (const l of el.labels) s += ' ' + (l.innerText || l.textContent || ''); } catch (e) {}
+    if (!s) {
+      const id = el.getAttribute('id');
+      const root = rootOf(el);
+      if (id && root.querySelector) {
+        const l = root.querySelector('label[for="' + CSS.escape(id) + '"]');
+        if (l) s = l.innerText || l.textContent || '';
+      }
+    }
+    return s.replace(/\s+/g, ' ').trim();
+  };
   const nameOf = el => {
-    let s = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || el.getAttribute('placeholder') || '';
+    let s = labelledBy(el) || el.getAttribute('aria-label') || labelFor(el) || el.getAttribute('alt') || el.getAttribute('title') || el.getAttribute('placeholder') || '';
     const t = el.tagName;
     if (!s && t === 'INPUT') {
       const ty = (el.getAttribute('type') || 'text').toLowerCase();
@@ -107,15 +142,22 @@ const snapshotJS = `(() => {
   };
   const stateOf = el => {
     const bits = [];
-    if (el.disabled) bits.push('disabled');
+    if (el.matches(':disabled')) bits.push('disabled');
     if (el.checked) bits.push('checked');
     if (el.getAttribute('aria-expanded') === 'true') bits.push('expanded');
     if (el.getAttribute('aria-expanded') === 'false') bits.push('collapsed');
     if (el.required) bits.push('required');
     return bits.length ? ' [' + bits.join(', ') + ']' : '';
   };
+  const MAX_DEPTH = 24, MAX_LINES = 600;
+  let truncated = false;
+  const walkChildren = (el, depth) => {
+    for (const c of el.children) walk(c, depth);
+    if (el.shadowRoot) for (const c of el.shadowRoot.children) walk(c, depth);
+  };
   const walk = (el, depth) => {
-    if (!el || depth > 24 || lines.length > 600) return;
+    if (!el) return;
+    if (depth > MAX_DEPTH || lines.length > MAX_LINES) { truncated = true; return; }
     if (skip.has(el.tagName) || !visible(el)) return;
     const role = roleFor(el);
     const name = nameOf(el);
@@ -123,44 +165,83 @@ const snapshotJS = `(() => {
     if (interact) {
       const ref = 'e' + (++n);
       el.setAttribute(REF, ref);
+      refs.set(ref, el);
       lines.push('  '.repeat(depth) + '- ' + (role || 'generic') + (name ? ' "' + name.replace(/"/g, "'") + '"' : '') + stateOf(el) + ' [ref=' + ref + ']');
     } else if (role && (name || el.children.length === 0)) {
       lines.push('  '.repeat(depth) + '- ' + role + (name ? ' "' + name.replace(/"/g, "'") + '"' : ''));
     } else if (!role && el.children.length === 0 && name) {
       lines.push('  '.repeat(depth) + '- text "' + name.replace(/"/g, "'") + '"');
     } else {
-      for (const c of el.children) walk(c, depth);
+      walkChildren(el, depth);
       return;
     }
-    for (const c of el.children) walk(c, depth + 1);
+    walkChildren(el, depth + 1);
   };
   walk(document.body || document.documentElement, 0);
+  if (truncated) lines.push('- text "… snapshot truncated at ' + MAX_LINES + ' lines / depth ' + MAX_DEPTH + '; more elements may exist"');
   return lines.join('\n') || '(empty page)';
 })()`
 
-// refPointExpr returns {x,y} viewport center of the ref'd element after
-// scrolling it into view, or null when the ref is stale.
-func refPointExpr(ref string) string {
-	q, _ := json.Marshal("[" + refAttr + `="` + ref + `"]`)
+// actionPointExpr resolves a ref and verifies it can receive a pointer action.
+// It returns {status:'ok', x, y} or a reason: missing, hidden, disabled,
+// pointer-events-none, covered, outside-viewport.
+func actionPointExpr(ref string) string {
+	q, _ := json.Marshal(ref)
 	return fmt.Sprintf(`(() => {
-  const el = document.querySelector(%s);
-  if (!el) return null;
+  const el = (window.__nusaRefs && window.__nusaRefs.get(%s)) || null;
+  if (!el || !el.isConnected) return {status: 'missing'};
   el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+  const cs = getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') return {status: 'hidden'};
   const r = el.getBoundingClientRect();
-  if (!r.width && !r.height) return null;
-  return {x: r.left + r.width / 2, y: r.top + r.height / 2};
+  if (!r.width && !r.height) return {status: 'hidden'};
+  if (el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true') return {status: 'disabled'};
+  if (cs.pointerEvents === 'none') return {status: 'pointer-events-none'};
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return {status: 'outside-viewport', x, y};
+  const deepHit = (x, y) => {
+    let node = document.elementFromPoint(x, y);
+    while (node && node.shadowRoot) {
+      const inner = node.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === node) break;
+      node = inner;
+    }
+    return node;
+  };
+  const composedContains = (parent, child) => {
+    let node = child;
+    while (node) {
+      if (node === parent) return true;
+      node = node.parentNode || node.host || null;
+    }
+    return false;
+  };
+  const hit = deepHit(x, y);
+  if (!hit) return {status: 'outside-viewport', x, y};
+  if (hit !== el && !composedContains(el, hit)) {
+    return {status: 'covered', x, y, by: (hit.id ? '#' + hit.id : hit.tagName.toLowerCase())};
+  }
+  return {status: 'ok', x, y};
 })()`, q)
 }
 
-// focusExpr focuses the ref'd element; returns true when focus landed.
+// focusExpr focuses the ref'd element; status is missing, disabled, readonly,
+// or ok with focused=true when focus landed.
 func focusExpr(ref string) string {
-	q, _ := json.Marshal("[" + refAttr + `="` + ref + `"]`)
+	q, _ := json.Marshal(ref)
 	return fmt.Sprintf(`(() => {
-  const el = document.querySelector(%s);
-  if (!el) return null;
+  const el = (window.__nusaRefs && window.__nusaRefs.get(%s)) || null;
+  if (!el || !el.isConnected) return {status: 'missing'};
   el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+  if (el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true') return {status: 'disabled'};
+  if (el.readOnly || el.getAttribute('aria-readonly') === 'true') return {status: 'readonly'};
   try { el.focus({preventScroll: true}); } catch (e) { el.focus(); }
-  return document.activeElement === el;
+  const deepActive = (root) => {
+    let node = root.activeElement;
+    while (node && node.shadowRoot && node.shadowRoot.activeElement) node = node.shadowRoot.activeElement;
+    return node;
+  };
+  return {status: 'ok', focused: deepActive(document) === el};
 })()`, q)
 }
 
@@ -173,27 +254,37 @@ type FieldValue struct {
 }
 
 // fillExpr sets every field through the native setter then fires input+change
-// so framework-controlled inputs (React, Vue) register the value.
+// so framework-controlled inputs (React, Vue) register the value. It returns
+// {ok, reason, detail}; any failed field makes the whole call fail.
 func fillExpr(fields []FieldValue) string {
 	args, _ := json.Marshal(fields)
 	return fmt.Sprintf(`((fields) => {
   const out = [];
+  let ok = true, reason = '';
+  const fail = (why, msg) => { ok = false; if (!reason) reason = why; out.push(msg); };
   const setValue = (el, v) => {
     const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const d = Object.getOwnPropertyDescriptor(proto, 'value');
     if (d && d.set) d.set.call(el, v); else el.value = v;
   };
   for (const f of fields) {
-    const el = document.querySelector('[`+refAttr+`="' + f.ref + '"]');
-    if (!el) { out.push(f.ref + ': ref not found'); continue; }
+    const el = (window.__nusaRefs && window.__nusaRefs.get(f.ref)) || null;
+    if (!el || !el.isConnected) { fail('ref not found', f.ref + ': ref not found'); continue; }
+    if (el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true') { fail('disabled', f.ref + ': disabled'); continue; }
     const ty = (f.type || el.getAttribute('type') || '').toLowerCase();
-    if (ty === 'checkbox' || ty === 'radio' || el.type === 'checkbox' || el.type === 'radio') {
+    const checkable = ty === 'checkbox' || ty === 'radio' || el.type === 'checkbox' || el.type === 'radio';
+    if (!checkable && el.tagName !== 'SELECT' && !el.isContentEditable && (el.readOnly || el.getAttribute('aria-readonly') === 'true')) {
+      fail('readonly', f.ref + ': read-only'); continue;
+    }
+    if (checkable) {
       el.checked = ['true', 'on', 'checked', '1'].includes(String(f.value).toLowerCase());
     } else if (el.isContentEditable) {
       el.innerText = f.value;
     } else if (el.tagName === 'SELECT') {
-      const o = [...el.options].find(o => o.value === f.value || o.text === f.value);
-      if (o) { el.value = o.value; } else { out.push(f.ref + ': no matching option'); continue; }
+      const o = [...el.options].find(o => o.value === f.value || o.text.trim() === String(f.value).trim());
+      if (o) { el.value = o.value; } else { fail('no matching option', f.ref + ': no matching option'); continue; }
+    } else if (!('value' in el)) {
+      fail('not fillable', f.ref + ': not fillable'); continue;
     } else {
       setValue(el, f.value);
     }
@@ -201,26 +292,32 @@ func fillExpr(fields []FieldValue) string {
     el.dispatchEvent(new Event('change', {bubbles: true}));
     out.push(f.ref + ': filled');
   }
-  return out.join('; ');
+  return {ok: ok, reason: reason, detail: out.join('; ')};
 })(%s)`, args)
 }
 
-// selectExpr selects values (or visible labels) on a <select>.
+// selectExpr selects values (or visible labels) on a <select>. It returns
+// {status, detail}; a single select rejects more than one value, and a
+// zero-match selection is an error instead of a silent change event.
 func selectExpr(ref string, values []string) string {
-	q, _ := json.Marshal("[" + refAttr + `="` + ref + `"]`)
+	r, _ := json.Marshal(ref)
 	vs, _ := json.Marshal(values)
-	return fmt.Sprintf(`((selector, values) => {
-  const el = document.querySelector(selector);
-  if (!el) return null;
-  if (el.tagName !== 'SELECT') return 'element is not a select';
+	return fmt.Sprintf(`((ref, values) => {
+  const el = (window.__nusaRefs && window.__nusaRefs.get(ref)) || null;
+  if (!el || !el.isConnected) return {status: 'missing', detail: 'ref not found'};
+  if (el.tagName !== 'SELECT') return {status: 'not-select', detail: 'element is not a select'};
+  if (el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true') return {status: 'disabled', detail: 'select is disabled'};
+  if (!el.multiple && values.length > 1) return {status: 'single-multiple', detail: 'a single select accepts one value'};
   el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
   let matched = 0;
   for (const v of values) {
-    const o = [...el.options].find(o => o.value === v || o.text === v);
+    const want = String(v).trim();
+    const o = [...el.options].find(o => o.value === v || o.text.trim() === want);
     if (o) { o.selected = true; matched++; }
   }
+  if (matched === 0) return {status: 'no-match', detail: 'no matching option: ' + values.join(', ')};
   el.dispatchEvent(new Event('input', {bubbles: true}));
   el.dispatchEvent(new Event('change', {bubbles: true}));
-  return 'selected ' + matched + ' of ' + values.length;
-})(%s, %s)`, q, vs)
+  return {status: 'ok', detail: 'selected ' + matched + ' of ' + values.length};
+})(%s, %s)`, r, vs)
 }

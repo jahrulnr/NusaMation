@@ -224,6 +224,7 @@ func (m *Manager) CreateSession(ctx context.Context, conversationID, url string,
 	m.mu.Unlock()
 	go s.watchNav()
 	go s.watchCrash()
+	go s.watchDialogs()
 	go s.maintLoop()
 	return s, nil
 }
