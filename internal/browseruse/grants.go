@@ -4,21 +4,44 @@
 package browseruse
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
 
+	"github.com/jahrulnr/nusamation/internal/fsutil"
 	"github.com/jahrulnr/nusamation/internal/ids"
 )
 
-// Grants maps callback tokens to conversation ids. A conversation keeps the
-// same token for the life of the process so a restarted MCP child still works.
+// Grants maps callback tokens to conversation ids. Tokens are persisted to a
+// JSON file so a MCP child spawned before a server restart keeps working —
+// its environment still carries the token it was launched with.
 type Grants struct {
 	mu     sync.Mutex
+	path   string
 	byConv map[string]string
 	byTok  map[string]string
 }
 
-func NewGrants() *Grants {
-	return &Grants{byConv: map[string]string{}, byTok: map[string]string{}}
+// NewGrants restores previously issued tokens from path. An empty path keeps
+// tokens in memory only (tests).
+func NewGrants(path string) *Grants {
+	g := &Grants{path: path, byConv: map[string]string{}, byTok: map[string]string{}}
+	if path != "" {
+		if raw, err := os.ReadFile(path); err == nil {
+			var saved map[string]string
+			if json.Unmarshal(raw, &saved) == nil {
+				for conv, tok := range saved {
+					if conv == "" || tok == "" {
+						continue
+					}
+					g.byConv[conv] = tok
+					g.byTok[tok] = conv
+				}
+			}
+		}
+	}
+	return g
 }
 
 // Token returns the stable callback token for a conversation.
@@ -34,6 +57,7 @@ func (g *Grants) Token(conversationID string) string {
 	tok := ids.Token(32)
 	g.byConv[conversationID] = tok
 	g.byTok[tok] = conversationID
+	g.saveLocked()
 	return tok
 }
 
@@ -50,6 +74,7 @@ func (g *Grants) Revoke(conversationID string) {
 	}
 	delete(g.byConv, conversationID)
 	delete(g.byTok, tok)
+	g.saveLocked()
 }
 
 // Conversation resolves a callback token. The boolean is false for unknown tokens.
@@ -61,4 +86,18 @@ func (g *Grants) Conversation(token string) (string, bool) {
 	defer g.mu.Unlock()
 	id, ok := g.byTok[token]
 	return id, ok
+}
+
+// saveLocked persists the map. Callers must hold g.mu. A failed write only
+// means tokens minted in this process die with it — same as before.
+func (g *Grants) saveLocked() {
+	if g.path == "" {
+		return
+	}
+	data, err := json.Marshal(g.byConv)
+	if err != nil {
+		return
+	}
+	dir, name := filepath.Dir(g.path), filepath.Base(g.path)
+	_ = fsutil.WriteFileAtomic(dir, name, data, 0o600)
 }

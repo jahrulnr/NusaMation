@@ -10,6 +10,8 @@ All notable changes to the Go core will be documented in this file. The format i
 
 - **Send menu:** the composer's delivery menu now has just **Steer** and **Add to queue**. "Steer" is one concept again: the agent gets the input mid-turn when it supports steering, otherwise NusaMation waits for the current tools, cancels, and resends — the path previously shown as a separate "Send after tools" item.
 
+- **`browser_use` tokens survive restarts:** callback tokens are persisted to `<data>/browser-use-tokens.json`, so an agent session loaded before a NusaMation restart no longer gets 401 "Unknown browser_use token" on every tool call. Callbacks for deleted conversations are still rejected (the row check lives next to the token lookup now).
+
 - **Web UI live stream:** three modules kept `?v=43` specifiers while the rest moved to `?v=44`, which forked the module graph — two copies of `state.js`, two `S` objects. The WebSocket connected and `onopen` marked one copy online while renders read the other copy, so the "Reconnecting to the live stream…" banner never cleared. All JS specifiers share one generation again, and a test now asserts it.
 
 ## [0.2.1] - 2026-11-08

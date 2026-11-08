@@ -12,7 +12,7 @@ func TestBrowserUseServerConfig(t *testing.T) {
 	if _, ok := m.browserUseServer("cv"); ok {
 		t.Fatal("disabled hook registered a server")
 	}
-	g := browseruse.NewGrants()
+	g := browseruse.NewGrants("")
 	m.EnableBrowserUse(g, "/usr/bin/nusamation", "http://127.0.0.1:8787/")
 	cfg, ok := m.browserUseServer("cv_1")
 	if !ok || cfg.Name != "browser_use" || cfg.Command != "/usr/bin/nusamation" {

@@ -10,7 +10,7 @@ import (
 )
 
 func TestBrowserUseAuth(t *testing.T) {
-	grants := browseruse.NewGrants()
+	grants := browseruse.NewGrants("")
 	token := grants.Token("cv_test")
 	s := &Server{browserUse: grants}
 	mux := http.NewServeMux()

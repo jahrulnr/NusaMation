@@ -192,7 +192,19 @@ func (s *Server) browserUseConversation(r *http.Request) (string, bool) {
 	if !ok || token == "" || token == h {
 		return "", false
 	}
-	return s.browserUse.Conversation(token)
+	convID, ok := s.browserUse.Conversation(token)
+	if !ok {
+		return "", false
+	}
+	// Tokens outlive process restarts; the conversation may not. Reject ids
+	// whose row is gone (deleted conversations also hit Revoke, but the file
+	// could lag or be edited by hand).
+	if s.store != nil {
+		if _, err := s.store.GetConversation(r.Context(), convID); err != nil {
+			return "", false
+		}
+	}
+	return convID, true
 }
 
 func (s *Server) browserForConversation(r *http.Request, conversationID string) (*browser.Session, error) {

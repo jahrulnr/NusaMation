@@ -129,7 +129,7 @@ func New(cfg config.Config) (*App, error) {
 		logger.Warn("startup recovery failed", "error", err)
 	}
 
-	grants := browseruse.NewGrants()
+	grants := browseruse.NewGrants(filepath.Join(cfg.DataDir, "browser-use-tokens.json"))
 	a := &App{
 		cfg: cfg, log: logger, store: st, agents: agentMgr, browser: browserMgr,
 		browserUse: grants, channels: chanMgr, chat: chatSvc, hub: hub, notifier: notifyBus,
