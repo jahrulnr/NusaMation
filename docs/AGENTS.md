@@ -136,7 +136,7 @@ Sending while a turn runs can steer or queue. The composer's send menu offers tw
 - **Steer** (default): the agent gets the input as soon as it can take it. When it advertises mid-turn prompts or `_session/steering`, the text is injected into the running turn immediately. Otherwise NusaMation forces the same outcome: it waits until the running turn's reported tools all finish (`completed` or `failed`, or right away if it reported none), sends `session/cancel`, waits for the agent's answer to the cancelled prompt, then sends the input — so no two prompts overlap. Late updates from the old prompt still belong to the old turn.
 - **Add to queue**: the input runs after the current turn finishes.
 
-The `after_tools` delivery value in the API is that forced-steer path.
+The `after_tools` delivery value in the API is that forced-steer path. An `injected` steer has no turn of its own — if the running turn then completes with no output after the injection (the agent finished without picking it up), the input is requeued as a normal queued turn instead of sitting unanswered in history.
 
 Limits: tool states are best-effort reports, so the agent may start a new tool before the cancel lands. A pending approval is not skipped: the cancel waits until the user resolves it. If the agent does not answer within 15 seconds, the conversation shows one notice and the queue keeps waiting. Chat channels receive one message when the turn finishes; thoughts and raw tool output stay on the web.
 

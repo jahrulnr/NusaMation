@@ -162,8 +162,15 @@ func (s *server) handle(msg message) {
 			},
 			"auth": map[string]any{},
 		}
+		meta := map[string]any{}
 		if os.Getenv("FAKE_ACP_MIDTURN") == "1" {
-			caps["_meta"] = map[string]any{"cognition.ai/midTurnPrompts": true}
+			meta["cognition.ai/midTurnPrompts"] = true
+		}
+		if os.Getenv("FAKE_ACP_STEERING") == "1" {
+			meta["steering"] = true
+		}
+		if len(meta) > 0 {
+			caps["_meta"] = meta
 		}
 		s.respond(msg.ID, map[string]any{
 			"protocolVersion":   1,
@@ -226,6 +233,32 @@ func (s *server) handle(msg message) {
 		s.mu.Unlock()
 		s.respond(msg.ID, map[string]any{})
 		s.update(map[string]any{"sessionUpdate": "current_mode_update", "currentModeId": req.ModeID})
+	case "_session/steering":
+		var p struct {
+			Prompt []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"prompt"`
+		}
+		_ = json.Unmarshal(msg.Params, &p)
+		text := strings.TrimSpace(promptText(p.Prompt))
+		trace("steering " + text)
+		switch {
+		case os.Getenv("FAKE_ACP_STEER_DROP") == "1":
+			// Accept but produce nothing — the dropped-steer case.
+		case os.Getenv("FAKE_ACP_STEER_TOOL") == "1":
+			s.update(map[string]any{
+				"sessionUpdate": "tool_call", "toolCallId": "steer-tool-1",
+				"title": "Check the request", "name": "read", "kind": "read", "status": "completed",
+			})
+		default:
+			s.update(map[string]any{
+				"sessionUpdate": "agent_message_chunk",
+				"messageId":     "steer",
+				"content":       map[string]any{"type": "text", "text": "saw-steer: " + text},
+			})
+		}
+		s.respond(msg.ID, map[string]any{"outcome": "injected"})
 	case "session/close":
 		trace("session_close")
 		s.respond(msg.ID, map[string]any{})
@@ -343,6 +376,16 @@ func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
 			s.respond(id, map[string]any{"stopReason": "cancelled"})
 		case <-time.After(4 * time.Second):
 			s.chunk("finished ")
+			s.respond(id, map[string]any{"stopReason": "end_turn"})
+		}
+		return
+	}
+	if strings.Contains(text.String(), "steer-quiet-hold") {
+		s.chunk("working ")
+		select {
+		case <-cancel:
+			s.respond(id, map[string]any{"stopReason": "cancelled"})
+		case <-time.After(4 * time.Second):
 			s.respond(id, map[string]any{"stopReason": "end_turn"})
 		}
 		return

@@ -164,6 +164,97 @@ func TestSteerWithAnnotationsDoesNotDropThem(t *testing.T) {
 	e.waitStatus(p2.ID, "completed")
 }
 
+// An "injected" steer has no turn of its own. If the running turn then ends
+// without output after the accept, the agent dropped the input; it is
+// requeued as a normal turn instead of dangling as a final message.
+func TestDroppedSteerIsRequeuedWhenTurnEnds(t *testing.T) {
+	t.Setenv("FAKE_ACP_STEERING", "1")
+	t.Setenv("FAKE_ACP_STEER_DROP", "1")
+	e := newAfterToolsEnv(t)
+	_, p1 := e.submit("steer-quiet-hold", "")
+	waitFor(t, func() bool { return e.hasText("working") }, "hold prompt to start")
+
+	msg, turn := e.submit("use usb", deliverySteer)
+	if turn.ID != p1.ID {
+		t.Fatalf("steer created turn %s, want the running turn %s", turn.ID, p1.ID)
+	}
+	e.waitStatus(p1.ID, "completed")
+
+	waitFor(t, func() bool {
+		done, err := e.st.LastCompletedTurn(context.Background(), e.conv.ID)
+		return err == nil && done.UserMessageID == msg.ID
+	}, "dropped steer to run as its own turn")
+
+	lines := e.trace()
+	p1ID, _ := promptStart(t, lines, "steer-quiet-hold")
+	_, requeued := promptStart(t, lines, "use usb")
+	responded := -1
+	for i, l := range lines {
+		if l == "respond "+p1ID {
+			responded = i
+		}
+	}
+	if responded < 0 || requeued <= responded {
+		t.Fatalf("requeued steer must be sent only after the turn ended: %v", lines)
+	}
+}
+
+// A steer the agent visibly answered keeps riding the running turn and is
+// not re-sent when that turn ends.
+func TestConsumedSteerIsNotRequeued(t *testing.T) {
+	t.Setenv("FAKE_ACP_STEERING", "1")
+	e := newAfterToolsEnv(t)
+	_, p1 := e.submit("steer-quiet-hold", "")
+	waitFor(t, func() bool { return e.hasText("working") }, "hold prompt to start")
+
+	_, turn := e.submit("use usb", deliverySteer)
+	if turn.ID != p1.ID {
+		t.Fatalf("steer created turn %s, want the running turn %s", turn.ID, p1.ID)
+	}
+	waitFor(t, func() bool { return e.hasText("saw-steer: use usb") }, "agent to answer the steer")
+	e.waitStatus(p1.ID, "completed")
+
+	// A wrong requeue would put a second prompt_start on the wire; give it
+	// a moment past turn completion, then assert only the hold prompt ran.
+	deadline := time.Now().Add(700 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		for _, l := range e.trace() {
+			if strings.HasPrefix(l, "prompt_start ") && strings.Contains(l, "use usb") {
+				t.Fatalf("consumed steer was re-sent: %v", e.trace())
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A steer answered only by starting a tool call counts as consumed — a new
+// tool call is generated output, so the input is not re-sent when the turn
+// ends. Re-sending it would duplicate work the agent already began.
+func TestToolAnsweredSteerIsNotRequeued(t *testing.T) {
+	t.Setenv("FAKE_ACP_STEERING", "1")
+	t.Setenv("FAKE_ACP_STEER_TOOL", "1")
+	e := newAfterToolsEnv(t)
+	_, p1 := e.submit("steer-quiet-hold", "")
+	waitFor(t, func() bool { return e.hasText("working") }, "hold prompt to start")
+
+	_, turn := e.submit("use usb", deliverySteer)
+	if turn.ID != p1.ID {
+		t.Fatalf("steer created turn %s, want the running turn %s", turn.ID, p1.ID)
+	}
+	waitFor(t, func() bool { return e.hasToolMessage(p1.ID) }, "steer tool call")
+	e.waitStatus(p1.ID, "completed")
+
+	deadline := time.Now().Add(700 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		for _, l := range e.trace() {
+			if strings.HasPrefix(l, "prompt_start ") && strings.Contains(l, "use usb") {
+				t.Fatalf("steer answered with a tool call was re-sent: %v", e.trace())
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // A steer must not be injected before the original prompt reached the wire —
 // otherwise it can overtake it.
 func TestInjectableRequiresPromptSent(t *testing.T) {

@@ -53,11 +53,19 @@ func (s *Service) trySteer(ctx context.Context, conv store.Conversation, text, c
 	}
 	blocks = appendPromptContext(blocks, inputContext)
 	if steering {
+		// Snapshot the assistant-output sequence before the RPC — the
+		// steering response can resolve while the agent's own pre-response
+		// updates are still draining, so an accept-time snapshot cannot tell
+		// "answered the steer" apart from "was already talking".
+		seq := a.outputMarker()
 		steerCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		res, err := s.agents.Steer(steerCtx, session, blocks)
 		cancel()
 		if err == nil && res.Accepted() {
 			s.log.Info("prompt steered", "conversation", conv.ID, "turn", turn.ID, "outcome", res.Outcome)
+			if res.Outcome == "injected" && a.addSteerAccepted(msg.ID, steerEntry{seq: seq, originChannel: originChannel, originRef: originRef}) {
+				s.requeueSteerMessage(a.conversationID, msg.ID, originChannel, originRef)
+			}
 			return msg, turn, true, nil
 		}
 		s.log.Warn("steering was not accepted; queueing the message", "conversation", conv.ID, "error", err, "outcome", res.Outcome)
@@ -76,18 +84,43 @@ func (s *Service) trySteer(ctx context.Context, conv store.Conversation, text, c
 		return msg, queued, true, qerr
 	}
 
-	go s.injectMidTurn(a, session, blocks)
+	go s.injectMidTurn(a, session, msg.ID, blocks, originChannel, originRef)
 	s.log.Info("prompt steered", "conversation", conv.ID, "turn", turn.ID, "mode", "mid-turn")
 	return msg, turn, true, nil
 }
 
 // injectMidTurn sends a second session/prompt into the running turn. Devin
 // answers that call when the turn ends, with the same stop reason as the
-// original prompt, so this result must not finish the turn.
-func (s *Service) injectMidTurn(a *activeTurn, session *agent.Session, blocks []acp.ContentBlock) {
+// original prompt, so this result must not finish the turn. A failed inject
+// requeues the input — like an accepted steer, it has no turn of its own and
+// would otherwise dangle in history unsent.
+func (s *Service) injectMidTurn(a *activeTurn, session *agent.Session, msgID string, blocks []acp.ContentBlock, originChannel, originRef string) {
 	_, err := s.agents.Prompt(a.ctx, session, blocks)
 	if err != nil && a.ctx.Err() == nil {
-		s.log.Warn("mid-turn prompt failed", "conversation", a.conversationID, "error", err)
+		s.log.Warn("mid-turn prompt failed; queueing the input", "conversation", a.conversationID, "error", err)
+		s.requeueSteerMessage(a.conversationID, msgID, originChannel, originRef)
+	}
+}
+
+// requeueOrphanedSteers resends accepted steers the turn ended up dropping:
+// inputs the agent acknowledged but never produced output for. Each claimed
+// message is queued once via takeOrphanedSteers' delete.
+func (s *Service) requeueOrphanedSteers(a *activeTurn) {
+	for _, c := range a.takeOrphanedSteers() {
+		s.requeueSteerMessage(a.conversationID, c.msgID, c.originChannel, c.originRef)
+	}
+}
+
+func (s *Service) requeueSteerMessage(conversationID, msgID, originChannel, originRef string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	msg, err := s.store.GetMessage(ctx, msgID)
+	if err != nil {
+		s.log.Warn("failed to reload steered message", "conversation", conversationID, "message", msgID, "error", err)
+		return
+	}
+	if _, err := s.queueStoredMessage(ctx, conversationID, msg.ID, originChannel, originRef); err != nil {
+		s.log.Warn("failed to requeue steered message", "conversation", conversationID, "message", msgID, "error", err)
 	}
 }
 

@@ -357,6 +357,9 @@ func (s *Service) applyToolUpdate(a *activeTurn, u acp.SessionUpdate) {
 		t = &toolState{Status: "pending", ToolCallID: u.ToolCallID}
 		a.tools[u.ToolCallID] = t
 		a.toolCount++
+		// A newly started tool call is generated output — it counts toward
+		// steer consumption so an accepted steer is not re-sent.
+		a.outputSeq++
 	}
 	if u.Title != "" {
 		t.Title = u.Title
@@ -891,5 +894,11 @@ func (s *Service) finishTurn(a *activeTurn, status, stopReason string, runErr er
 	}
 	a.mu.Unlock()
 	s.finishActive(a)
+	// A steer the agent accepted but never consumed rides this turn only — if
+	// the turn ended without output after the accept, the input is requeued
+	// as a normal turn instead of staying a dangling final message.
+	if status == "completed" {
+		s.requeueOrphanedSteers(a)
+	}
 	s.log.Info("turn finished", "conversation", a.conversationID, "turn", a.turn.ID, "status", status, "stop", stopReason)
 }

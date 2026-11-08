@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -122,13 +123,27 @@ type activeTurn struct {
 	cancelRequested bool
 	afterTools      bool
 	afterToolsBy    string
-	finished        bool
-	finalStatus     string
-	finalError      string
-	noOutput        bool
-	finalDelivery   bool
-	startedAt       time.Time
-	lastFlush       time.Time
+	// steerAccepted holds _session/steering "injected" inputs (msgID →
+	// steerEntry). An injected steer has no turn of its own, so a turn that
+	// ends with no generated output after the steer was sent dropped it —
+	// it is requeued as a normal turn instead of dangling in history.
+	steerAccepted map[string]steerEntry
+	steerNextOrd  int64
+	// outputSeq increments on every generated assistant output — message
+	// text, thought, or a newly started tool call. A steer claims orphan
+	// only when this is unchanged since the snapshot taken just before its
+	// RPC; any output that lands after the snapshot (even trajectory output
+	// already in flight) counts as consumed, so a delivered input is never
+	// re-sent. Tool-call updates to calls started before the snapshot do
+	// not count.
+	outputSeq     int64
+	finished      bool
+	finalStatus   string
+	finalError    string
+	noOutput      bool
+	finalDelivery bool
+	startedAt     time.Time
+	lastFlush     time.Time
 
 	// wake nudges the turn's coordinator; cancelSignal closes once a graceful
 	// cancel is requested; finishedCh closes when the turn finishes.
@@ -160,6 +175,7 @@ func newActiveTurn(conv store.Conversation, turn store.Turn, ag store.Agent, use
 		tools:          map[string]*toolState{},
 		approvals:      map[string]bool{},
 		startedAt:      time.Now(),
+		steerAccepted:  map[string]steerEntry{},
 		wake:           make(chan struct{}, 1),
 		cancelSignal:   make(chan struct{}),
 		finishedCh:     make(chan struct{}),
@@ -287,7 +303,77 @@ func (a *activeTurn) appendAssistant(delta string) (text string, first bool, off
 	a.assistant.WriteString(delta)
 	a.assistantAll.WriteString(delta)
 	a.assistantDirty = true
+	a.outputSeq++
 	return delta, first, offset
+}
+
+// steerEntry is one accepted-but-turn-bound steer: the output snapshot taken
+// just before the steer RPC plus the delivery origin the queued turn needs
+// if the input turns out to be dropped.
+type steerEntry struct {
+	seq           int64
+	ord           int64
+	originChannel string
+	originRef     string
+}
+
+// steerClaim is a dropped steer being requeued as a normal turn.
+type steerClaim struct {
+	msgID         string
+	originChannel string
+	originRef     string
+}
+
+// outputMarker returns the current assistant-output sequence. A steer
+// snapshots it before the RPC; takeOrphanedSteers claims entries whose
+// snapshot is still current.
+func (a *activeTurn) outputMarker() int64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.outputSeq
+}
+
+// addSteerAccepted records an injected steer. It reports dropped=true when
+// the turn already finished completed — finishTurn's orphan pass ran before
+// this accept landed, so the caller must requeue immediately. A steer
+// accepted on a cancelled or errored turn is not tracked: the user ended
+// that turn deliberately.
+func (a *activeTurn) addSteerAccepted(msgID string, e steerEntry) (dropped bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.finished {
+		return a.finalStatus == "completed"
+	}
+	e.ord = a.steerNextOrd
+	a.steerNextOrd++
+	a.steerAccepted[msgID] = e
+	return false
+}
+
+// takeOrphanedSteers returns the accepted steers no generated output
+// followed, in submission order, and clears them, so a second caller
+// cannot requeue the same message.
+func (a *activeTurn) takeOrphanedSteers() []steerClaim {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	type ordered struct {
+		ord   int64
+		claim steerClaim
+	}
+	var lost []ordered
+	for id, e := range a.steerAccepted {
+		if e.seq != a.outputSeq {
+			continue
+		}
+		lost = append(lost, ordered{e.ord, steerClaim{msgID: id, originChannel: e.originChannel, originRef: e.originRef}})
+		delete(a.steerAccepted, id)
+	}
+	sort.Slice(lost, func(i, j int) bool { return lost[i].ord < lost[j].ord })
+	claims := make([]steerClaim, len(lost))
+	for i, l := range lost {
+		claims[i] = l.claim
+	}
+	return claims
 }
 
 func (a *activeTurn) appendThought(delta string) (text string, first bool, offset int) {
@@ -300,6 +386,7 @@ func (a *activeTurn) appendThought(delta string) (text string, first bool, offse
 	first = a.thought.Len() == 0
 	a.thought.WriteString(delta)
 	a.thoughtDirty = true
+	a.outputSeq++
 	return delta, first, offset
 }
 
