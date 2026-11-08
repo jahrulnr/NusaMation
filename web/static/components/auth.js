@@ -1,12 +1,12 @@
-import { $, brandImage, esc, icon } from "./util.js?v=43";
-import { S, composers, setSelectedProject, switchComposer } from "./state.js?v=43";
-import { REQUEST_TIMEOUT_MS, api } from "./api.js?v=43";
-import { closeModal } from "./modal.js?v=43";
-import { closeWS } from "./ws.js?v=43";
-import { startApp } from "./boot.js?v=43";
-import { resetBrowserPane } from "./browser.js?v=43";
-import { resetConvMeta } from "./convmeta.js?v=43";
-import { resetSidebarState } from "./sidebar.js?v=43";
+import { $, brandImage, esc, icon } from "./util.js?v=44";
+import { S, composers, setSelectedProject, switchComposer } from "./state.js?v=44";
+import { REQUEST_TIMEOUT_MS, api } from "./api.js?v=44";
+import { closeModal } from "./modal.js?v=44";
+import { closeWS } from "./ws.js?v=44";
+import { startApp } from "./boot.js?v=44";
+import { resetBrowserPane } from "./browser.js?v=44";
+import { resetConvMeta } from "./convmeta.js?v=44";
+import { resetSidebarState } from "./sidebar.js?v=44";
 
 export function renderLogin(error = "") {
   S.booted = false;
