@@ -4,6 +4,10 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+### Fixed
+
+- **Raw HTML in messages no longer renders as elements.** Agent text like `srcdoc="<button>Inner</button>"` used to produce a real (dead) `<button>` inside the bubble — DOMPurify's allowlist permits interactive tags. Marked `html` tokens are now escaped to text before sanitizing, so embedded markup always displays literally.
+
 ## [0.2.2] - 2026-11-08
 
 ### Changed

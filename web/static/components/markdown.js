@@ -52,6 +52,10 @@ export function renderMarkdown(text, scope = "preview", format = "markdown") {
   if (window.marked && window.DOMPurify) {
     try {
       const parser = new window.marked.Marked({ gfm: true, breaks: true });
+      // Chat is prose, not a host for live markup: raw HTML in message text
+      // renders as literal text instead of becoming real <button>/<iframe>
+      // elements (which DOMPurify would otherwise let through).
+      parser.use({ renderer: { html: (token) => esc(token.raw) } });
       if (window.NusaMarkdown) parser.use(window.NusaMarkdown.latex(), window.NusaMarkdown.math(), window.NusaMarkdown.markedFootnote({ prefixId: "footnote-" + scope.replace(/[^a-zA-Z0-9_-]/g, "-") + "-" }), window.NusaMarkdown.emoji());
       if (format === "whatsapp") parser.use({
         walkTokens(token) {

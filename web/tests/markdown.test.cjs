@@ -96,3 +96,12 @@ test('footnote ids are scoped to each message', () => {
   assert.match(parse('a[^1]\n\n[^1]: first', 'one'), /footnote-one-1/);
   assert.match(parse('b[^1]\n\n[^1]: second', 'two'), /footnote-two-1/);
 });
+
+test('raw HTML in message text renders as literal text, not elements', () => {
+  const html = renderContext.renderMarkdown('iframe id=frame srcdoc="Inner <button>Frame</button> content"', 'html-leak', 'markdown');
+  assert.match(html, /&lt;button&gt;Frame&lt;\/button&gt;/);
+  assert.equal(html.includes('<button>'), false);
+  const block = renderContext.renderMarkdown('<div onclick="x()">hi</div>', 'html-block', 'markdown');
+  assert.match(block, /&lt;div/);
+  assert.equal(block.includes('<div onclick'), false);
+});
