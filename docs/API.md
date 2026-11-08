@@ -161,7 +161,7 @@ WhatsApp settings:
 
 ## Embedded browser
 
-Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser context per session). Requires a Chrome/Chromium binary (`-browser-exec` / `NUSAMATION_BROWSER_EXEC`, otherwise PATH discovery).
+Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser context per session). Requires a Chrome/Chromium binary (`-browser-exec` / `NUSAMATION_BROWSER_EXEC`, otherwise PATH discovery; on Windows the standard install locations under `Program Files` and `LOCALAPPDATA` are also searched for Chrome, Chromium, and Edge).
 
 | Method | Path | Notes |
 |---|---|---|

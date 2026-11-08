@@ -4,6 +4,10 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+### Fixed
+
+- **Browser pane on Windows:** the embedded browser now finds Chrome-family executables installed in the standard locations (`Program Files` / `LOCALAPPDATA` — Chrome, Chromium, Edge) instead of only searching PATH, where Windows installers never put them. Previously the pane reported "no Chromium executable found" on a stock Windows install.
+
 ## [0.2.1] - 2026-11-08
 
 ### Fixed

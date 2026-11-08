@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -49,7 +50,8 @@ type SaveAttachmentFunc func(ctx context.Context, conversationID, name, mime str
 
 type Options struct {
 	// ExecPath is the Chromium/Chrome executable path (-browser-exec /
-	// NUSAMATION_BROWSER_EXEC). Empty triggers PATH discovery.
+	// NUSAMATION_BROWSER_EXEC). Empty triggers PATH discovery plus any
+	// platform-specific install-location fallback.
 	ExecPath string
 	Log      *slog.Logger
 	// SaveAttachment persists an annotation crop through the upload path
@@ -453,8 +455,17 @@ func (m *Manager) resolveExecPath() (string, error) {
 			return p, nil
 		}
 	}
+	searched := strings.Join(execCandidates, ", ")
+	if fb := execFallbackPaths(); len(fb) > 0 {
+		searched += ", standard install locations"
+		for _, p := range fb {
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				return p, nil
+			}
+		}
+	}
 	return "", fmt.Errorf("%w: no Chromium executable found (searched: %s); set -browser-exec or NUSAMATION_BROWSER_EXEC",
-		ErrUnavailable, strings.Join(execCandidates, ", "))
+		ErrUnavailable, searched)
 }
 
 func (m *Manager) removeSession(s *Session) {
