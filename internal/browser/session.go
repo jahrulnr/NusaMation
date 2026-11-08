@@ -962,9 +962,13 @@ func (s *Session) emulate(o DeviceOpts) error {
 	s.mu.Lock()
 	s.device = o
 	s.width, s.height = int(o.Width), int(o.Height)
+	// Drop the stale frame reference: metaLocked reports frame dims over the
+	// profile, and a page with no pixel damage (about:blank) may never send
+	// another frame — the meta would then pin the old viewport forever.
+	s.lastFrame = nil
 	s.mu.Unlock()
-	// Publish the profile change immediately; the viewport dims inside meta
-	// may briefly lag until the next screencast frame, which is fine.
+	// Publish the profile change immediately; scroll offsets come back with
+	// the next screencast frame.
 	s.maybeMeta()
 	return nil
 }
