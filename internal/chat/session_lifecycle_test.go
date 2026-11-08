@@ -29,13 +29,15 @@ func TestArchiveAndDeleteAllAgentSessions(t *testing.T) {
 	if _, err := e.svc.UpdateConversation(ctx, e.conv.ID, ConversationPatch{Archived: &archived}); err != nil {
 		t.Fatal(err)
 	}
-	if got := countTrace(e.trace(), "session_close"); got != 2 {
-		t.Fatalf("close calls = %d, trace: %v", got, e.trace())
+	// Both sessions ran no prompt, so dropping them deletes the empty
+	// agent-side entries outright instead of closing them for resume.
+	if got := countTrace(e.trace(), "session_delete"); got != 2 {
+		t.Fatalf("delete calls = %d, trace: %v", got, e.trace())
 	}
 	if err := e.svc.DeleteConversation(ctx, e.conv.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := countTrace(e.trace(), "session_delete"); got != 2 {
+	if got := countTrace(e.trace(), "session_delete"); got != 4 {
 		t.Fatalf("delete calls = %d, trace: %v", got, e.trace())
 	}
 }

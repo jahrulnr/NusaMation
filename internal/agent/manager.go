@@ -62,6 +62,8 @@ type Session struct {
 	legacyMode     bool
 	loaded         bool
 	recovered      bool
+	fresh          bool // created via session/new, not load/resume
+	prompted       bool // a prompt was dispatched on this session
 	createdAt      time.Time
 	lastUsed       time.Time
 	mu             sync.Mutex
@@ -586,9 +588,7 @@ func (m *Manager) Probe(ctx context.Context, agentID string) (ProbeResult, error
 		m.Sink().AgentState(agentID, "error", err.Error())
 		return ProbeResult{}, err
 	}
-	if client.SupportsClose() {
-		_ = client.CloseSession(context.Background(), sess.SessionID)
-	}
+	_ = client.DiscardSession(context.Background(), sess.SessionID)
 	if rt != nil {
 		rt.discardPending(sess.SessionID)
 	}

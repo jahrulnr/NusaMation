@@ -323,6 +323,7 @@ func (r *Runtime) loadOrCreate(ctx context.Context, s *Session, req EnsureReques
 	}
 	s.loaded = true
 	s.recovered = recovered
+	s.fresh = !loadedExisting
 	s.lastUsed = time.Now()
 	configs := append(json.RawMessage(nil), s.configOptions...)
 	s.mu.Unlock()
@@ -601,6 +602,9 @@ func (r *Runtime) Prompt(ctx context.Context, s *Session, blocks []acp.ContentBl
 	}
 	s.touch()
 	result, err := client.Prompt(ctx, s.ACPID(), blocks)
+	s.mu.Lock()
+	s.prompted = true
+	s.mu.Unlock()
 	if acp.IsAuthRequired(err) {
 		r.setState("needs_auth", trimErr(err))
 		return result, &AuthRequiredError{Methods: client.AuthMethods(), Err: err}
@@ -640,9 +644,16 @@ func (r *Runtime) DropSession(ctx context.Context, s *Session) {
 		defer r.mu.Unlock()
 		return r.client
 	}()
-	if client != nil && client.SupportsClose() {
+	if client != nil {
+		s.mu.Lock()
+		unused := s.fresh && !s.prompted
+		s.mu.Unlock()
 		closeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		_ = client.CloseSession(closeCtx, s.ACPID())
+		if unused {
+			_ = client.DiscardSession(closeCtx, s.ACPID())
+		} else if client.SupportsClose() {
+			_ = client.CloseSession(closeCtx, s.ACPID())
+		}
 		cancel()
 	}
 	s.mu.Lock()

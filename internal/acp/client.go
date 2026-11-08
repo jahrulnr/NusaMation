@@ -201,6 +201,16 @@ func (c *Client) DeleteSession(ctx context.Context, sessionID string) error {
 	return c.proc.Call(ctx, "session/delete", map[string]any{"sessionId": sessionID}, nil)
 }
 
+// DiscardSession ends a throwaway session (probe, catalog preview). Prefer
+// session/delete so the agent-side record is removed entirely — agents that
+// only implement session/close keep the empty entry in their history.
+func (c *Client) DiscardSession(ctx context.Context, sessionID string) error {
+	if c.init.SupportsDelete() {
+		return c.DeleteSession(ctx, sessionID)
+	}
+	return c.CloseSession(ctx, sessionID)
+}
+
 func (c *Client) Authenticate(ctx context.Context, methodID string) error {
 	return c.proc.Call(ctx, "authenticate", map[string]any{"methodId": methodID}, nil)
 }

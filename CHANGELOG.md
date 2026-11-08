@@ -28,6 +28,8 @@ All notable changes to the Go core will be documented in this file. The format i
 
 - **Steer dropped at turn end:** an `_session/steering` "injected" input has no turn of its own — it rides the running turn. When that turn finished with no assistant output after the accept, the input sat in history as a final message and was never answered. Accepted steers are now tracked against the turn; on completion, one that saw no following output is requeued as a normal queued turn (cancellable and editable like any other), and a failed mid-turn inject is requeued immediately.
 
+- **Empty agent-side sessions:** probe, catalog-preview, and dropped sessions that never ran a prompt now use `session/delete` when the agent advertises it (falling back to `session/close`), instead of always closing. Agents like OpenCode keep `session/close`d entries in their session history, so every probe, preview respawn, or agent switch on an unsent conversation used to leave a ghost "Session" row; those are now removed entirely. Sessions that saw a prompt still close (resumable via `session/load`).
+
 - **Sidebar empty state:** "No conversations yet" no longer shows when the only conversations live inside projects — it now appears only when there are no unarchived conversations at all.
 
 - **New project scope:** creating a project now selects it as the scope for the next conversation and expands it in the sidebar, so the composer's "New conversation in …" chip appears immediately. Editing a project leaves the current scope alone.

@@ -259,9 +259,9 @@ func (r *Runtime) dropPreviewLocked(ctx context.Context, client *acp.Client) {
 	}
 	r.unregisterPreview(old.sessionID)
 	r.preview = nil
-	if old.client == client && client.SupportsClose() {
+	if old.client == client {
 		closeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		_ = client.CloseSession(closeCtx, old.sessionID)
+		_ = client.DiscardSession(closeCtx, old.sessionID)
 		cancel()
 	}
 }

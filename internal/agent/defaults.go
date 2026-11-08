@@ -127,13 +127,11 @@ func (m *Manager) previewDefaultsLive(ctx context.Context, ag store.Agent, selec
 	if err != nil {
 		return nil, err
 	}
-	if client.SupportsClose() {
-		defer func() {
-			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = client.CloseSession(closeCtx, session.SessionID)
-		}()
-	}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = client.DiscardSession(closeCtx, session.SessionID)
+	}()
 	configs, legacy := mergeLegacyModes(session.ConfigOptions, session.Modes)
 	if len(configs) == 0 {
 		configs = json.RawMessage("[]")
