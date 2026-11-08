@@ -1,4 +1,4 @@
-import { $, clamp, esc, icon, truncate } from "./util.js?v=45";
+import { $, $$, clamp, esc, icon, truncate } from "./util.js?v=45";
 import { S, composerKey, onComposerSwitch } from "./state.js?v=45";
 import { cachedBrowserMeta, onBrowserMetaRestored, saveBrowserOpen, saveLastURL, scheduleDraftSave, usableBrowserURL, whenBrowserMeta } from "./convmeta.js?v=45";
 import { api } from "./api.js?v=45";
