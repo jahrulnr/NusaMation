@@ -1,11 +1,11 @@
-import { $, $$, agentById, agentName, configChoices, currentAgent, esc, icon, parseJSON, pretty, truncate } from "./util.js?v=33";
-import { S } from "./state.js?v=33";
-import { api } from "./api.js?v=33";
-import { toast } from "./toast.js?v=33";
-import { closeModal, modalHead, openModal } from "./modal.js?v=33";
-import { currentApprovals, scheduleChatRender } from "./chat.js?v=33";
-import { renderSidebar } from "./sidebar.js?v=33";
-import { renderTopbar } from "./topbar.js?v=33";
+import { $, $$, agentById, agentName, configChoices, currentAgent, esc, icon, parseJSON, pretty, truncate } from "./util.js?v=35";
+import { S } from "./state.js?v=35";
+import { api } from "./api.js?v=35";
+import { toast } from "./toast.js?v=35";
+import { closeModal, modalHead, openModal } from "./modal.js?v=35";
+import { currentApprovals, scheduleChatRender } from "./chat.js?v=35";
+import { renderSidebar } from "./sidebar.js?v=35";
+import { renderTopbar } from "./topbar.js?v=35";
 
 export function approvalModeRow() {
   const opt = S.configs.find((o) => o && o.id && o.type === "select" && String(o.category || "").toLowerCase() === "mode");

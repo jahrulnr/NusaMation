@@ -1,11 +1,11 @@
-import { $, esc, icon } from "./util.js?v=33";
-import { S, composers, switchComposer } from "./state.js?v=33";
-import { REQUEST_TIMEOUT_MS, api } from "./api.js?v=33";
-import { closeModal } from "./modal.js?v=33";
-import { closeWS } from "./ws.js?v=33";
-import { startApp } from "./boot.js?v=33";
-import { resetBrowserPane } from "./browser.js?v=33";
-import { resetConvMeta } from "./convmeta.js?v=33";
+import { $, esc, icon } from "./util.js?v=35";
+import { S, composers, switchComposer } from "./state.js?v=35";
+import { REQUEST_TIMEOUT_MS, api } from "./api.js?v=35";
+import { closeModal } from "./modal.js?v=35";
+import { closeWS } from "./ws.js?v=35";
+import { startApp } from "./boot.js?v=35";
+import { resetBrowserPane } from "./browser.js?v=35";
+import { resetConvMeta } from "./convmeta.js?v=35";
 
 export function renderLogin(error = "") {
   S.booted = false;

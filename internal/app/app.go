@@ -22,6 +22,7 @@ import (
 	"github.com/jahrulnr/nusamation/internal/auth"
 	"github.com/jahrulnr/nusamation/internal/automation"
 	"github.com/jahrulnr/nusamation/internal/browser"
+	"github.com/jahrulnr/nusamation/internal/browseruse"
 	"github.com/jahrulnr/nusamation/internal/channels"
 	webchannel "github.com/jahrulnr/nusamation/internal/channels/web"
 	"github.com/jahrulnr/nusamation/internal/channels/whatsapp"
@@ -36,17 +37,18 @@ import (
 )
 
 type App struct {
-	cfg      config.Config
-	log      *slog.Logger
-	store    *store.Store
-	agents   *agent.Manager
-	browser  *browser.Manager
-	channels *channels.Manager
-	chat     *chat.Service
-	hub      *realtime.Hub
-	notifier *notify.Broadcaster
-	updater  *update.Manager
-	logFile  *os.File
+	cfg        config.Config
+	log        *slog.Logger
+	store      *store.Store
+	agents     *agent.Manager
+	browser    *browser.Manager
+	browserUse *browseruse.Grants
+	channels   *channels.Manager
+	chat       *chat.Service
+	hub        *realtime.Hub
+	notifier   *notify.Broadcaster
+	updater    *update.Manager
+	logFile    *os.File
 }
 
 func Run(ctx context.Context, cfg config.Config) error {
@@ -127,9 +129,10 @@ func New(cfg config.Config) (*App, error) {
 		logger.Warn("startup recovery failed", "error", err)
 	}
 
+	grants := browseruse.NewGrants()
 	a := &App{
 		cfg: cfg, log: logger, store: st, agents: agentMgr, browser: browserMgr,
-		channels: chanMgr, chat: chatSvc, hub: hub, notifier: notifyBus,
+		browserUse: grants, channels: chanMgr, chat: chatSvc, hub: hub, notifier: notifyBus,
 		updater: updater, logFile: logFile,
 	}
 	if created {
@@ -141,7 +144,7 @@ func New(cfg config.Config) (*App, error) {
 func (a *App) Serve(ctx context.Context) error {
 	api, err := httpapi.New(httpapi.Options{
 		Config: a.cfg, Store: a.store, Chat: a.chat, Agents: a.agents,
-		Browser: a.browser, Channels: a.channels, Hub: a.hub, Log: a.log,
+		Browser: a.browser, BrowserUse: a.browserUse, Channels: a.channels, Hub: a.hub, Log: a.log,
 		Notifier: a.notifier, Updater: a.updater,
 	})
 	if err != nil {
@@ -152,6 +155,12 @@ func (a *App) Serve(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", a.cfg.Addr, err)
 	}
+	if exe, err := os.Executable(); err == nil {
+		a.agents.EnableBrowserUse(a.browserUse, exe, loopbackBase(ln.Addr()))
+	} else {
+		a.log.Warn("browser_use MCP not registered", "error", err)
+	}
+	a.chat.ResumeQueues(ctx)
 	url := a.publicURL(ln.Addr())
 	srv := &http.Server{
 		Handler:           handler,
@@ -217,6 +226,25 @@ func (a *App) Close() {
 	if a.logFile != nil {
 		_ = a.logFile.Close()
 	}
+}
+
+// loopbackBase is the origin the browser_use child calls. A wildcard listen
+// address is rewritten to 127.0.0.1 so the child does not dial 0.0.0.0.
+func loopbackBase(addr net.Addr) string {
+	host := ""
+	if addr != nil {
+		host = addr.String()
+	}
+	if after, ok := strings.CutPrefix(host, "0.0.0.0:"); ok {
+		host = "127.0.0.1:" + after
+	}
+	if after, ok := strings.CutPrefix(host, "[::]:"); ok {
+		host = "127.0.0.1:" + after
+	}
+	if host == "" || !strings.Contains(host, ":") {
+		host = "127.0.0.1:8787"
+	}
+	return "http://" + host
 }
 
 func (a *App) publicURL(addr net.Addr) string {

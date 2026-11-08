@@ -2,7 +2,7 @@
 
 Base URL: `http://127.0.0.1:8787/api`
 
-The API is private to the single admin account. All routes except `/health`, `/auth/status` and `/auth/login` require the `nm_session` cookie. Mutating requests additionally require:
+The API is private to the single admin account. All routes except `/health`, `/auth/status`, `/auth/login`, and `POST /browser-use` require the `nm_session` cookie. Mutating requests additionally require:
 
 ```http
 X-CSRF-Token: <csrf from login or /auth/status>
@@ -34,7 +34,7 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 
 ```json
 {
-  "app": {"name": "NusaMation", "version": "0.1.0", "publicUrl": "...", "dataDir": "...", "dev": false},
+  "app": {"name": "NusaMation", "version": "0.2.0", "publicUrl": "...", "dataDir": "...", "dev": false},
   "agents": [], "mcp": {}, "channels": [], "conversations": [], "approvals": [],
   "routingDefaults": {"replyToOrigin": true, "mirrorFinal": false, "notifyApprovals": true},
   "whatsapp": {"enabled": true, "groupPolicy": "mention", "...": "..."},

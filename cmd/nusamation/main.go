@@ -40,6 +40,9 @@ func main() {
 		case "whatsapp", "wa":
 			fail("whatsapp", whatsappCmd(args[1:]))
 			return
+		case "browser-use":
+			fail("browser-use", browserUseCmd())
+			return
 		}
 	}
 	cfg, err := config.Parse(args)
@@ -72,6 +75,7 @@ Commands:
   agent         Manage ACP agent CLIs (list, detect, get, add, set, remove)
   config        Manage stored settings (list, get, add, set, remove)
   whatsapp      Manage WhatsApp channel settings and send messages
+  browser-use   Internal stdio MCP server for the embedded browser
   reset-password  Reset the admin password
   version       Print version
 

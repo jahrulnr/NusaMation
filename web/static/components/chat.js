@@ -1,11 +1,11 @@
-import { $, $$, TOOL_KINDS, agentById, agentName, agentOrb, clock, currentAgent, dayLabel, esc, fmtBytes, icon, parseJSON, pretty, truncate } from "./util.js?v=33";
-import { S } from "./state.js?v=33";
-import { enhanceMarkdown, plainMarkdown, renderMarkdown } from "./markdown.js?v=33";
-import { closeDetachedPopovers, openPopover } from "./popover.js?v=33";
-import { openModal } from "./modal.js?v=33";
-import { approvalCard } from "./requests.js?v=33";
-import { isBusyTurn, queuedTurnFor, queueStatusLabel } from "./composer.js?v=33";
-import { loadConversation, renderHistoryControl } from "./conversations.js?v=33";
+import { $, $$, TOOL_KINDS, agentById, agentName, agentOrb, clock, currentAgent, dayLabel, esc, fmtBytes, icon, parseJSON, pretty, truncate } from "./util.js?v=35";
+import { S } from "./state.js?v=35";
+import { enhanceMarkdown, plainMarkdown, renderMarkdown } from "./markdown.js?v=35";
+import { closeDetachedPopovers, openPopover } from "./popover.js?v=35";
+import { openModal } from "./modal.js?v=35";
+import { approvalCard } from "./requests.js?v=35";
+import { isBusyTurn, queuedTurnFor, queueStatusLabel } from "./composer.js?v=35";
+import { loadConversation, renderHistoryControl } from "./conversations.js?v=35";
 
 /* ---------------- chat ---------------- */
 export function renderChat(skeleton = false) {

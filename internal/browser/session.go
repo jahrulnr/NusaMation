@@ -152,6 +152,7 @@ type Session struct {
 	lastFrame    *page.ScreencastFrameMetadata
 	lastMeta     Meta
 	lastNavCheck time.Time
+	pointer      pointerMark
 	stream       *Stream
 	castCtx      context.Context
 	castCancel   context.CancelFunc
@@ -611,6 +612,12 @@ func (s *Session) Attach() (*Stream, error) {
 	}
 	b, _ := json.Marshal(meta)
 	sub.sendCtrl(b)
+	s.mu.Lock()
+	mark := s.pointer
+	s.mu.Unlock()
+	if mark.on {
+		sub.Send(mark.json())
+	}
 	go s.castLoop(castCtx, castCancel)
 	go s.forceScreenshot()
 	return sub, nil
@@ -687,6 +694,47 @@ func (s *Session) onFrame(ev page.EventScreencastFrame) {
 	}
 	sub.sendFrame(ev.Data)
 	s.maybeNavCheck()
+}
+
+// JPEG captures the current viewport. quality 0 uses the screencast quality.
+func (s *Session) JPEG(quality int64) ([]byte, error) {
+	if quality <= 0 {
+		quality = screencastQuality
+	}
+	ctx, cancel := s.ioCtx()
+	defer cancel()
+	res, err := chromedp.Call(ctx, page.CaptureScreenshot,
+		page.CaptureScreenshotParams{Format: "jpeg", Quality: &quality})
+	if err != nil {
+		return nil, err
+	}
+	return res.Data, nil
+}
+
+type pointerMark struct {
+	x, y float64
+	kind string
+	on   bool
+}
+
+func (p pointerMark) json() []byte {
+	b, _ := json.Marshal(map[string]any{"type": "pointer", "x": p.x, "y": p.y, "kind": p.kind})
+	return b
+}
+
+// ShowPointer tells the attached live view where the agent pointer is.
+// kind is "move", "click", or "scroll". The mark is kept and replayed on the
+// next Attach, so a pane that opens after the action still sees it.
+func (s *Session) ShowPointer(x, y float64, kind string) {
+	mark := pointerMark{x: x, y: y, kind: kind, on: true}
+	s.mu.Lock()
+	s.pointer = mark
+	sub := s.stream
+	s.mu.Unlock()
+	if sub == nil {
+		return
+	}
+	sub.Send(mark.json())
 }
 
 // forceScreenshot pushes one JPEG frame; screencast only emits on repaint, so

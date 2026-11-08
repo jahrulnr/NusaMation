@@ -1,6 +1,6 @@
-import { $, $$, agentById, esc, icon, timeAgo, truncate } from "./util.js?v=33";
-import { S } from "./state.js?v=33";
-import { closeDetachedPopovers } from "./popover.js?v=33";
+import { $, $$, agentById, esc, icon, timeAgo, truncate } from "./util.js?v=35";
+import { S } from "./state.js?v=35";
+import { closeDetachedPopovers } from "./popover.js?v=35";
 
 /* ---------------- sidebar ---------------- */
 export function renderSidebar() {

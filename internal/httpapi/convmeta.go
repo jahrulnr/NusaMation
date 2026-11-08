@@ -162,6 +162,9 @@ func (s *Server) handlePutConversationMeta(w http.ResponseWriter, r *http.Reques
 // left for whatever else lands there later. metaMu keeps a racing PUT from
 // recreating the file right after its existence check passed.
 func (s *Server) dropConvMeta(id string) {
+	if s.browserUse != nil {
+		s.browserUse.Revoke(id)
+	}
 	s.metaMu.Lock()
 	defer s.metaMu.Unlock()
 	if path, err := s.convMetaPath(id); err == nil {

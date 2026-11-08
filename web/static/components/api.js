@@ -1,7 +1,7 @@
-import { S } from "./state.js?v=33";
-import { closeModal } from "./modal.js?v=33";
-import { closeWS } from "./ws.js?v=33";
-import { renderLogin } from "./auth.js?v=33";
+import { S } from "./state.js?v=35";
+import { closeModal } from "./modal.js?v=35";
+import { closeWS } from "./ws.js?v=35";
+import { renderLogin } from "./auth.js?v=35";
 
 export const REQUEST_TIMEOUT_MS = 20000;
 

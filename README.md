@@ -57,7 +57,7 @@ Pin a version, customize install paths or uninstall: see [Installation](#install
 
 ### From a release
 
-The one-liners above install the latest release. Pin a version with `NUSAMATION_VERSION=0.1.0` (Linux) or `$env:NUSAMATION_VERSION = '0.1.0'` (Windows). Both installers verify the binary against the published SHA-256 checksums, are safe to re-run (data is kept) and support uninstall. See `scripts/install.sh` / `scripts/install.ps1` for all options. On Linux the installer mirrors `make install` and merges the `PATH` of the shell that ran it into the service unit, so agent CLIs outside the standard directories are detected by the service.
+The one-liners above install the latest release. Pin a version with `NUSAMATION_VERSION=0.2.0` (Linux) or `$env:NUSAMATION_VERSION = '0.2.0'` (Windows). Both installers verify the binary against the published SHA-256 checksums, are safe to re-run (data is kept) and support uninstall. See `scripts/install.sh` / `scripts/install.ps1` for all options. On Linux the installer mirrors `make install` and merges the `PATH` of the shell that ran it into the service unit, so agent CLIs outside the standard directories are detected by the service.
 
 ### Install as a user service (from source)
 

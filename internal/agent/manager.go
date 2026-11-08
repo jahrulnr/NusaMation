@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jahrulnr/nusamation/internal/acp"
+	"github.com/jahrulnr/nusamation/internal/browseruse"
 	"github.com/jahrulnr/nusamation/internal/config"
 	"github.com/jahrulnr/nusamation/internal/store"
 )
@@ -110,6 +111,53 @@ type Manager struct {
 	sink     Sink
 	runtimes map[string]*Runtime
 	byConv   map[string]*Session
+
+	useGrants  *browseruse.Grants
+	useCommand string
+	useBaseURL string
+}
+
+// EnableBrowserUse injects the browser_use MCP server into ACP sessions.
+// command is this process's executable; baseURL is the loopback origin the
+// child posts back to. An empty command or URL leaves the tool unregistered.
+func (m *Manager) EnableBrowserUse(g *browseruse.Grants, command, baseURL string) {
+	m.mu.Lock()
+	m.useGrants = g
+	m.useCommand = command
+	m.useBaseURL = strings.TrimRight(baseURL, "/")
+	m.mu.Unlock()
+}
+
+func (m *Manager) browserUseServer(conversationID string) (acp.MCPServerConfig, bool) {
+	m.mu.Lock()
+	g, command, base := m.useGrants, m.useCommand, m.useBaseURL
+	m.mu.Unlock()
+	if g == nil || command == "" || base == "" || conversationID == "" {
+		return acp.MCPServerConfig{}, false
+	}
+	token := g.Token(conversationID)
+	if token == "" {
+		return acp.MCPServerConfig{}, false
+	}
+	return acp.MCPServerConfig{
+		Name:    "browser_use",
+		Command: command,
+		Args:    []string{"browser-use"},
+		Env: []acp.EnvVar{
+			{Name: browseruse.EnvURL, Value: base},
+			{Name: browseruse.EnvToken, Value: token},
+		},
+	}, true
+}
+
+func replaceMCP(list []acp.MCPServerConfig, extra acp.MCPServerConfig) []acp.MCPServerConfig {
+	for i := range list {
+		if list[i].Name == extra.Name {
+			list[i] = extra
+			return list
+		}
+	}
+	return append(list, extra)
 }
 
 func NewManager(st *store.Store, log *slog.Logger) *Manager {

@@ -14,8 +14,9 @@ curl -c jar -H 'Content-Type: application/json' \
 
 Every mutating request then needs the cookie plus header
 `X-CSRF-Token: <csrf>`; Origin must match the Host (a missing Origin also
-passes). Errors are flat JSON `{"error":"…","code":"…"}` with a 4xx/5xx
-status.
+passes). `POST /api/browser-use` is the exception: the `browser_use` MCP
+child calls it with `Authorization: Bearer <token>` and no cookie. Errors
+are flat JSON `{"error":"…","code":"…"}` with a 4xx/5xx status.
 
 ## Endpoint map
 

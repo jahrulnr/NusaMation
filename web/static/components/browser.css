@@ -152,3 +152,5 @@ button.annot-chip { text-align: left; cursor: zoom-in; }
   .browser-pane { position: fixed; inset: 0; z-index: 60; border-left: 0; }
   .browser-resize { display: none; }
 }
+.browser-agent-pointer { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; border: 2px solid #fff; background: #3b82f6; box-shadow: 0 0 0 4px rgba(59,130,246,.35); pointer-events: none; z-index: 6; }
+.browser-agent-pointer.click { transform: scale(.8); }

@@ -148,6 +148,8 @@ Limits: tool states are best-effort reports, so the agent may start a new tool b
 
 NusaMation filters MCP servers by each agent's advertised ACP MCP capabilities and passes them to `session/new`, `session/load`, and `session/resume`. Secrets are encrypted at rest and never returned by the API. Editing an MCP server invalidates all running agent runtimes, so active turns are interrupted. Older per-agent entries are retained during migration; duplicate names receive an ID suffix and can be reviewed in Settings.
 
+On those same session calls NusaMation also injects a stdio server named `browser_use` (`nusamation browser-use`). It drives the conversation's embedded browser pane (`navigate`, `snapshot`, `move`, `click`, `type`, `press`, `scroll`). Those calls are MCP tool calls inside the agent; they do not create NusaMation approval cards. Coordinates are CSS pixels of the viewport size in the tool result. While the agent is driving, the pane letterboxes that viewport instead of resizing the page. A user-configured server already named `browser_use` is replaced by this one.
+
 The agent process inherits the NusaMation process environment, with per-agent environment values added on top. Start NusaMation with the environment needed by the configured agents.
 
 ## Workspace

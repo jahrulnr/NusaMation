@@ -1,18 +1,19 @@
-import { agentById, parseConfigs } from "./util.js?v=33";
-import { S, composers, switchComposer } from "./state.js?v=33";
-import { ApiError } from "./api.js?v=33";
-import { toast } from "./toast.js?v=33";
-import { closeModal } from "./modal.js?v=33";
-import { applyStreamDelta, currentApprovals, renderChat, scheduleChatRender, scheduleStreamRender, scheduleStreamResync } from "./chat.js?v=33";
-import { refreshApprovalModal, renderApprovalsModal, showAgentBlocker, showPendingRequest, showSlowAgent } from "./requests.js?v=33";
-import { renderComposer, upsertTurn } from "./composer.js?v=33";
-import { loadConversation, normalizeMessage, setRoute, touchConversationFromMessage, upsertConversation, upsertMessage } from "./conversations.js?v=33";
-import { renderOffline } from "./shell.js?v=33";
-import { renderSidebar } from "./sidebar.js?v=33";
-import { renderTopbar } from "./topbar.js?v=33";
-import { renderSettings } from "./settings.js?v=33";
-import { updateWhatsAppPanel } from "./whatsapp.js?v=33";
-import { refreshBootstrap } from "./boot.js?v=33";
+import { agentById, parseConfigs } from "./util.js?v=35";
+import { S, composers, switchComposer } from "./state.js?v=35";
+import { ApiError } from "./api.js?v=35";
+import { toast } from "./toast.js?v=35";
+import { closeModal } from "./modal.js?v=35";
+import { applyStreamDelta, currentApprovals, renderChat, scheduleChatRender, scheduleStreamRender, scheduleStreamResync } from "./chat.js?v=35";
+import { refreshApprovalModal, renderApprovalsModal, showAgentBlocker, showPendingRequest, showSlowAgent } from "./requests.js?v=35";
+import { renderComposer, upsertTurn } from "./composer.js?v=35";
+import { loadConversation, normalizeMessage, setRoute, touchConversationFromMessage, upsertConversation, upsertMessage } from "./conversations.js?v=35";
+import { renderOffline } from "./shell.js?v=35";
+import { renderSidebar } from "./sidebar.js?v=35";
+import { renderTopbar } from "./topbar.js?v=35";
+import { renderSettings } from "./settings.js?v=35";
+import { updateWhatsAppPanel } from "./whatsapp.js?v=35";
+import { refreshBootstrap } from "./boot.js?v=35";
+import { showAgentBrowser } from "./browser.js?v=35";
 
 /* ---------------- live stream ---------------- */
 export function connectWS() {
@@ -312,6 +313,12 @@ export function handleEvent(ev) {
         renderTopbar();
         if (S.modal?.type === "settings" && S.settingsTab === "agents" && !S.agentForm && !S.mcpForm) renderSettings();
       }
+      break;
+    }
+    case "browser.drive": {
+      if (!S.current || S.current.id !== convId) break;
+      const pointer = Number.isFinite(data.x) && Number.isFinite(data.y) ? { x: data.x, y: data.y, kind: data.kind || "move" } : null;
+      showAgentBrowser(data.sessionId, pointer);
       break;
     }
     case "channel.status": {

@@ -216,6 +216,32 @@ func (m *Manager) CreateSession(ctx context.Context, conversationID, url string,
 	return s, nil
 }
 
+// ConversationSession returns the live session owned by conversationID, or nil.
+func (m *Manager) ConversationSession(conversationID string) *Session {
+	if conversationID == "" {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var best *Session
+	var bestAt time.Time
+	for _, s := range m.sessions {
+		if s.conversationID != conversationID {
+			continue
+		}
+		s.mu.Lock()
+		status, at := s.status, s.lastActivity
+		s.mu.Unlock()
+		if status == "crashed" {
+			continue
+		}
+		if best == nil || at.After(bestAt) {
+			best, bestAt = s, at
+		}
+	}
+	return best
+}
+
 func (m *Manager) Get(id string) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

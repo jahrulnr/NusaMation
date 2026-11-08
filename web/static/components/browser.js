@@ -1,10 +1,10 @@
-import { $, clamp, esc, icon, truncate } from "./util.js?v=33";
-import { S, composerKey, onComposerSwitch } from "./state.js?v=33";
-import { cachedBrowserMeta, onBrowserMetaRestored, saveBrowserOpen, saveLastURL, scheduleDraftSave, usableBrowserURL, whenBrowserMeta } from "./convmeta.js?v=33";
-import { api } from "./api.js?v=33";
-import { toast } from "./toast.js?v=33";
-import { closePopover, openPopover } from "./popover.js?v=33";
-import { focusComposer, renderPendingAttachments } from "./composer.js?v=33";
+import { $, clamp, esc, icon, truncate } from "./util.js?v=35";
+import { S, composerKey, onComposerSwitch } from "./state.js?v=35";
+import { cachedBrowserMeta, onBrowserMetaRestored, saveBrowserOpen, saveLastURL, scheduleDraftSave, usableBrowserURL, whenBrowserMeta } from "./convmeta.js?v=35";
+import { api } from "./api.js?v=35";
+import { toast } from "./toast.js?v=35";
+import { closePopover, openPopover } from "./popover.js?v=35";
+import { focusComposer, renderPendingAttachments } from "./composer.js?v=35";
 
 /* ---------------- embedded browser pane ----------------
  * Wire protocol: tmp/browser-api-contract.md
@@ -34,6 +34,8 @@ const B = {
   gotFrame: false,
   frameUrl: "",
   prevFrameUrl: "",       // may still be displayed while frameUrl loads
+  pendingPointer: null,   // {x, y, kind} from browser_use, placed over the frame
+  holdViewport: false,    // agent drive keeps the remote viewport that the JPEG used
   navigating: false,
   paneGen: 0,
   restoreURL: "",
@@ -68,7 +70,7 @@ export function browserIsOpen() { return B.open; }
 
 export function toggleBrowserPane() {
   if (B.open) closeBrowserPane();
-  else openBrowserPane();
+  else { B.holdViewport = false; openBrowserPane(); }
 }
 
 // The shell re-rendered (login/logout, boot): drop local state. The server-side
@@ -345,6 +347,29 @@ function attach(session) {
 // Exported for the "Reconnect" affordances — re-runs attach-or-create.
 export function browserReconnect() { attachOrCreate(); }
 
+// showAgentBrowser opens this conversation's pane onto the session the
+// browser_use tool is driving, and remembers a pointer until a frame can place it.
+export async function showAgentBrowser(sessionId, pointer) {
+  if (!S.current) return;
+  B.holdViewport = true;
+  stopResizeWatch();
+  if (pointer && Number.isFinite(pointer.x) && Number.isFinite(pointer.y)) {
+    B.pendingPointer = pointer;
+  }
+  if (!B.open) openBrowserPane();
+  if (!sessionId || B.session?.id === sessionId) {
+    placeAgentPointer();
+    return;
+  }
+  try {
+    const d = await api(`/browser/sessions/${encodeURIComponent(sessionId)}`);
+    if (!B.open || !d.session) return;
+    if ((d.session.conversationId || "") !== (S.current.id || "")) return;
+    if (B.session?.id !== d.session.id) attach(d.session);
+    placeAgentPointer();
+  } catch {}
+}
+
 /* ---------------- stream ---------------- */
 
 function connectStream() {
@@ -365,8 +390,10 @@ function connectStream() {
   ws.onopen = () => {
     if (B.socket !== ws) return;
     setStatus("live");
-    startResizeWatch();
-    sendViewportResize();
+    if (!B.holdViewport) {
+      startResizeWatch();
+      sendViewportResize();
+    }
   };
   ws.onmessage = (e) => {
     if (B.socket !== ws) return;
@@ -407,6 +434,10 @@ function handleStreamMessage(msg) {
     case "closed":
       setStatus("closed", msg.message || "", msg.code || "");
       break;
+    case "pointer":
+      B.pendingPointer = { x: msg.x, y: msg.y, kind: msg.kind || "move" };
+      placeAgentPointer();
+      break;
     case "pong":
     default:
       break;
@@ -426,10 +457,34 @@ function renderFrame(data) {
   B.frameUrl = url;
   if (stale) { try { URL.revokeObjectURL(stale); } catch {} }
   img.src = url;
+  placeAgentPointer();
   if (!B.gotFrame) {
     B.gotFrame = true;
     renderState();
   }
+}
+
+function placeAgentPointer() {
+  const p = B.pendingPointer;
+  const view = $("#browser-view");
+  const img = $("#browser-frame");
+  if (!p || !view || !img) return;
+  const r = img.getBoundingClientRect();
+  const vr = view.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const dw = B.meta?.deviceWidth || B.session?.width || r.width;
+  const dh = B.meta?.deviceHeight || B.session?.height || r.height;
+  let dot = $("#browser-agent-pointer");
+  if (!dot) {
+    dot = document.createElement("div");
+    dot.id = "browser-agent-pointer";
+    dot.className = "browser-agent-pointer";
+    view.appendChild(dot);
+  }
+  dot.style.left = `${(r.left - vr.left) + (p.x * r.width) / dw}px`;
+  dot.style.top = `${(r.top - vr.top) + (p.y * r.height) / dh}px`;
+  dot.classList.toggle("click", p.kind === "click");
+  dot.hidden = false;
 }
 
 function applyMeta() {

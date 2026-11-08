@@ -1,15 +1,15 @@
-import { $, $$, agentById, agentName, agentOrb, configChoices, configLabel, currentAgent, esc, icon, isMobile, isShort, parseConfigs } from "./util.js?v=33";
-import { S, composerFor, composerKey, moveComposer } from "./state.js?v=33";
-import { api } from "./api.js?v=33";
-import { toast } from "./toast.js?v=33";
-import { closeModal, promptModal } from "./modal.js?v=33";
-import { closePopover, menuItem, openPopover } from "./popover.js?v=33";
-import { renderChat } from "./chat.js?v=33";
-import { showAgentBlocker, showSlowAgent } from "./requests.js?v=33";
-import { loadConversation, normalizeMessage, setRoute, upsertConversation, upsertMessage } from "./conversations.js?v=33";
-import { clearDraft, saveDraftNow, scheduleDraftSave } from "./convmeta.js?v=33";
-import { renderTopbar } from "./topbar.js?v=33";
-import { openSettings } from "./settings.js?v=33";
+import { $, $$, agentById, agentName, agentOrb, configChoices, configLabel, currentAgent, esc, icon, isMobile, isShort, parseConfigs } from "./util.js?v=35";
+import { S, composerFor, composerKey, moveComposer } from "./state.js?v=35";
+import { api } from "./api.js?v=35";
+import { toast } from "./toast.js?v=35";
+import { closeModal, promptModal } from "./modal.js?v=35";
+import { closePopover, menuItem, openPopover } from "./popover.js?v=35";
+import { renderChat } from "./chat.js?v=35";
+import { showAgentBlocker, showSlowAgent } from "./requests.js?v=35";
+import { loadConversation, normalizeMessage, setRoute, upsertConversation, upsertMessage } from "./conversations.js?v=35";
+import { clearDraft, saveDraftNow, scheduleDraftSave } from "./convmeta.js?v=35";
+import { renderTopbar } from "./topbar.js?v=35";
+import { openSettings } from "./settings.js?v=35";
 
 /* ---------------- composer ---------------- */
 export function renderComposer() {

@@ -20,6 +20,7 @@ import (
 	"github.com/jahrulnr/nusamation/internal/agent"
 	"github.com/jahrulnr/nusamation/internal/auth"
 	"github.com/jahrulnr/nusamation/internal/browser"
+	"github.com/jahrulnr/nusamation/internal/browseruse"
 	"github.com/jahrulnr/nusamation/internal/channels"
 	"github.com/jahrulnr/nusamation/internal/chat"
 	"github.com/jahrulnr/nusamation/internal/config"
@@ -34,34 +35,36 @@ import (
 const sessionCookie = "nm_session"
 
 type Server struct {
-	cfg      config.Config
-	store    *store.Store
-	chat     *chat.Service
-	agents   *agent.Manager
-	browser  *browser.Manager
-	channels *channels.Manager
-	hub      *realtime.Hub
-	notifier *notify.Broadcaster
-	updater  *update.Manager
-	log      *slog.Logger
-	metaMu   sync.Mutex
-	started  time.Time
-	limiter  *loginLimiter
-	static   fs.FS
-	index    []byte
+	cfg        config.Config
+	store      *store.Store
+	chat       *chat.Service
+	agents     *agent.Manager
+	browser    *browser.Manager
+	browserUse *browseruse.Grants
+	channels   *channels.Manager
+	hub        *realtime.Hub
+	notifier   *notify.Broadcaster
+	updater    *update.Manager
+	log        *slog.Logger
+	metaMu     sync.Mutex
+	started    time.Time
+	limiter    *loginLimiter
+	static     fs.FS
+	index      []byte
 }
 
 type Options struct {
-	Config   config.Config
-	Store    *store.Store
-	Chat     *chat.Service
-	Agents   *agent.Manager
-	Browser  *browser.Manager
-	Channels *channels.Manager
-	Hub      *realtime.Hub
-	Notifier *notify.Broadcaster
-	Updater  *update.Manager
-	Log      *slog.Logger
+	Config     config.Config
+	Store      *store.Store
+	Chat       *chat.Service
+	Agents     *agent.Manager
+	Browser    *browser.Manager
+	BrowserUse *browseruse.Grants
+	Channels   *channels.Manager
+	Hub        *realtime.Hub
+	Notifier   *notify.Broadcaster
+	Updater    *update.Manager
+	Log        *slog.Logger
 }
 
 func New(opts Options) (*Server, error) {
@@ -76,7 +79,7 @@ func New(opts Options) (*Server, error) {
 	}
 	s := &Server{
 		cfg: opts.Config, store: opts.Store, chat: opts.Chat, agents: opts.Agents,
-		browser: opts.Browser, channels: opts.Channels, hub: opts.Hub,
+		browser: opts.Browser, browserUse: opts.BrowserUse, channels: opts.Channels, hub: opts.Hub,
 		notifier: opts.Notifier, updater: opts.Updater, log: log.With("component", "http"),
 		started: time.Now(), limiter: newLoginLimiter(8, 5*time.Minute), static: static, index: index,
 	}
@@ -169,6 +172,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/browser/sessions/{id}/annotate/preview", s.protected(s.handleBrowserAnnotatePreview))
 	mux.HandleFunc("POST /api/browser/sessions/{id}/annotate/clear", s.protected(s.handleBrowserAnnotateClear))
 	mux.HandleFunc("GET /api/browser/sessions/{id}/stream", s.protected(s.handleBrowserStream))
+	mux.HandleFunc("POST /api/browser-use", s.handleBrowserUse)
 
 	mux.HandleFunc("GET /api/update", s.protected(s.handleUpdateStatus))
 	mux.HandleFunc("POST /api/update/check", s.protected(s.handleUpdateCheck))

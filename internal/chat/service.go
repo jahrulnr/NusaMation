@@ -116,8 +116,13 @@ func (s *Service) Start(ctx context.Context) error {
 	if _, err := s.store.ResetConversationStatuses(ctx); err != nil {
 		return fmt.Errorf("reset conversation statuses: %w", err)
 	}
-	go s.resumeQueues(ctx)
 	return nil
+}
+
+// ResumeQueues restarts queued turns. Call it only after browser_use is
+// registered, because a session created here keeps the MCP list from that moment.
+func (s *Service) ResumeQueues(ctx context.Context) {
+	go s.resumeQueues(ctx)
 }
 
 func (s *Service) resumeQueues(ctx context.Context) {
