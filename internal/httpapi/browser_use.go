@@ -447,10 +447,7 @@ func (s *Server) browserToolError(w http.ResponseWriter, err error) {
 // body.innerText until it appears/disappears (10s cap inside WaitForText).
 func browserWait(r *http.Request, sess *browser.Session, in browserUseRequest) error {
 	if in.Time > 0 {
-		d := time.Duration(in.Time * float64(time.Second))
-		if d > 30*time.Second {
-			d = 30 * time.Second
-		}
+		d := min(time.Duration(in.Time*float64(time.Second)), 30*time.Second)
 		select {
 		case <-r.Context().Done():
 			return r.Context().Err()

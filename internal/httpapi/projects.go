@@ -110,8 +110,7 @@ func (s *Server) handleRestoreProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeProjectError(w http.ResponseWriter, err error, notFound string) {
-	var confirm *chat.ConfirmationRequiredError
-	if errors.As(err, &confirm) {
+	if confirm, ok := errors.AsType[*chat.ConfirmationRequiredError](err); ok {
 		added := confirm.Added
 		if added == nil {
 			added = []string{}
@@ -131,8 +130,7 @@ func writeProjectError(w http.ResponseWriter, err error, notFound string) {
 		writeError(w, http.StatusNotFound, "not_found", notFound)
 		return
 	}
-	var invalid *chat.InvalidError
-	if errors.As(err, &invalid) {
+	if invalid, ok := errors.AsType[*chat.InvalidError](err); ok {
 		writeError(w, http.StatusBadRequest, "invalid", invalid.Error())
 		return
 	}

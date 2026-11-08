@@ -4,18 +4,11 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
-### Changed
-
-- **Annotation prompts are tagged.** The prompt block for page annotations is wrapped in `<annotation-context>…</annotation-context>` so agents can tell injected context apart from user text, and it now points at the `browser_use` tools for inspecting the live page behind the screenshots.
-
-### Fixed
-
-- **Empty user bubble on annotation-only sends.** Sending only annotations (no text) no longer renders an empty dark card above the attachment chips — the bubble renders only when it has a quote, reply sender, or text.
-
 ## [0.2.2] - 2026-11-08
 
 ### Changed
 
+- **Annotation prompts are tagged.** The prompt block for page annotations is wrapped in `<annotation-context>…</annotation-context>` so agents can tell injected context apart from user text, and it now points at the `browser_use` tools for inspecting the live page behind the screenshots.
 - **Static asset caching:** files under `/static/` are now served with a strong ETag (SHA-256 of the content) and `Cache-Control: no-cache`, so browsers revalidate every load and get a cheap `304 Not Modified` when nothing changed — fresh assets no longer depend on `?v=` cache-bust specifiers. The app shell and login page still use `no-store`.
 
 - **Agent browser pointer:** the overlay marking where `browser_use` moves or clicks inside the embedded browser pane is now a real arrow cursor image (36px, LightsOut theme) instead of a small blue dot. The image's tip hotspot lands on the remote coordinates, and click events still shrink it briefly with a blue halo.
@@ -32,22 +25,15 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ### Fixed
 
+- **Empty user bubble on annotation-only sends.** Sending only annotations (no text) no longer renders an empty dark card above the attachment chips — the bubble renders only when it has a quote, reply sender, or text.
 - **`browser_use` MCP server:** the stdio transport now mirrors the client's framing. The spec's stdio transport is newline-delimited JSON; real MCP clients (Claude Code SDK, Devin) speak NDJSON while the server only replied with LSP-style `Content-Length` headers, so clients timed out waiting for a line they could parse — `mcp_list_tools` failed while spawning the server by hand worked. Replies now come back in the request's framing, and the reader still tolerates blank lines between messages.
-
 - **Send menu:** the composer's delivery menu now has just **Steer** and **Add to queue**. "Steer" is one concept again: the agent gets the input mid-turn when it supports steering, otherwise NusaMation waits for the current tools, cancels, and resends — the path previously shown as a separate "Send after tools" item.
-
 - **`browser_use` tokens survive restarts:** callback tokens are persisted to `<data>/browser-use-tokens.json`, so an agent session loaded before a NusaMation restart no longer gets 401 "Unknown browser_use token" on every tool call. Callbacks for deleted conversations are still rejected (the row check lives next to the token lookup now).
-
 - **Web UI live stream:** three modules kept `?v=43` specifiers while the rest moved to `?v=44`, which forked the module graph — two copies of `state.js`, two `S` objects. The WebSocket connected and `onopen` marked one copy online while renders read the other copy, so the "Reconnecting to the live stream…" banner never cleared. All JS specifiers share one generation again, and a test now asserts it.
-
 - **Steer dropped at turn end:** an `_session/steering` "injected" input has no turn of its own — it rides the running turn. When that turn finished with no assistant output after the accept, the input sat in history as a final message and was never answered. Accepted steers are now tracked against the turn; on completion, one that saw no following output is requeued as a normal queued turn (cancellable and editable like any other), and a failed mid-turn inject is requeued immediately.
-
 - **Empty agent-side sessions:** probe, catalog-preview, and dropped sessions that never ran a prompt now use `session/delete` when the agent advertises it (falling back to `session/close`), instead of always closing. Agents like OpenCode keep `session/close`d entries in their session history, so every probe, preview respawn, or agent switch on an unsent conversation used to leave a ghost "Session" row; those are now removed entirely. Sessions that saw a prompt still close (resumable via `session/load`).
-
 - **Sidebar empty state:** "No conversations yet" no longer shows when the only conversations live inside projects — it now appears only when there are no unarchived conversations at all.
-
 - **New project scope:** creating a project now selects it as the scope for the next conversation and expands it in the sidebar, so the composer's "New conversation in …" chip appears immediately. Editing a project leaves the current scope alone.
-
 - **Wide markdown tables:** tables in messages scroll horizontally instead of compressing every column; cells keep a 7rem minimum width.
 
 ## [0.2.1] - 2026-11-08
@@ -61,7 +47,6 @@ All notable changes to the Go core will be documented in this file. The format i
 ## [0.2.0] - 2026-11-08
 
 ### Added
-
 
 - **Projects:** local projects group chats under ordered folders. `rootPaths[0]` is the primary folder and becomes each member's cwd; the rest are `additionalDirectories`. A chat joins only when created with `projectId` or restored by undo, which also restores the pin. Removing a project deletes no directory and no chat. A folder change drops an idle ACP session, or waits until the running turn finishes, without clearing `acpSessionId`. Terminal cwd is accepted inside any session root. New routes cover projects and `GET /api/fs/list`. The composer shows which project new chats join.
 - **browser_use:** each ACP session is given a stdio MCP server named `browser_use` (`nusamation browser-use`). The agent drives that conversation's embedded browser with `navigate`, `snapshot`, `move`, `click`, `type`, `press`, and `scroll`. `navigate` and `snapshot` return the page URL, title, viewport size, and a JPEG. Clicks and pointer moves draw a blue cursor on the live pane; the first action opens the pane. Coordinates are CSS pixels of the viewport size in the tool result. While the agent is driving, the pane letterboxes that viewport instead of resizing the remote page, so a later click still matches the screenshot. These calls are MCP tool calls inside the agent and do not create NusaMation approval cards. A user-configured MCP server already named `browser_use` is replaced by this one. Queued turns resume only after the server is registered, so a restart does not open an ACP session that lacks it.

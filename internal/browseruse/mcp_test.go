@@ -19,7 +19,7 @@ func TestReadMessageSkipsBlankLines(t *testing.T) {
 	frame := "Content-Length: " + strconv.Itoa(len(body)) + "\r\n\r\n" + body
 	stream := frame + "\r\n" + frame + "\r\n"
 	r := bufio.NewReader(strings.NewReader(stream))
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		got, framed, err := readMessage(r)
 		if err != nil {
 			t.Fatalf("message %d: %v", i, err)

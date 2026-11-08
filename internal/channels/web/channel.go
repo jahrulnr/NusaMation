@@ -38,11 +38,7 @@ func (c *Channel) Begin(context.Context, channels.Target, string) (channels.Deli
 // ResponseRules tells the agent the web UI renders full Markdown and how to
 // attach files (absolute paths inside allowed roots are collected as media).
 func (c *Channel) ResponseRules() string {
-	return "Your reply is rendered in the NusaMation web UI, which supports full " +
-		"Markdown: headings, tables, fenced code blocks, math ($inline$ and " +
-		"$$block$$), footnotes, emoji, and ```mermaid diagrams. To send the user " +
-		"a file, link its absolute path inside your working directory, e.g. " +
-		"[name](/absolute/path); it is attached to your reply."
+	return ""
 }
 
 func (c *Channel) Notify(context.Context, channels.Target, string) error { return nil }

@@ -262,7 +262,7 @@ func TestProjectDeleteRestoreAndAdoption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.UpdateProject(ctx, project.ID, ProjectPatch{Pinned: boolPtr(true)}); err != nil {
+	if _, err := svc.UpdateProject(ctx, project.ID, ProjectPatch{Pinned: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	snap, ids, err := svc.RemoveProject(ctx, project.ID)
@@ -332,7 +332,7 @@ func TestProjectPinLeavesFoldersAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pinned, err := svc.UpdateProject(ctx, project.ID, ProjectPatch{Pinned: boolPtr(true)})
+	pinned, err := svc.UpdateProject(ctx, project.ID, ProjectPatch{Pinned: new(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestProjectRootResetWaitsForTheRunningTurn(t *testing.T) {
 	}
 
 	renamed, err := svc.UpdateProject(ctx, project.ID, ProjectPatch{
-		Name: strPtr("Renamed"), UpdatedAt: project.UpdatedAt, UpdatedAtSet: true,
+		Name: new("Renamed"), UpdatedAt: project.UpdatedAt, UpdatedAtSet: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -683,6 +683,8 @@ func TestRootResetWaitsForSessionPrepare(t *testing.T) {
 	})
 }
 
-func boolPtr(v bool) *bool { return &v }
+//go:fix inline
+func boolPtr(v bool) *bool { return new(v) }
 
-func strPtr(v string) *string { return &v }
+//go:fix inline
+func strPtr(v string) *string { return new(v) }

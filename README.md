@@ -134,17 +134,6 @@ If port `8787` is already used by a manually started instance, stop that instanc
 
 ## Features
 
-### Web control center
-
-- ChatGPT/Claude-like dark UI, responsive from desktop to phone.
-- Streaming assistant text and **thinking**, with collapsible thought cards.
-- Tool cards for terminal, read, edit, search, fetch and other kinds; raw input/output, locations and diffs.
-- Plan checklist, usage/token meter, session configuration (model, mode, thought level, speed) as the agent publishes them.
-- Inline approval cards and a global **Approvals** inbox.
-- Composer with file/image attachments, drag & drop, paste, keyboard shortcuts and a stop button.
-- Conversation search, pin, rename, archive, export, delete, per-conversation routing.
-- Command palette (`Ctrl/Cmd + K`), live event stream over WebSocket, offline/reconnect state.
-
 ### Agents
 
 - Add any command that speaks ACP over stdio.

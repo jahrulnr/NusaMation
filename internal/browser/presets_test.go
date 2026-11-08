@@ -2,10 +2,17 @@ package browser
 
 import "testing"
 
-func f64(v float64) *float64 { return &v }
-func i64(v int64) *int64     { return &v }
-func b(v bool) *bool         { return &v }
-func str(v string) *string   { return &v }
+//go:fix inline
+func f64(v float64) *float64 { return new(v) }
+
+//go:fix inline
+func i64(v int64) *int64 { return new(v) }
+
+//go:fix inline
+func b(v bool) *bool { return new(v) }
+
+//go:fix inline
+func str(v string) *string { return new(v) }
 
 func TestResolveDevicePreset(t *testing.T) {
 	o, err := ResolveDevice(DeviceOpts{Width: 1280, Height: 800, DPR: 1}, "mobile", DevicePatch{})
@@ -27,7 +34,7 @@ func TestResolveDeviceUnknownPreset(t *testing.T) {
 }
 
 func TestResolveDevicePatchOverridesPreset(t *testing.T) {
-	o, err := ResolveDevice(DeviceOpts{}, "mobile", DevicePatch{Width: i64(400), DPR: f64(2)})
+	o, err := ResolveDevice(DeviceOpts{}, "mobile", DevicePatch{Width: new(int64(400)), DPR: new(float64(2))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +45,7 @@ func TestResolveDevicePatchOverridesPreset(t *testing.T) {
 
 func TestResolveDevicePartialOnCurrent(t *testing.T) {
 	cur := DeviceOpts{Width: 500, Height: 500, DPR: 2, Mobile: true, Touch: true, UserAgent: "ua"}
-	o, err := ResolveDevice(cur, "", DevicePatch{Width: i64(900)})
+	o, err := ResolveDevice(cur, "", DevicePatch{Width: new(int64(900))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,14 +55,14 @@ func TestResolveDevicePartialOnCurrent(t *testing.T) {
 }
 
 func TestResolveDeviceMobileImpliesTouch(t *testing.T) {
-	o, err := ResolveDevice(DeviceOpts{}, "", DevicePatch{Mobile: b(true)})
+	o, err := ResolveDevice(DeviceOpts{}, "", DevicePatch{Mobile: new(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !o.Touch {
 		t.Fatal("mobile=true without touch should default touch on")
 	}
-	o, err = ResolveDevice(DeviceOpts{}, "", DevicePatch{Mobile: b(true), Touch: b(false)})
+	o, err = ResolveDevice(DeviceOpts{}, "", DevicePatch{Mobile: new(true), Touch: new(false)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +83,7 @@ func TestResolveDeviceDesktopReset(t *testing.T) {
 }
 
 func TestResolveDeviceUAString(t *testing.T) {
-	o, err := ResolveDevice(DeviceOpts{UserAgent: "x"}, "", DevicePatch{UserAgent: str("")})
+	o, err := ResolveDevice(DeviceOpts{UserAgent: "x"}, "", DevicePatch{UserAgent: new("")})
 	if err != nil {
 		t.Fatal(err)
 	}

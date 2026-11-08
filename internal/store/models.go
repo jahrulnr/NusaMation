@@ -336,7 +336,7 @@ type AnnotationDescriptor struct {
 	PageURL       string             `json:"pageUrl"`
 	Title         string             `json:"title"`
 	Viewport      AnnotationViewport `json:"viewport"`
-	Computed      AnnotationComputed `json:"computed,omitempty"`
+	Computed      AnnotationComputed `json:"computed"`
 	ScrollX       float64            `json:"scrollX"`
 	ScrollY       float64            `json:"scrollY"`
 	PageW         float64            `json:"pageW"`

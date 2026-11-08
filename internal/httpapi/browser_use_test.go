@@ -131,7 +131,7 @@ func TestBrowserUseInvalid(t *testing.T) {
 		want string
 	}{
 		{"click ref ok", browserUseRequest{Ref: "e1"}, "click", ""},
-		{"click xy ok", browserUseRequest{X: ptr(0.5), Y: ptr(0.5)}, "click", ""},
+		{"click xy ok", browserUseRequest{X: new(0.5), Y: new(0.5)}, "click", ""},
 		{"click nothing", browserUseRequest{}, "click", "ref or x/y"},
 		{"hover needs ref", browserUseRequest{}, "hover", "ref"},
 		{"select needs values", browserUseRequest{Ref: "e1"}, "select", "values"},
@@ -159,4 +159,5 @@ func TestBrowserUseInvalid(t *testing.T) {
 	}
 }
 
-func ptr(f float64) *float64 { return &f }
+//go:fix inline
+func ptr(f float64) *float64 { return new(f) }

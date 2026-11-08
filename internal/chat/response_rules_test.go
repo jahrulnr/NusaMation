@@ -124,10 +124,10 @@ func TestResponseRulesChannelSelection(t *testing.T) {
 		wantContains   string
 		wantNotContain string
 	}{
-		{"web origin uses web rules", "web", true, "full Markdown", ""},
-		{"empty origin defaults to web", "", true, "full Markdown", ""},
+		{"web origin uses web rules", "web", true, "", ""},
+		{"empty origin defaults to web", "", true, "", ""},
 		{"external origin uses its rules", "fakestyled", true, "STYLE RULES FOR FAKE", ""},
-		{"no reply-to-origin falls back to web", "fakestyled", false, "full Markdown", "STYLE RULES"},
+		{"no reply-to-origin falls back to web", "fakestyled", false, "", "STYLE RULES"},
 		{"channel without style adds nothing", "fakeplain", true, "", ""},
 	}
 	for _, tc := range tests {

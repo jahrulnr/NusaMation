@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -123,9 +124,7 @@ func toolList() []map[string]any {
 			"element": map[string]any{"type": "string", "description": "Human-readable element description used for clarity"},
 			"ref":     map[string]any{"type": "string", "description": "Exact element ref from browser_snapshot, e.g. e12"},
 		}
-		for k, v := range extra {
-			props[k] = v
-		}
+		maps.Copy(props, extra)
 		return props
 	}
 	return []map[string]any{
