@@ -132,21 +132,23 @@ onComposerSwitch((key) => {
   B.conversationId = next;
 });
 
-export function openBrowserPane(initialURL) {
+export function openBrowserPane(initialURL, opts = {}) {
   if (B.open) return;
   const pane = $("#browser-pane");
   if (!pane) return;
   B.paneGen += 1;
   B.open = true;
-  B.conversationId = S.current?.id || "";
+  B.conversationId = composerKey;
   B.savedURL = "";
   const known = usableBrowserURL(initialURL) || usableBrowserURL(cachedBrowserMeta(B.conversationId)?.lastUrl);
   B.restoreURL = known;
   if (known) B.nav = { ...B.nav, url: known };
   if (B.conversationId) saveBrowserOpen(B.conversationId, true);
+  // An explicit open lifts the drive suppression a close put in place.
+  bootSkip.delete(B.conversationId);
   buildPane(pane);
   setPaneVisible(true);
-  attachOrCreate();
+  if (!opts.deferAttach) attachOrCreate();
 }
 
 export function closeBrowserPane(opts = {}) {
@@ -167,6 +169,9 @@ export function closeBrowserPane(opts = {}) {
   B.annotate = false;
   B.pendingPick = null;
   B.picking = false;
+  B.pendingPointer = null;
+  B.session = null;
+  B.nav = { url: "", title: "", canGoBack: false, canGoForward: false };
   B.meta = null;
   B.gotFrame = false;
   B.status = "idle";
@@ -178,6 +183,8 @@ export function closeBrowserPane(opts = {}) {
 }
 
 let bootDone = false;
+// Rooms whose pane the user explicitly closed this page session: neither a
+// boot restore nor a browser.drive may reopen them. A manual open lifts it.
 const bootSkip = new Set();
 
 function stillPane(gen, key) {
@@ -360,8 +367,18 @@ export function browserReconnect() { attachOrCreate(); }
 
 // showAgentBrowser opens this conversation's pane onto the session the
 // browser_use tool is driving, and remembers a pointer until a frame can place it.
-export async function showAgentBrowser(sessionId, pointer, tool) {
-  if (!S.current) return;
+export async function showAgentBrowser(sessionId, pointer, tool, convId) {
+  if (!convId || composerKey !== convId) return;
+  if (!B.open) {
+    // A pane the user closed stays closed — reopening it on every tool call
+    // steals the screen (on mobile the pane covers the whole view). bootSkip
+    // covers this page session; the persisted flag survives a refresh.
+    if (bootSkip.has(convId) || cachedBrowserMeta(convId)?.open === false) return;
+    // deferAttach: the fetch below attaches the driving session itself, so a
+    // parallel attachOrCreate cannot adopt a different session for the room
+    // or steer it to a stale lastUrl mid-drive.
+    openBrowserPane(undefined, { deferAttach: true });
+  }
   if (tool === "emulate") {
     // The agent changed the device profile itself — drop the user's chip.
     B.deviceChoice = "";
@@ -376,15 +393,18 @@ export async function showAgentBrowser(sessionId, pointer, tool) {
   if (pointer && Number.isFinite(pointer.x) && Number.isFinite(pointer.y)) {
     B.pendingPointer = pointer;
   }
-  if (!B.open) openBrowserPane();
   if (!sessionId || B.session?.id === sessionId) {
     placeAgentPointer();
+    if (!sessionId && !B.session) attachOrCreate();
     return;
   }
   try {
     const d = await api(`/browser/sessions/${encodeURIComponent(sessionId)}`);
     if (!B.open || !d.session) return;
-    if ((d.session.conversationId || "") !== (S.current.id || "")) return;
+    // The room on screen may have changed while the fetch was in flight —
+    // only attach a session that belongs to the driving conversation.
+    if (B.conversationId !== convId) return;
+    if ((d.session.conversationId || "") !== convId) return;
     if (B.session?.id !== d.session.id) attach(d.session);
     placeAgentPointer();
   } catch {}

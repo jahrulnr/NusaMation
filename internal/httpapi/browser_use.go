@@ -501,6 +501,9 @@ func (s *Server) browserForConversation(r *http.Request, conversationID string) 
 }
 
 func (s *Server) noteBrowserDriven(id, pageURL string) {
+	if pageURL == "" || pageURL == "about:blank" {
+		return
+	}
 	s.metaMu.Lock()
 	defer s.metaMu.Unlock()
 	m, err := s.loadConvMeta(id)
@@ -510,10 +513,9 @@ func (s *Server) noteBrowserDriven(id, pageURL string) {
 	if m.Browser == nil {
 		m.Browser = &convMetaBrowser{}
 	}
-	open := true
-	m.Browser.Open = &open
-	if pageURL != "" && pageURL != "about:blank" {
-		m.Browser.LastURL = pageURL
-	}
+	// Browser.Open belongs to the client's pane open/close: a drive only
+	// tracks where the agent is, and must not resurrect a pane the user
+	// closed (an explicit open:false in the file).
+	m.Browser.LastURL = pageURL
 	_ = s.saveConvMeta(id, m)
 }

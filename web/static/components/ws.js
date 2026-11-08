@@ -1,5 +1,5 @@
 import { agentById, parseConfigs } from "./util.js";
-import { S, composers, switchComposer } from "./state.js";
+import { S, composers, composerKey, switchComposer } from "./state.js";
 import { ApiError } from "./api.js";
 import { toast } from "./toast.js";
 import { closeModal } from "./modal.js";
@@ -324,9 +324,11 @@ export function handleEvent(ev) {
       break;
     }
     case "browser.drive": {
-      if (!S.current || S.current.id !== convId) break;
+      // composerKey is the room on screen; S.current can hold a stale detail
+      // object (welcome screen, mid-load) that does not match what is shown.
+      if (!convId || composerKey !== convId) break;
       const pointer = Number.isFinite(data.x) && Number.isFinite(data.y) ? { x: data.x, y: data.y, kind: data.kind || "move" } : null;
-      showAgentBrowser(data.sessionId, pointer, data.op || data.tool);
+      showAgentBrowser(data.sessionId, pointer, data.op || data.tool, convId);
       break;
     }
     case "channel.status": {

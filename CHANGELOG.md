@@ -10,6 +10,8 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ### Fixed
 
+- **Browser pane no longer opens on the wrong room.** `browser.drive` events were gated on `S.current` — a detail object that could still hold another conversation (bootstrap seeded it with the top row, so the draft/welcome screen counted as that room — always on mobile, and after any WS reconnect). Drives for a room that is not on screen no longer force the pane open, a pane can only attach a session owned by the driving conversation, and the pane no longer races a second session attach when it opens. `S.current` is no longer pre-filled at bootstrap; it only ever holds the room actually loaded — which also fixes draft config previews silently no-op'ing on the welcome screen and a WS reconnect yanking the draft view into the top room.
+- **A browser pane the user closed stays closed.** Previously every `browser_use` tool call reopened the pane, and the server rewrote `browser.open:true` on each drive so even a refresh resurrected it. The drive now respects the persisted `open:false` (and the in-session close flag), the server only records the driven URL, and a manual open lifts the suppression again.
 - **Raw HTML in messages no longer renders as elements.** Agent text like `srcdoc="<button>Inner</button>"` used to produce a real (dead) `<button>` inside the bubble — DOMPurify's allowlist permits interactive tags. Marked `html` tokens are now escaped to text before sanitizing, so embedded markup always displays literally.
 
 ## [0.2.2] - 2026-11-08
