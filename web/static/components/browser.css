@@ -158,5 +158,9 @@ button.annot-chip { text-align: left; cursor: zoom-in; }
   .browser-pane { position: fixed; inset: 0; z-index: 60; border-left: 0; }
   .browser-resize { display: none; }
 }
-.browser-agent-pointer { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; border: 2px solid #fff; background: #3b82f6; box-shadow: 0 0 0 4px rgba(59,130,246,.35); pointer-events: none; z-index: 6; }
-.browser-agent-pointer.click { transform: scale(.8); }
+/* Agent cursor: LightsOut arrow image, sized like a real OS cursor so it stays
+   visible over the remote page. The .cur hotspot is (1,1) of the 28×29 image —
+   the arrow tip — so translate pulls the tip onto the target coordinates and
+   transform-origin keeps the click-scale pinned to the same tip. */
+.browser-agent-pointer { position: absolute; width: 36px; height: auto; transform: translate(-3.57%, -3.45%); transform-origin: 3.57% 3.45%; pointer-events: none; z-index: 6; }
+.browser-agent-pointer.click { transform: translate(-3.57%, -3.45%) scale(.82); filter: drop-shadow(0 0 5px rgba(59,130,246,.85)); }

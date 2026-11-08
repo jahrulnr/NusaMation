@@ -1,7 +1,7 @@
-import { $, $$, brandImage, esc, icon, timeAgo, truncate } from "./util.js?v=45";
-import { S } from "./state.js?v=45";
-import { closeDetachedPopovers } from "./popover.js?v=45";
-import { groupProjectless, partitionProjects, sortConversations, visibleProjectId } from "./projectmodel.js?v=45";
+import { $, $$, brandImage, esc, icon, timeAgo, truncate } from "./util.js";
+import { S } from "./state.js";
+import { closeDetachedPopovers } from "./popover.js";
+import { groupProjectless, partitionProjects, sortConversations, visibleProjectId } from "./projectmodel.js";
 
 let expandedReady = false;
 
@@ -42,7 +42,8 @@ export function renderSidebar() {
     parts.loose.length ? `<div class="conv-section" data-project-group>${parts.loose.map(projectBlockHTML).join("")}</div>` : "",
   ].join("");
 
-  const chatsEmpty = !chatGroups.length ? `<div class="sidebar-empty" data-empty="chats"><p>No conversations yet.<br>Start one and it will show up here.</p></div>` : "";
+  const anyVisible = (S.conversations || []).some((c) => c && !c.archived);
+  const chatsEmpty = anyVisible ? "" : `<div class="sidebar-empty" data-empty="chats"><p>No conversations yet.<br>Start one and it will show up here.</p></div>`;
   const chatsHTML = chatGroups.length ? `<div class="chats-group" data-chats><div class="conv-section-title">Chats</div>${chatGroups.map(([label, list]) => `
         <div class="conv-section" data-group>
           <div class="conv-section-title">${esc(label)}</div>
@@ -57,7 +58,7 @@ export function renderSidebar() {
         <button class="icon-btn sm" style="margin-left:auto" data-action="open-settings" title="Settings">${icon("settings", "sm")}</button>
         <button class="icon-btn sm sidebar-collapse-btn" data-action="toggle-sidebar" title="Collapse sidebar">${icon("panel-left", "sm")}</button>
       </div>
-      <button class="new-chat" data-action="new-chat">${icon("plus")} <span>${targetProject ? `New chat in ${esc(targetProject.name || "project")}` : "New conversation"}</span></button>
+      <button class="new-chat" data-action="new-chat">${icon("plus")} <span>${targetProject ? `New conversation in ${esc(targetProject.name || "project")}` : "New conversation"}</span></button>
       <div class="sidebar-search">${icon("search")}<input id="conv-search" type="search" placeholder="Search chats and projects…" value="${esc(S.query)}" data-input="conv-search" autocomplete="off"></div>
     </div>
     <div class="sidebar-scroll" id="conv-list">
@@ -105,7 +106,7 @@ function projectBlockHTML(project) {
     </div>
     <div class="project-chats">
       ${chats.length ? chats.map(convItemHTML).join("") : `<p class="project-none">No chats yet</p>`}
-      <button type="button" class="project-new" data-action="project-new-chat" data-id="${id}">${icon("plus", "sm")} New chat</button>
+      <button type="button" class="project-new" data-action="project-new-chat" data-id="${id}">${icon("plus", "sm")} New conversation</button>
     </div>
   </div>`;
 }

@@ -1,14 +1,14 @@
-import { $, $$, AGENT_COLORS, agentById, agentOrb, configChoices, esc, icon, timeAgo } from "./util.js?v=45";
-import { S } from "./state.js?v=45";
-import { api } from "./api.js?v=45";
-import { toast } from "./toast.js?v=45";
-import { confirmModal, modalHead, openModal } from "./modal.js?v=45";
-import { closePopover } from "./popover.js?v=45";
-import { renderChat } from "./chat.js?v=45";
-import { renderComposer } from "./composer.js?v=45";
-import { renderTopbar } from "./topbar.js?v=45";
-import { automationsSettings } from "./automations.js?v=45";
-import { startQRTimer, whatsappPanel } from "./whatsapp.js?v=45";
+import { $, $$, AGENT_COLORS, agentById, agentOrb, configChoices, esc, icon, timeAgo } from "./util.js";
+import { S } from "./state.js";
+import { api } from "./api.js";
+import { toast } from "./toast.js";
+import { confirmModal, modalHead, openModal } from "./modal.js";
+import { closePopover } from "./popover.js";
+import { renderChat } from "./chat.js";
+import { renderComposer } from "./composer.js";
+import { renderTopbar } from "./topbar.js";
+import { automationsSettings } from "./automations.js";
+import { startQRTimer, whatsappPanel } from "./whatsapp.js";
 
 /* ---------------- settings ---------------- */
 export function openSettings(tab = "") {
@@ -63,7 +63,7 @@ export function agentDefaultsSettings() {
     const choices = o.type === "boolean" ? [{ value: "true", name: "On" }, { value: "false", name: "Off" }] : configChoices(o);
     return `<div class="field"><label>${esc(o.name || o.id)}</label><select class="select" data-change="default-choice" data-id="${esc(o.id)}" data-type="${esc(o.type)}" ${S.defaultBusy ? "disabled" : ""}><option value="">Use agent default</option>${choices.map((c) => `<option value="${esc(c.value)}">${esc(c.groupName ? c.groupName + " · " + (c.name || c.value) : (c.name || c.value))}</option>`).join("")}</select></div>`;
   }).join("");
-  return `${settingsHead("Default ACP", "Used for new chats, including new WhatsApp conversations. Choose options in order; each choice refreshes the available options.")}
+  return `${settingsHead("Default ACP", "Used for new conversations, including new WhatsApp conversations. Choose options in order; each choice refreshes the available options.")}
     <div class="field"><label>Agent</label><select class="select" data-change="default-agent" ${S.defaultBusy ? "disabled" : ""}><option value="">Choose an agent</option>${S.agents.filter((a) => a.enabled).map((a) => `<option value="${esc(a.id)}" ${draft.agentId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></div>
     ${S.defaultBusy ? `<div class="settings-loading" role="status"><span class="spinner"></span><span>Loading agent options…</span></div>` : ""}
     ${S.defaultError ? `<div class="settings-desc" role="alert">${esc(S.defaultError)} <button class="btn btn-secondary btn-sm" data-action="default-retry">Retry</button></div>` : ""}

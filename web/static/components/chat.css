@@ -45,8 +45,8 @@
 .markdown pre code { display: block; padding: 13px 15px; background: transparent; border: 0; color: #d9d6ce; overflow-x: auto; font-size: 12.2px; line-height: 1.6; }
 .markdown pre .code-head { display: flex; justify-content: space-between; align-items: center; padding: 7px 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 10.5px; font-family: var(--mono); }
 .markdown hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
-.markdown table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12.5px; }
-.markdown th, .markdown td { border: 1px solid var(--border); padding: 7px 9px; text-align: left; }
+.markdown table { display: block; overflow-x: auto; width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12.5px; }
+.markdown th, .markdown td { border: 1px solid var(--border); padding: 7px 9px; text-align: left; min-width: 7rem; }
 .markdown th { background: var(--panel); color: var(--text-soft); }
 .markdown a { color: var(--accent); }
 .streaming-caret { display: inline-block; width: 7px; height: 15px; background: var(--accent); border-radius: 2px; margin-left: 3px; vertical-align: -2px; animation: caret 1s steps(2) infinite; }

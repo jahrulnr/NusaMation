@@ -1,8 +1,8 @@
-import { $, agentById, agentName, esc, icon } from "./util.js?v=45";
-import { S } from "./state.js?v=45";
-import { api } from "./api.js?v=45";
-import { toast } from "./toast.js?v=45";
-import { renderSettings, settingsHead } from "./settings.js?v=45";
+import { $, agentById, agentName, esc, icon } from "./util.js";
+import { S } from "./state.js";
+import { api } from "./api.js";
+import { toast } from "./toast.js";
+import { renderSettings, settingsHead } from "./settings.js";
 
 export function automationDate(ms, zone) {
   if (!ms) return "";
@@ -47,7 +47,7 @@ export function automationsSettings() {
     <div class="agent-list">${S.automations.map((a) => {
       const state = !a.enabled ? "Paused" : a.expiresAt && a.expiresAt < Date.now() ? "Expired" : !a.nextRunAt ? "Dispatched" : "Active";
       const next = a.nextRunAt && state === "Active" ? ` · Next ${displayAutomationTime(a.nextRunAt, a.timezone)}` : "";
-      return `<div class="agent-card"><div class="agent-card-main"><div class="agent-card-name">${esc(a.name)} <span class="agent-status">${state}</span></div><div class="agent-card-sub">${esc(agentName(agentById(a.agentId)))} · ${a.schedule === "cron" ? esc(a.cron) + " · " + esc(a.timezone) : "Once"}${esc(next)}</div><div class="agent-card-sub">${a.sessionMode === "same" ? "Dedicated chat" : "New chat each run"}</div></div><div class="agent-card-actions"><button class="btn btn-secondary btn-sm" data-action="automation-history" data-id="${esc(a.id)}">History</button><button class="btn btn-secondary btn-sm" data-action="automation-edit" data-id="${esc(a.id)}">Edit</button><button class="btn btn-secondary btn-sm" data-action="automation-toggle" data-id="${esc(a.id)}">${a.enabled ? "Pause" : "Resume"}</button><button class="icon-btn sm" data-action="automation-delete" data-id="${esc(a.id)}" title="Delete" aria-label="Delete automation">${icon("trash", "sm")}</button></div></div>`;
+      return `<div class="agent-card"><div class="agent-card-main"><div class="agent-card-name">${esc(a.name)} <span class="agent-status">${state}</span></div><div class="agent-card-sub">${esc(agentName(agentById(a.agentId)))} · ${a.schedule === "cron" ? esc(a.cron) + " · " + esc(a.timezone) : "Once"}${esc(next)}</div><div class="agent-card-sub">${a.sessionMode === "same" ? "Dedicated chat" : "New conversation each run"}</div></div><div class="agent-card-actions"><button class="btn btn-secondary btn-sm" data-action="automation-history" data-id="${esc(a.id)}">History</button><button class="btn btn-secondary btn-sm" data-action="automation-edit" data-id="${esc(a.id)}">Edit</button><button class="btn btn-secondary btn-sm" data-action="automation-toggle" data-id="${esc(a.id)}">${a.enabled ? "Pause" : "Resume"}</button><button class="icon-btn sm" data-action="automation-delete" data-id="${esc(a.id)}" title="Delete" aria-label="Delete automation">${icon("trash", "sm")}</button></div></div>`;
     }).join("") || `<div class="empty-settings">No automations yet.</div>`}</div>`;
 }
 
@@ -60,7 +60,7 @@ export function automationFormHTML() {
       <div class="field full"><label>Name</label><input class="input" name="name" value="${esc(a.name || "")}" required></div>
       <div class="field full"><label>Prompt</label><textarea class="textarea" name="prompt" rows="4" required>${esc(a.prompt || "")}</textarea></div>
       <div class="field"><label>ACP agent</label><select class="select" name="agentId" required>${S.agents.filter((x) => x.enabled).map((x) => `<option value="${esc(x.id)}" ${x.id === agent ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></div>
-      <div class="field"><label>Session</label><select class="select" name="sessionMode"><option value="isolated" ${a.sessionMode !== "same" ? "selected" : ""}>New chat each run</option><option value="same" ${a.sessionMode === "same" ? "selected" : ""}>Reuse dedicated chat</option></select></div>
+      <div class="field"><label>Session</label><select class="select" name="sessionMode"><option value="isolated" ${a.sessionMode !== "same" ? "selected" : ""}>New conversation each run</option><option value="same" ${a.sessionMode === "same" ? "selected" : ""}>Reuse dedicated chat</option></select></div>
       <div class="field"><label>Schedule</label><select class="select" name="schedule" data-change="automation-schedule"><option value="once" ${a.schedule !== "cron" ? "selected" : ""}>Run once</option><option value="cron" ${a.schedule === "cron" ? "selected" : ""}>Repeat (cron)</option></select></div>
       <div class="field"><label>Timezone</label><input class="input" name="timezone" value="${esc(zone)}" required></div>
       <div class="field full" data-automation-once ${a.schedule === "cron" ? "hidden" : ""}><label>Run at</label><input class="input" type="datetime-local" name="runAt" value="${esc(automationDate(a.runAt, zone))}"></div>

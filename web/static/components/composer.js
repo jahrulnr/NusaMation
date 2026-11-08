@@ -1,15 +1,15 @@
-import { $, $$, agentById, agentName, agentOrb, configChoices, configLabel, currentAgent, esc, icon, isMobile, isShort, parseConfigs } from "./util.js?v=45";
-import { S, composerFor, composerKey, moveComposer } from "./state.js?v=45";
-import { api } from "./api.js?v=45";
-import { toast } from "./toast.js?v=45";
-import { closeModal, promptModal } from "./modal.js?v=45";
-import { closePopover, menuItem, openPopover } from "./popover.js?v=45";
-import { renderChat } from "./chat.js?v=45";
-import { showAgentBlocker, showSlowAgent } from "./requests.js?v=45";
-import { loadConversation, normalizeMessage, setRoute, upsertConversation, upsertMessage } from "./conversations.js?v=45";
-import { clearDraft, saveDraftNow, scheduleDraftSave } from "./convmeta.js?v=45";
-import { renderTopbar } from "./topbar.js?v=45";
-import { openSettings } from "./settings.js?v=45";
+import { $, $$, agentById, agentName, agentOrb, configChoices, configLabel, currentAgent, esc, icon, isMobile, isShort, parseConfigs } from "./util.js";
+import { S, composerFor, composerKey, moveComposer } from "./state.js";
+import { api } from "./api.js";
+import { toast } from "./toast.js";
+import { closeModal, promptModal } from "./modal.js";
+import { closePopover, menuItem, openPopover } from "./popover.js";
+import { renderChat } from "./chat.js";
+import { showAgentBlocker, showSlowAgent } from "./requests.js";
+import { loadConversation, normalizeMessage, setRoute, upsertConversation, upsertMessage } from "./conversations.js";
+import { clearDraft, saveDraftNow, scheduleDraftSave } from "./convmeta.js";
+import { renderTopbar } from "./topbar.js";
+import { openSettings } from "./settings.js";
 
 /* ---------------- composer ---------------- */
 export function renderComposer() {
@@ -35,7 +35,7 @@ export function renderComposer() {
   const markup = `<div class="composer-inner">
     <div class="composer" id="composer">
       <div class="composer-attachments" id="pending-attachments"></div>
-      <div class="composer-scope" id="composer-scope">${scope ? `<span class="composer-scope-label">${icon("folder", "sm")}<span>New chat in <b>${esc(scope.name || "project")}</b></span></span><button type="button" class="icon-btn sm" data-action="project-clear-scope" aria-label="Stop adding new chats to ${esc(scope.name || "project")}" title="Stop adding new chats to ${esc(scope.name || "project")}">${icon("x", "sm")}</button>` : ""}</div>
+      <div class="composer-scope" id="composer-scope">${scope ? `<span class="composer-scope-label">${icon("folder", "sm")}<span>New conversation in <b>${esc(scope.name || "project")}</b></span></span><button type="button" class="icon-btn sm" data-action="project-clear-scope" aria-label="Stop adding new conversations to ${esc(scope.name || "project")}" title="Stop adding new conversations to ${esc(scope.name || "project")}">${icon("x", "sm")}</button>` : ""}</div>
       <textarea id="prompt" rows="1" placeholder="Message ${esc(agentName(agent))}…" aria-label="Message">${esc(S.draft)}</textarea>
       <div class="composer-bar">
         <button class="icon-btn sm" data-action="attach" title="Attach files">${icon("paperclip", "sm")}</button>

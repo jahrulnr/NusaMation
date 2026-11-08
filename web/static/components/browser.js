@@ -1,10 +1,10 @@
-import { $, $$, clamp, esc, icon, truncate } from "./util.js?v=45";
-import { S, composerKey, onComposerSwitch } from "./state.js?v=45";
-import { cachedBrowserMeta, onBrowserMetaRestored, saveBrowserOpen, saveLastURL, scheduleDraftSave, usableBrowserURL, whenBrowserMeta } from "./convmeta.js?v=45";
-import { api } from "./api.js?v=45";
-import { toast } from "./toast.js?v=45";
-import { closePopover, openPopover } from "./popover.js?v=45";
-import { focusComposer, renderPendingAttachments } from "./composer.js?v=45";
+import { $, $$, clamp, esc, icon, truncate } from "./util.js";
+import { S, composerKey, onComposerSwitch } from "./state.js";
+import { cachedBrowserMeta, onBrowserMetaRestored, saveBrowserOpen, saveLastURL, scheduleDraftSave, usableBrowserURL, whenBrowserMeta } from "./convmeta.js";
+import { api } from "./api.js";
+import { toast } from "./toast.js";
+import { closePopover, openPopover } from "./popover.js";
+import { focusComposer, renderPendingAttachments } from "./composer.js";
 
 /* ---------------- embedded browser pane ----------------
  * Wire protocol: tmp/browser-api-contract.md
@@ -490,9 +490,14 @@ function placeAgentPointer() {
   const dh = B.meta?.deviceHeight || B.session?.height || r.height;
   let dot = $("#browser-agent-pointer");
   if (!dot) {
-    dot = document.createElement("div");
+    // LightsOut arrow cursor (cursor-agent.png): the CSS offsets the image so
+    // its tip hotspot, not its top-left corner, lands on the coordinates.
+    dot = document.createElement("img");
     dot.id = "browser-agent-pointer";
     dot.className = "browser-agent-pointer";
+    dot.src = "/static/components/cursor-agent.png";
+    dot.alt = "";
+    dot.draggable = false;
     view.appendChild(dot);
   }
   dot.style.left = `${(r.left - vr.left) + (p.x * r.width) / dw}px`;

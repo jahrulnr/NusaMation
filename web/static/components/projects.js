@@ -1,16 +1,16 @@
-import { esc, icon } from "./util.js?v=45";
-import { S, setSelectedProject } from "./state.js?v=45";
-import { api } from "./api.js?v=45";
-import { toast } from "./toast.js?v=45";
-import { closeAllModals, closeModal, modalHead, onModalClose, openModal, stackModal } from "./modal.js?v=45";
-import { menuItem, openPopover } from "./popover.js?v=45";
-import { renderSidebar } from "./sidebar.js?v=45";
-import { renderComposer } from "./composer.js?v=45";
-import { renderTopbar } from "./topbar.js?v=45";
+import { esc, icon } from "./util.js";
+import { S, setSelectedProject } from "./state.js";
+import { api } from "./api.js";
+import { toast } from "./toast.js";
+import { closeAllModals, closeModal, modalHead, onModalClose, openModal, stackModal } from "./modal.js";
+import { menuItem, openPopover } from "./popover.js";
+import { renderSidebar } from "./sidebar.js";
+import { renderComposer } from "./composer.js";
+import { renderTopbar } from "./topbar.js";
 import {
   appendSource, baseName, buildSaveBody, makeSourcePrimary, projectSources, removeSourceAt,
   staleProjectSnapshot,
-} from "./projectmodel.js?v=45";
+} from "./projectmodel.js";
 
 let editor = null;
 let sessionSeq = 0;
@@ -232,10 +232,15 @@ function onSaved(snapshot, data) {
   const project = projectFromResponse(data);
   if (project) {
     upsertProject(project);
-    S.expandedProjects?.add(project.id);
+    if (!S.expandedProjects) S.expandedProjects = new Set();
+    S.expandedProjects.add(project.id);
+    // A newly created project scopes the next conversation; edits keep the
+    // current scope.
+    if (!snapshot.id) setSelectedProject(project.id);
   }
   if (!editorOpen(snapshot)) {
     renderSidebar();
+    renderComposer();
     return;
   }
   if (project?.id && !snapshot.id) editor.id = project.id;
@@ -244,10 +249,12 @@ function onSaved(snapshot, data) {
   if (editor.rev !== snapshot.rev) {
     syncSaveDisabled();
     renderSidebar();
+    renderComposer();
     return;
   }
   closeAllModals();
   renderSidebar();
+  renderComposer();
 }
 
 function onSaveFailed(snapshot, err) {
@@ -451,7 +458,7 @@ export function openProjectMenu(anchor, id) {
   const project = (S.projects || []).find((p) => p.id === id);
   if (!project) return;
   openPopover(anchor, `<div class="popover-list">
-    ${menuItem("plus", "New chat", "project-new-chat", `data-id="${esc(id)}"`)}
+    ${menuItem("plus", "New conversation", "project-new-chat", `data-id="${esc(id)}"`)}
     ${menuItem("pin", project.pinned ? "Unpin project" : "Pin project", "project-pin", `data-id="${esc(id)}"`)}
     ${menuItem("settings", "Project settings", "project-settings", `data-id="${esc(id)}"`)}
     <div class="popover-sep"></div>
