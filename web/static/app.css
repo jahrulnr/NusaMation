@@ -1,22 +1,21 @@
-/* NusaMation styles. Import order is the cascade.
-   Bump every ?v= here and the app.css link in index.html together. */
-@import "./components/base.css?v=35";
-@import "./components/boot.css?v=35";
-@import "./components/auth.css?v=35";
-@import "./components/sidebar.css?v=35";
-@import "./components/topbar.css?v=35";
-@import "./components/chat.css?v=35";
-@import "./components/composer.css?v=35";
-@import "./components/toast.css?v=35";
-@import "./components/modal.css?v=35";
-@import "./components/settings.css?v=35";
-@import "./components/palette.css?v=35";
-@import "./components/layout.css?v=35";
-@import "./components/popover.css?v=35";
-@import "./components/markdown.css?v=35";
-@import "./components/requests.css?v=35";
-@import "./components/whatsapp.css?v=35";
-@import "./components/touch.css?v=35";
-@import "./components/skeleton.css?v=35";
-@import "./components/shell.css?v=35";
-@import "./components/browser.css?v=35";
+/* NusaMation styles. Import order is the cascade. */
+@import "./components/base.css";
+@import "./components/boot.css";
+@import "./components/auth.css";
+@import "./components/sidebar.css";
+@import "./components/topbar.css";
+@import "./components/chat.css";
+@import "./components/composer.css";
+@import "./components/toast.css";
+@import "./components/modal.css";
+@import "./components/settings.css";
+@import "./components/palette.css";
+@import "./components/layout.css";
+@import "./components/popover.css";
+@import "./components/markdown.css";
+@import "./components/requests.css";
+@import "./components/whatsapp.css";
+@import "./components/touch.css";
+@import "./components/skeleton.css";
+@import "./components/shell.css";
+@import "./components/browser.css";

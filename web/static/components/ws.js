@@ -1,20 +1,20 @@
-import { agentById, parseConfigs } from "./util.js?v=45";
-import { S, composers, switchComposer } from "./state.js?v=45";
-import { ApiError } from "./api.js?v=45";
-import { toast } from "./toast.js?v=45";
-import { closeModal } from "./modal.js?v=45";
-import { applyStreamDelta, currentApprovals, renderChat, scheduleChatRender, scheduleStreamRender, scheduleStreamResync } from "./chat.js?v=45";
-import { refreshApprovalModal, renderApprovalsModal, showAgentBlocker, showPendingRequest, showSlowAgent } from "./requests.js?v=45";
-import { renderComposer, upsertTurn } from "./composer.js?v=45";
-import { loadConversation, normalizeMessage, setRoute, touchConversationFromMessage, upsertConversation, upsertMessage } from "./conversations.js?v=45";
-import { renderOffline } from "./shell.js?v=45";
-import { renderSidebar } from "./sidebar.js?v=45";
-import { upsertProject } from "./projects.js?v=45";
-import { renderTopbar } from "./topbar.js?v=45";
-import { renderSettings } from "./settings.js?v=45";
-import { updateWhatsAppPanel } from "./whatsapp.js?v=45";
-import { refreshBootstrap } from "./boot.js?v=45";
-import { showAgentBrowser } from "./browser.js?v=45";
+import { agentById, parseConfigs } from "./util.js";
+import { S, composers, switchComposer } from "./state.js";
+import { ApiError } from "./api.js";
+import { toast } from "./toast.js";
+import { closeModal } from "./modal.js";
+import { applyStreamDelta, currentApprovals, renderChat, scheduleChatRender, scheduleStreamRender, scheduleStreamResync } from "./chat.js";
+import { refreshApprovalModal, renderApprovalsModal, showAgentBlocker, showPendingRequest, showSlowAgent } from "./requests.js";
+import { renderComposer, upsertTurn } from "./composer.js";
+import { loadConversation, normalizeMessage, setRoute, touchConversationFromMessage, upsertConversation, upsertMessage } from "./conversations.js";
+import { renderOffline } from "./shell.js";
+import { renderSidebar } from "./sidebar.js";
+import { upsertProject } from "./projects.js";
+import { renderTopbar } from "./topbar.js";
+import { renderSettings } from "./settings.js";
+import { updateWhatsAppPanel } from "./whatsapp.js";
+import { refreshBootstrap } from "./boot.js";
+import { showAgentBrowser } from "./browser.js";
 
 /* ---------------- live stream ---------------- */
 export function connectWS() {

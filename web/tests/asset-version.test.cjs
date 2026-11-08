@@ -3,9 +3,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// Every ?v=N cache-bust specifier must share one generation per asset class:
-// one for JS import specifiers, one for CSS. A stale file left on the old
-// generation silently forks the module graph — two copies of state.js etc.
+// Static freshness is backend-owned: /static/* serves a strong ETag with
+// Cache-Control: no-cache, so browsers always revalidate. Specifiers carry
+// no ?v= — every importer names the same URL, which is what keeps the
+// module graph to one instance of each module (a mixed ?v= generation used
+// to fork it silently).
 const staticDir = path.join(__dirname, '..', 'static');
 
 function walk(dir) {
@@ -18,26 +20,14 @@ function walk(dir) {
   return out;
 }
 
-const versions = (file) => [...fs.readFileSync(file, 'utf8').matchAll(/\?v=(\d+)/g)].map((m) => m[1]);
+const ownFiles = walk(staticDir).filter((f) => !f.includes(`${path.sep}vendor${path.sep}`));
 
-const jsFiles = walk(staticDir).filter((f) => f.endsWith('.js'));
-const jsGens = new Map();
-for (const file of jsFiles) {
-  for (const v of versions(file)) jsGens.set(v, [...(jsGens.get(v) || []), path.basename(file)]);
-}
-
-test('all JS import specifiers share one ?v= generation', () => {
-  assert.equal(jsGens.size, 1,
-    `JS ?v= generations diverged: ${[...jsGens.entries()].map(([v, fs]) => `v=${v} in ${fs.join(', ')}`).join('; ')}`);
-});
-
-test('index.html and app.css generations match their asset class', () => {
-  const html = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf8');
-  const jsGen = [...jsGens.keys()][0];
-  for (const m of html.matchAll(/app\.js\?v=(\d+)/g)) assert.equal(m[1], jsGen, 'index.html app.js generation');
-
-  const cssImports = versions(path.join(staticDir, 'app.css'));
-  const cssGen = new Set(cssImports);
-  assert.equal(cssGen.size, 1, 'app.css @import generations diverged');
-  for (const m of html.matchAll(/\.css\?v=(\d+)/g)) assert.equal(m[1], [...cssGen][0], 'index.html stylesheet generation');
+test('no ?v= cache-bust specifiers remain', () => {
+  const hits = [];
+  for (const file of ownFiles) {
+    for (const m of fs.readFileSync(file, 'utf8').matchAll(/\?v=\d+/g)) {
+      hits.push(`${path.relative(staticDir, file)}: ?v=${m[1]}`);
+    }
+  }
+  assert.deepEqual(hits, [], `stale ?v= specifiers: ${hits.join('; ')}`);
 });

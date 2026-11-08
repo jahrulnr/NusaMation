@@ -1,15 +1,15 @@
-import { $, agentById, esc, isMobile, now, parseConfigs } from "./util.js?v=45";
-import { S, composers, setSelectedProject, switchComposer } from "./state.js?v=45";
-import { api } from "./api.js?v=45";
-import { toast } from "./toast.js?v=45";
-import { closeModal, confirmModal, promptModal } from "./modal.js?v=45";
-import { closePopover, menuItem, openPopover } from "./popover.js?v=45";
-import { applyStreamDelta, renderChat, scheduleStreamResync } from "./chat.js?v=45";
-import { showPendingRequest } from "./requests.js?v=45";
-import { focusComposer, prepareComposer, renderComposer, upsertTurn } from "./composer.js?v=45";
-import { closeMobileSidebar, renderSidebar, scheduleSidebarRender } from "./sidebar.js?v=45";
-import { renderTopbar } from "./topbar.js?v=45";
-import { saveTitle } from "./convmeta.js?v=45";
+import { $, agentById, esc, isMobile, now, parseConfigs } from "./util.js";
+import { S, composers, setSelectedProject, switchComposer } from "./state.js";
+import { api } from "./api.js";
+import { toast } from "./toast.js";
+import { closeModal, confirmModal, promptModal } from "./modal.js";
+import { closePopover, menuItem, openPopover } from "./popover.js";
+import { applyStreamDelta, renderChat, scheduleStreamResync } from "./chat.js";
+import { showPendingRequest } from "./requests.js";
+import { focusComposer, prepareComposer, renderComposer, upsertTurn } from "./composer.js";
+import { closeMobileSidebar, renderSidebar, scheduleSidebarRender } from "./sidebar.js";
+import { renderTopbar } from "./topbar.js";
+import { saveTitle } from "./convmeta.js";
 
 export async function selectInitialConversation() {
   const m = location.pathname.match(/^\/c\/([^/]+)/);

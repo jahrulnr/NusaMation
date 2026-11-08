@@ -1,7 +1,7 @@
-import { $, agentName, agentOrb, configLabel, currentAgent, esc, icon } from "./util.js?v=45";
-import { S } from "./state.js?v=45";
-import { closeDetachedPopovers } from "./popover.js?v=45";
-import { browserIsOpen } from "./browser.js?v=45";
+import { $, agentName, agentOrb, configLabel, currentAgent, esc, icon } from "./util.js";
+import { S } from "./state.js";
+import { closeDetachedPopovers } from "./popover.js";
+import { browserIsOpen } from "./browser.js";
 
 /* ---------------- topbar ---------------- */
 export function renderTopbar() {

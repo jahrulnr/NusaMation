@@ -1,5 +1,5 @@
-import { $, esc, icon } from "./util.js?v=45";
-import { S } from "./state.js?v=45";
+import { $, esc, icon } from "./util.js";
+import { S } from "./state.js";
 
 /* ---------------- toasts ---------------- */
 export function toast(title, description = "", type = "info", ttl = 5200, action = null) {
