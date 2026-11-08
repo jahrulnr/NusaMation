@@ -4,6 +4,14 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+### Changed
+
+- **Static asset caching:** files under `/static/` are now served with a strong ETag (SHA-256 of the content) and `Cache-Control: no-cache`, so browsers revalidate every load and get a cheap `304 Not Modified` when nothing changed — fresh assets no longer depend on `?v=` cache-bust specifiers. The app shell and login page still use `no-store`.
+
+- **Agent browser pointer:** the overlay marking where `browser_use` moves or clicks inside the embedded browser pane is now a real arrow cursor image (36px, LightsOut theme) instead of a small blue dot. The image's tip hotspot lands on the remote coordinates, and click events still shrink it briefly with a blue halo.
+
+- **"New conversation" wording:** every user-facing "New chat" label — the sidebar button, the per-project menu item, the composer scope chip, and the automation session mode — now reads "New conversation". Internal ids and classes are unchanged.
+
 ### Added
 
 - **Device emulation for the embedded browser.** `browser_use` gains an `emulate` tool — preset `desktop`, `mobile`, or `tablet`, or explicit `width/height/dpr/mobile/ua/touch` — applied through CDP device metrics, user-agent and touch overrides. On a mobile profile, clicks become real touch taps. `move`/`click`/`scroll` coordinates now accept viewport fractions `0`–`1` (values above `1` stay CSS pixels, so existing calls are unchanged), and stream `meta` reports the active `mobile`/`dpr` profile. The pane gains a device row under the address bar — **Relative** follows the pane size with the plain profile (no letterboxing), the presets pin a fixed device, and a readout shows the live viewport — so a human can see or take back the device an agent set.
@@ -19,6 +27,12 @@ All notable changes to the Go core will be documented in this file. The format i
 - **Web UI live stream:** three modules kept `?v=43` specifiers while the rest moved to `?v=44`, which forked the module graph — two copies of `state.js`, two `S` objects. The WebSocket connected and `onopen` marked one copy online while renders read the other copy, so the "Reconnecting to the live stream…" banner never cleared. All JS specifiers share one generation again, and a test now asserts it.
 
 - **Steer dropped at turn end:** an `_session/steering` "injected" input has no turn of its own — it rides the running turn. When that turn finished with no assistant output after the accept, the input sat in history as a final message and was never answered. Accepted steers are now tracked against the turn; on completion, one that saw no following output is requeued as a normal queued turn (cancellable and editable like any other), and a failed mid-turn inject is requeued immediately.
+
+- **Sidebar empty state:** "No conversations yet" no longer shows when the only conversations live inside projects — it now appears only when there are no unarchived conversations at all.
+
+- **New project scope:** creating a project now selects it as the scope for the next conversation and expands it in the sidebar, so the composer's "New conversation in …" chip appears immediately. Editing a project leaves the current scope alone.
+
+- **Wide markdown tables:** tables in messages scroll horizontally instead of compressing every column; cells keep a 7rem minimum width.
 
 ## [0.2.1] - 2026-11-08
 
