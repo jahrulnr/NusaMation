@@ -117,28 +117,53 @@ func toolList() []map[string]any {
 	}
 	num := map[string]any{"type": "number"}
 	str := map[string]any{"type": "string"}
+	boolean := map[string]any{"type": "boolean"}
+	refProps := func(extra map[string]any) map[string]any {
+		props := map[string]any{
+			"element": map[string]any{"type": "string", "description": "Human-readable element description used for clarity"},
+			"ref":     map[string]any{"type": "string", "description": "Exact element ref from browser_snapshot, e.g. e12"},
+		}
+		for k, v := range extra {
+			props[k] = v
+		}
+		return props
+	}
 	return []map[string]any{
-		{"name": "navigate", "description": "Open a URL in this conversation's NusaMation browser pane. Returns the page URL, title, viewport size, and a JPEG of the viewport. Coordinates in later calls are viewport fractions 0-1 (preferred) or CSS pixels.", "inputSchema": obj(map[string]any{"url": str}, "url")},
-		{"name": "snapshot", "description": "Read the current page without changing it: URL, title, viewport size, and a JPEG of the viewport.", "inputSchema": obj(map[string]any{})},
-		{"name": "emulate", "description": "Set device emulation for the pane: a preset name (desktop, mobile, tablet) or explicit fields — width, height, dpr, mobile, ua, touch. Mobile/tablet presets enable touch input and a mobile user agent; clicks become taps.", "inputSchema": obj(map[string]any{"preset": str, "width": num, "height": num, "dpr": num, "mobile": map[string]any{"type": "boolean"}, "ua": str, "touch": map[string]any{"type": "boolean"}})},
-		{"name": "move", "description": "Move the pointer. x/y are viewport fractions 0-1 or CSS pixels. The user sees this pointer on the pane.", "inputSchema": obj(map[string]any{"x": num, "y": num}, "x", "y")},
-		{"name": "click", "description": "Click (or tap, in a mobile profile). x/y are viewport fractions 0-1 or CSS pixels. button is left, middle, or right. clickCount defaults to 1.", "inputSchema": obj(map[string]any{"x": num, "y": num, "button": str, "clickCount": map[string]any{"type": "integer"}}, "x", "y")},
-		{"name": "type", "description": "Insert text into the focused element.", "inputSchema": obj(map[string]any{"text": str}, "text")},
-		{"name": "press", "description": "Press a key. Use a DOM key name (Enter, Tab, Escape, Backspace, ArrowDown) or a single character.", "inputSchema": obj(map[string]any{"key": str}, "key")},
-		{"name": "scroll", "description": "Scroll the wheel. x/y are viewport fractions 0-1 or CSS pixels, defaulting to the viewport center. deltaY is positive downward.", "inputSchema": obj(map[string]any{"x": num, "y": num, "deltaX": num, "deltaY": num})},
+		{"name": "browser_navigate", "description": "Navigate to a URL in this conversation's NusaMation browser pane. Returns URL, title, viewport size, and a screenshot.", "inputSchema": obj(map[string]any{"url": str}, "url")},
+		{"name": "browser_navigate_back", "description": "Go back to the previous page.", "inputSchema": obj(map[string]any{})},
+		{"name": "browser_navigate_forward", "description": "Go forward to the next page.", "inputSchema": obj(map[string]any{})},
+		{"name": "browser_snapshot", "description": "Capture an accessibility snapshot of the page: an indented tree of roles, names, and element refs (e.g. `- button \"Search\" [ref=e12]`). Prefer this over screenshots — pass refs to click, type, hover, select_option, fill_form. Refs are re-stamped on every snapshot; stale refs error with 'run browser_snapshot again'.", "inputSchema": obj(map[string]any{})},
+		{"name": "browser_take_screenshot", "description": "Take a JPEG screenshot of the current viewport.", "inputSchema": obj(map[string]any{})},
+		{"name": "browser_click", "description": "Click an element by its ref from browser_snapshot. Optional button (left, middle, right) and doubleClick.", "inputSchema": obj(refProps(map[string]any{"button": str, "doubleClick": boolean}), "ref")},
+		{"name": "browser_mouse_click_xy", "description": "Click at viewport coordinates: fractions 0-1 (preferred) or CSS pixels.", "inputSchema": obj(map[string]any{"x": num, "y": num, "button": str, "doubleClick": boolean, "clickCount": num}, "x", "y")},
+		{"name": "browser_mouse_move_xy", "description": "Move the pointer to viewport coordinates (fractions 0-1 or CSS pixels). The user sees this pointer on the pane.", "inputSchema": obj(map[string]any{"x": num, "y": num}, "x", "y")},
+		{"name": "browser_hover", "description": "Hover over an element by its ref from browser_snapshot.", "inputSchema": obj(refProps(nil), "ref")},
+		{"name": "browser_type", "description": "Type text into an editable element by its ref (or into the focused element when ref is omitted). Set submit to press Enter afterwards.", "inputSchema": obj(refProps(map[string]any{"text": str, "submit": boolean}), "text")},
+		{"name": "browser_press_key", "description": "Press a key by DOM key name: Enter, Tab, Escape, Backspace, ArrowDown, or a single character.", "inputSchema": obj(map[string]any{"key": str}, "key")},
+		{"name": "browser_scroll", "description": "Scroll the wheel. x/y are viewport fractions 0-1 or CSS pixels, defaulting to the viewport center. deltaY is positive downward.", "inputSchema": obj(map[string]any{"x": num, "y": num, "deltaX": num, "deltaY": num})},
+		{"name": "browser_select_option", "description": "Select options in a <select> by ref; values are option values or visible labels.", "inputSchema": obj(refProps(map[string]any{"values": map[string]any{"type": "array", "items": str}}), "ref", "values")},
+		{"name": "browser_fill_form", "description": "Fill multiple form fields in one call. Each field: {ref, name, type: textbox|checkbox|radio|combobox, value}. Uses native setters so framework-controlled inputs register the change.", "inputSchema": obj(map[string]any{"fields": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"ref": str, "name": str, "type": str, "value": str}, "required": []string{"ref", "value"}}}}, "fields")},
+		{"name": "browser_wait_for", "description": "Wait for: a number of seconds (time), text to appear (text), or text to disappear (textGone). Exactly one argument.", "inputSchema": obj(map[string]any{"time": num, "text": str, "textGone": str})},
+		{"name": "browser_evaluate", "description": "Evaluate JavaScript in the page (Runtime.evaluate). Pass an expression via `expression` or a function via `function` — functions are invoked with no arguments. Promises are awaited; the JSON result comes back in `result`.", "inputSchema": obj(map[string]any{"expression": str, "function": str})},
+		{"name": "browser_console_messages", "description": "Return console messages (log/warn/error) plus page errors captured since the page loaded, newest last, up to 200.", "inputSchema": obj(map[string]any{})},
+		{"name": "browser_resize", "description": "Resize the browser viewport to width x height CSS pixels.", "inputSchema": obj(map[string]any{"width": num, "height": num}, "width", "height")},
+		{"name": "browser_emulate", "description": "Set device emulation: a preset (desktop, mobile, tablet) or explicit fields — width, height, dpr, mobile, ua, touch. Mobile/tablet presets enable touch and a mobile user agent; clicks become taps.", "inputSchema": obj(map[string]any{"preset": str, "width": num, "height": num, "dpr": num, "mobile": boolean, "ua": str, "touch": boolean})},
 	}
 }
 
 type apiResult struct {
-	URL       string `json:"url"`
-	Title     string `json:"title"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
-	SessionID string `json:"sessionId"`
-	Image     string `json:"image"`
-	MimeType  string `json:"mimeType"`
-	Error     string `json:"error"`
-	Code      string `json:"code"`
+	URL       string          `json:"url"`
+	Title     string          `json:"title"`
+	Width     int             `json:"width"`
+	Height    int             `json:"height"`
+	SessionID string          `json:"sessionId"`
+	Image     string          `json:"image"`
+	MimeType  string          `json:"mimeType"`
+	Result    json.RawMessage `json:"result"`
+	Snapshot  string          `json:"snapshot"`
+	Detail    string          `json:"detail"`
+	Error     string          `json:"error"`
+	Code      string          `json:"code"`
 }
 
 func callTool(client *http.Client, baseURL, token, name string, args json.RawMessage) (map[string]any, error) {
@@ -193,6 +218,19 @@ func callTool(client *http.Client, baseURL, token, name string, args json.RawMes
 		return nil, fmt.Errorf("%s", msg)
 	}
 	text := fmt.Sprintf("url: %s\ntitle: %s\nviewport: %dx%d", parsed.URL, parsed.Title, parsed.Width, parsed.Height)
+	if parsed.Snapshot != "" {
+		text += fmt.Sprintf("\nsnapshot:\n%s", parsed.Snapshot)
+	}
+	if parsed.Detail != "" {
+		text += fmt.Sprintf("\ndetail: %s", parsed.Detail)
+	}
+	if len(parsed.Result) > 0 {
+		if name == "browser_console_messages" {
+			text += fmt.Sprintf("\nmessages: %s", parsed.Result)
+		} else {
+			text += fmt.Sprintf("\nresult: %s", parsed.Result)
+		}
+	}
 	content := []any{map[string]any{"type": "text", "text": text}}
 	if parsed.Image != "" {
 		mime := parsed.MimeType

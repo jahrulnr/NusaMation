@@ -453,12 +453,20 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, dst any, max int64) error {
+	return readJSONMode(w, r, dst, max, true)
+}
+
+// readJSONMode is readJSON; strict=false skips DisallowUnknownFields for
+// surfaces that mimic an external API, where extra args should degrade.
+func readJSONMode(w http.ResponseWriter, r *http.Request, dst any, max int64, strict bool) error {
 	if max <= 0 {
 		max = 2 << 20
 	}
 	body := http.MaxBytesReader(w, r.Body, max)
 	dec := json.NewDecoder(body)
-	dec.DisallowUnknownFields()
+	if strict {
+		dec.DisallowUnknownFields()
+	}
 	if err := dec.Decode(dst); err != nil {
 		return err
 	}

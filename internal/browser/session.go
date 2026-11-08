@@ -297,6 +297,151 @@ func (s *Session) Navigate(ctx context.Context, url string) (*NavResult, error) 
 	return s.navResultLocked(), nil
 }
 
+// Eval runs a JavaScript expression in the page and returns the JSON result
+// value. Promises are awaited; exception text becomes the error.
+func (s *Session) Eval(ctx context.Context, expression string) (json.RawMessage, error) {
+	if err := s.acquire(); err != nil {
+		return nil, err
+	}
+	defer s.busy.Store(false)
+	evalCtx, cancel := context.WithTimeout(s.tabCtx, 15*time.Second)
+	yes := true
+	res, err := chromedp.Call(evalCtx, runtime.Evaluate, runtime.EvaluateParams{
+		Expression: expression, AwaitPromise: &yes, ReturnByValue: &yes,
+	})
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	if ex := res.ExceptionDetails; ex != nil {
+		desc := ex.Text
+		if ex.Exception != nil && ex.Exception.Description != "" {
+			desc = ex.Exception.Description
+		}
+		return nil, fmt.Errorf("eval: %s", desc)
+	}
+	if len(res.Result.Value) == 0 {
+		return json.RawMessage("null"), nil
+	}
+	return res.Result.Value, nil
+}
+
+// Snapshot returns the page as an indented aria-like text tree (snapshotJS).
+// Interactive elements carry [ref=eN] markers that RefPoint/FocusRef resolve.
+func (s *Session) Snapshot(ctx context.Context) (string, error) {
+	raw, err := s.Eval(ctx, snapshotJS)
+	if err != nil {
+		return "", err
+	}
+	var tree string
+	if err := json.Unmarshal(raw, &tree); err != nil {
+		return "", fmt.Errorf("snapshot: %w", err)
+	}
+	return tree, nil
+}
+
+// ErrRefNotFound means the element ref is stale or unknown; the fix is a
+// fresh Snapshot, since refs are re-stamped every snapshot.
+var ErrRefNotFound = errors.New("element ref not found — run browser_snapshot again")
+
+// RefPoint resolves a snapshot ref to viewport coordinates of the element's
+// center, scrolling it into view first.
+func (s *Session) RefPoint(ctx context.Context, ref string) (float64, float64, error) {
+	raw, err := s.Eval(ctx, refPointExpr(ref))
+	if err != nil {
+		return 0, 0, err
+	}
+	var pt *struct {
+		X float64 `json:"x"`
+		Y float64 `json:"y"`
+	}
+	if err := json.Unmarshal(raw, &pt); err != nil || pt == nil {
+		return 0, 0, ErrRefNotFound
+	}
+	return pt.X, pt.Y, nil
+}
+
+// FocusRef focuses the ref'd element in page; false means focus did not land
+// (or the ref is gone) and the caller should click it instead.
+func (s *Session) FocusRef(ctx context.Context, ref string) (bool, error) {
+	raw, err := s.Eval(ctx, focusExpr(ref))
+	if err != nil {
+		return false, err
+	}
+	var focused *bool
+	if err := json.Unmarshal(raw, &focused); err != nil || focused == nil {
+		return false, ErrRefNotFound
+	}
+	return *focused, nil
+}
+
+// EvalFields runs a value-setting expression (fillExpr/selectExpr) and returns
+// its per-field summary string.
+func (s *Session) EvalFields(ctx context.Context, expr string) (string, error) {
+	raw, err := s.Eval(ctx, expr)
+	if err != nil {
+		return "", err
+	}
+	var out string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", fmt.Errorf("fields: %w", err)
+	}
+	return out, nil
+}
+
+// SelectRef sets options on the ref'd <select> by value or visible label.
+// A null result means the ref is stale; other outcome text stays a detail.
+func (s *Session) SelectRef(ctx context.Context, ref string, values []string) (string, error) {
+	raw, err := s.Eval(ctx, selectExpr(ref, values))
+	if err != nil {
+		return "", err
+	}
+	var out *string
+	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
+		return "", ErrRefNotFound
+	}
+	return *out, nil
+}
+
+// FillFields sets every field through the native setter and fires input+change.
+func (s *Session) FillFields(ctx context.Context, fields []FieldValue) (string, error) {
+	return s.EvalFields(ctx, fillExpr(fields))
+}
+
+// WaitForText polls until text appears (gone=false) or disappears (gone=true)
+// in body.innerText, or the 10s deadline passes.
+func (s *Session) WaitForText(ctx context.Context, text string, gone bool) error {
+	needle, _ := json.Marshal(text)
+	expr := fmt.Sprintf(`(document.body ? document.body.innerText : "").includes(%s)`, needle)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		raw, err := s.Eval(ctx, expr)
+		switch {
+		case err == nil:
+			var found bool
+			if json.Unmarshal(raw, &found) == nil && found != gone {
+				return nil
+			}
+		case errors.Is(err, ErrBusy):
+			// A navigation is mid-commit; the next poll sees the settled DOM.
+		default:
+			return err // dead/crashed tab is not a wait timeout
+		}
+		if time.Now().After(deadline) {
+			want := "appear"
+			if gone {
+				want = "disappear"
+			}
+			return fmt.Errorf("timed out waiting for text to %s: %q", want, text)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
 // History performs back/forward/reload; a missing history entry is a 200
 // no-op returning current state (§3.6).
 func (s *Session) History(ctx context.Context, action string) (*NavResult, error) {

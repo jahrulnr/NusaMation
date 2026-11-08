@@ -326,7 +326,7 @@ export function handleEvent(ev) {
     case "browser.drive": {
       if (!S.current || S.current.id !== convId) break;
       const pointer = Number.isFinite(data.x) && Number.isFinite(data.y) ? { x: data.x, y: data.y, kind: data.kind || "move" } : null;
-      showAgentBrowser(data.sessionId, pointer, data.tool);
+      showAgentBrowser(data.sessionId, pointer, data.op || data.tool);
       break;
     }
     case "channel.status": {

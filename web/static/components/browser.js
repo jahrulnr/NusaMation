@@ -362,13 +362,17 @@ export function browserReconnect() { attachOrCreate(); }
 // browser_use tool is driving, and remembers a pointer until a frame can place it.
 export async function showAgentBrowser(sessionId, pointer, tool) {
   if (!S.current) return;
-  B.holdViewport = true;
   if (tool === "emulate") {
     // The agent changed the device profile itself — drop the user's chip.
     B.deviceChoice = "";
     updateDeviceBar();
   }
-  stopResizeWatch();
+  // Hold the pane's viewport override only while the agent owns the device
+  // (its own emulate). A user choice — relative or preset — keeps driving
+  // the viewport even during a drive, so the pane and agent stay in sync.
+  B.holdViewport = B.deviceChoice === "";
+  if (B.holdViewport) stopResizeWatch();
+  else applyDeviceChoice();
   if (pointer && Number.isFinite(pointer.x) && Number.isFinite(pointer.y)) {
     B.pendingPointer = pointer;
   }

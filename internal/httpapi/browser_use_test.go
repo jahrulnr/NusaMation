@@ -80,3 +80,83 @@ func TestBrowserUseDevicePatch(t *testing.T) {
 		t.Fatalf("unknown preset needs ErrUnknownPreset, got %v", err)
 	}
 }
+
+func TestNormalizeBrowserUseTool(t *testing.T) {
+	cases := map[string]string{
+		"browser_navigate":         "navigate",
+		"browser_navigate_back":    "navigate_back",
+		"browser_navigate_forward": "navigate_forward",
+		"browser_snapshot":         "tree",
+		"browser_take_screenshot":  "snapshot",
+		"browser_click":            "click",
+		"browser_mouse_click_xy":   "click",
+		"browser_mouse_move_xy":    "move",
+		"browser_hover":            "hover",
+		"browser_type":             "type",
+		"browser_press_key":        "press",
+		"browser_wait_for":         "wait",
+		"browser_evaluate":         "eval",
+		"browser_console_messages": "console",
+		"browser_select_option":    "select",
+		"browser_fill_form":        "fill",
+		"browser_resize":           "emulate",
+		"browser_scroll":           "scroll",
+		"browser_emulate":          "emulate",
+		"navigate":                 "navigate",
+		"snapshot":                 "snapshot",
+		"eval":                     "eval",
+		"something_else":           "something_else",
+	}
+	for in, want := range cases {
+		if got := normalizeBrowserUseTool(in); got != want {
+			t.Errorf("normalizeBrowserUseTool(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, op := range []string{"navigate", "navigate_back", "navigate_forward", "snapshot", "tree",
+		"console", "wait", "move", "hover", "click", "type", "press", "scroll", "emulate", "eval", "select", "fill"} {
+		if !knownBrowserUseTool(op) {
+			t.Errorf("knownBrowserUseTool(%q) = false", op)
+		}
+	}
+	if knownBrowserUseTool("bogus") {
+		t.Error("knownBrowserUseTool(bogus) = true")
+	}
+}
+
+func TestBrowserUseInvalid(t *testing.T) {
+	cases := []struct {
+		name string
+		in   browserUseRequest
+		tool string
+		want string
+	}{
+		{"click ref ok", browserUseRequest{Ref: "e1"}, "click", ""},
+		{"click xy ok", browserUseRequest{X: ptr(0.5), Y: ptr(0.5)}, "click", ""},
+		{"click nothing", browserUseRequest{}, "click", "ref or x/y"},
+		{"hover needs ref", browserUseRequest{}, "hover", "ref"},
+		{"select needs values", browserUseRequest{Ref: "e1"}, "select", "values"},
+		{"select needs ref", browserUseRequest{Values: []string{"a"}}, "select", "ref"},
+		{"fill needs fields", browserUseRequest{}, "fill", "fields"},
+		{"wait needs one", browserUseRequest{}, "wait", "exactly one"},
+		{"wait rejects two", browserUseRequest{Time: 1, Text: "x"}, "wait", "exactly one"},
+		{"wait textGone ok", browserUseRequest{TextGone: "Loading"}, "wait", ""},
+		{"eval expression ok", browserUseRequest{Expression: "1+1"}, "eval", ""},
+		{"eval function ok", browserUseRequest{Function: "() => 1"}, "eval", ""},
+		{"eval needs one", browserUseRequest{}, "eval", "expression or function"},
+		{"type ok no ref", browserUseRequest{Text: "hi"}, "type", ""},
+		{"type ok ref", browserUseRequest{Text: "hi", Ref: "e2"}, "type", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.in.invalid(tc.tool)
+			if tc.want == "" && got != "" {
+				t.Fatalf("invalid() = %q, want ok", got)
+			}
+			if tc.want != "" && !strings.Contains(got, tc.want) {
+				t.Fatalf("invalid() = %q, want containing %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func ptr(f float64) *float64 { return &f }

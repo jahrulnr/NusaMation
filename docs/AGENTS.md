@@ -149,7 +149,21 @@ Limits: tool states are best-effort reports, so the agent may start a new tool b
 
 NusaMation filters MCP servers by each agent's advertised ACP MCP capabilities and passes them to `session/new`, `session/load`, and `session/resume`. Secrets are encrypted at rest and never returned by the API. Editing an MCP server invalidates all running agent runtimes, so active turns are interrupted. Older per-agent entries are retained during migration; duplicate names receive an ID suffix and can be reviewed in Settings.
 
-On those same session calls NusaMation also injects a stdio server named `browser_use` (`nusamation browser-use`). It drives the conversation's embedded browser pane (`navigate`, `snapshot`, `emulate`, `move`, `click`, `type`, `press`, `scroll`). Those calls are MCP tool calls inside the agent; they do not create NusaMation approval cards. Coordinates are viewport fractions `0`–`1` (preferred) or CSS pixels of the viewport size in the tool result. `emulate` applies a device profile — preset `desktop`, `mobile`, or `tablet`, or explicit `width/height/dpr/mobile/ua/touch` — via CDP device metrics, user-agent and touch overrides; mobile profiles turn clicks into taps. The pane's second toolbar row gives the human the same control: **Relative** follows the pane size with the plain profile, the presets pin a fixed device, and the readout shows the active viewport. While the agent is driving, the pane letterboxes that viewport instead of resizing the page. A user-configured server already named `browser_use` is replaced by this one.
+On those same session calls NusaMation also injects a stdio server named `browser_use` (`nusamation browser-use`). It drives the conversation's embedded browser pane. Those calls are MCP tool calls inside the agent; they do not create NusaMation approval cards. The tool surface follows Playwright's vocabulary so agents can reuse what they already know:
+
+- `browser_navigate` / `browser_navigate_back` / `browser_navigate_forward` — page navigation; navigate returns a screenshot.
+- `browser_snapshot` — an indented accessibility tree of the page (`- button "Search" [ref=e12]`). Interactive elements carry `ref` markers; `browser_click`, `browser_type`, `browser_hover`, `browser_select_option`, and `browser_fill_form` take a `ref` and resolve it back to the element. Refs are re-stamped on every snapshot; a stale ref errors with "run browser_snapshot again". Snapshot sees the top-level document only — iframe elements get a ref, their contents do not.
+- `browser_take_screenshot` — a JPEG of the viewport.
+- `browser_mouse_click_xy` / `browser_mouse_move_xy` — coordinates as viewport fractions `0`–`1` (preferred) or CSS pixels of the viewport size in the tool result.
+- `browser_type` — text into a ref'd element (or the focused element), optional `submit` to press Enter.
+- `browser_press_key`, `browser_scroll` — keyboard and wheel input.
+- `browser_select_option`, `browser_fill_form` — set values through native setters with `input`/`change` events, so framework-controlled inputs register them.
+- `browser_wait_for` — `time` seconds, `text` to appear, or `textGone` to disappear.
+- `browser_evaluate` — run JavaScript in the page (`expression`, or `function` invoked with no arguments); promises are awaited and the JSON result returned.
+- `browser_console_messages` — console output and page errors captured since load.
+- `browser_resize`, `browser_emulate` — viewport size, or a device profile (preset `desktop`, `mobile`, `tablet`, or explicit `width/height/dpr/mobile/ua/touch`) via CDP overrides; mobile profiles turn clicks into taps.
+
+The earlier short names (`navigate`, `snapshot`, `click`, `type`, `press`, `scroll`, `move`, `emulate`, `eval`) still work as aliases. The pane's second toolbar row gives the human the same device control: **Relative** follows the pane size with the plain profile, the presets pin a fixed device, and the readout shows the active viewport. While the agent is driving, the pane letterboxes that viewport instead of resizing the page. A user-configured server already named `browser_use` is replaced by this one.
 
 The agent process inherits the NusaMation process environment, with per-agent environment values added on top. Start NusaMation with the environment needed by the configured agents.
 

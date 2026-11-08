@@ -20,6 +20,7 @@ import (
 	"github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/jahrulnr/nusamation/internal/ids"
@@ -178,6 +179,14 @@ func (m *Manager) CreateSession(ctx context.Context, conversationID, url string,
 			return err
 		}
 		if _, err := chromedp.Call(tabCtx, dom.Enable, dom.EnableParams{}); err != nil {
+			return err
+		}
+		if _, err := chromedp.Call(tabCtx, page.AddScriptToEvaluateOnNewDocument,
+			page.AddScriptToEvaluateOnNewDocumentParams{Source: consoleTapJS}); err != nil {
+			return err
+		}
+		// The hook only fires on later navigations; run it once for this load.
+		if _, err := chromedp.Call(tabCtx, runtime.Evaluate, runtime.EvaluateParams{Expression: consoleTapJS}); err != nil {
 			return err
 		}
 		_, err := chromedp.Call(tabCtx, emulation.SetDeviceMetricsOverride,
