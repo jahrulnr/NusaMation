@@ -2,7 +2,10 @@ package httpapi
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +54,8 @@ type Server struct {
 	limiter    *loginLimiter
 	static     fs.FS
 	index      []byte
+	etagMu     sync.Mutex
+	etags      map[string]string
 }
 
 type Options struct {
@@ -82,6 +87,7 @@ func New(opts Options) (*Server, error) {
 		browser: opts.Browser, browserUse: opts.BrowserUse, channels: opts.Channels, hub: opts.Hub,
 		notifier: opts.Notifier, updater: opts.Updater, log: log.With("component", "http"),
 		started: time.Now(), limiter: newLoginLimiter(8, 5*time.Minute), static: static, index: index,
+		etags: map[string]string{},
 	}
 	if opts.Config.PublicURL != "" && s.hub != nil {
 		s.hub.AllowOrigin(opts.Config.PublicURL)
@@ -192,23 +198,52 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/settings/agent-defaults", s.protected(s.handleSaveAgentDefaults))
 	mux.HandleFunc("GET /api/stats", s.protected(s.handleStats))
 
-	static := http.FileServer(http.FS(s.static))
-	mux.Handle("GET /static/", http.StripPrefix("/static/", noDirListing(static)))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.HandlerFunc(s.serveStatic)))
 	mux.HandleFunc("GET /favicon.png", s.serveFile("mark.png", "image/png"))
 	mux.HandleFunc("/", s.handleSPA)
 
 	return s.recoverer(s.securityHeaders(s.requestLog(mux)))
 }
 
-func noDirListing(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Cache-Control", "public, max-age=300")
-		next.ServeHTTP(w, r)
-	})
+// serveStatic serves embedded UI assets. Freshness is driven by a strong ETag
+// (SHA-256 of the file bytes) instead of cache-busting query strings: browsers
+// always revalidate (Cache-Control: no-cache) and get a cheap 304 when the
+// content is unchanged. http.ServeContent evaluates If-None-Match against the
+// ETag header set here and emits the 304 itself.
+func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Path
+	if name == "" || strings.HasSuffix(name, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	info, err := fs.Stat(s.static, name)
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := fs.ReadFile(s.static, name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("ETag", s.staticETag(name, data))
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeContent(w, r, name, info.ModTime(), bytes.NewReader(data))
+}
+
+// staticETag returns the cached strong ETag for an embedded asset, computing it
+// on first use. Embedded contents never change at runtime, so the map needs no
+// eviction.
+func (s *Server) staticETag(name string, data []byte) string {
+	s.etagMu.Lock()
+	defer s.etagMu.Unlock()
+	if tag, ok := s.etags[name]; ok {
+		return tag
+	}
+	sum := sha256.Sum256(data)
+	tag := `"` + hex.EncodeToString(sum[:]) + `"`
+	s.etags[name] = tag
+	return tag
 }
 
 func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {

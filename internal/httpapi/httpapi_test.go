@@ -203,3 +203,56 @@ func TestAuthCSRFAndConversationAPI(t *testing.T) {
 		t.Fatal("four-character password was not saved")
 	}
 }
+
+func TestStaticAssetETagRevalidation(t *testing.T) {
+	srv, err := New(Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := srv.Handler()
+
+	get := func(ifNoneMatch string) *http.Response {
+		req := httptest.NewRequest(http.MethodGet, "/static/app.js", nil)
+		if ifNoneMatch != "" {
+			req.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Result()
+	}
+
+	res := get("")
+	body, _ := io.ReadAll(res.Body)
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusOK || len(body) == 0 {
+		t.Fatalf("initial status=%d body=%d bytes", res.StatusCode, len(body))
+	}
+	etag := res.Header.Get("ETag")
+	if etag == "" {
+		t.Fatal("missing ETag")
+	}
+	if cc := res.Header.Get("Cache-Control"); cc != "no-cache" {
+		t.Fatalf("Cache-Control = %q, want no-cache", cc)
+	}
+
+	res = get(etag)
+	rebody, _ := io.ReadAll(res.Body)
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusNotModified || len(rebody) != 0 {
+		t.Fatalf("matching If-None-Match status=%d body=%d bytes", res.StatusCode, len(rebody))
+	}
+
+	res = get(`"0000000000000000000000000000000000000000000000000000000000000000"`)
+	rebody, _ = io.ReadAll(res.Body)
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusOK || len(rebody) != len(body) {
+		t.Fatalf("mismatched If-None-Match status=%d body=%d bytes", res.StatusCode, len(rebody))
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/static/does-not-exist.js", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if res := rec.Result(); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing asset status = %d", res.StatusCode)
+	}
+}
