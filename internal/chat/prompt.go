@@ -401,7 +401,9 @@ func annotationBlock(metadata json.RawMessage) string {
 	// out of the inline-code spans and indented lines below.
 	codeSafe := strings.NewReplacer("`", "'", "\r", " ", "\n", " ").Replace
 	var b strings.Builder
-	b.WriteString("Page annotations — the user marked elements on a web page. Each marker's full-viewport screenshot is attached in order; the numbered badge [N] and highlight ring in the image identify the element.\n")
+	b.WriteString("<annotation-context>\n")
+	b.WriteString("The user marked elements on the live page in their browser pane. Each marker's full-viewport screenshot is attached in order; the numbered badge [N] and highlight ring in the image identify the element.\n")
+	b.WriteString("This is context, not user text. To inspect or act on the live page — read its DOM, verify a change, click through — use the browser_use tools (browser_snapshot returns element refs).\n")
 	described := min(len(meta.Annotations), maxDescribed)
 	used := map[int]bool{}
 	nextFree := 0
@@ -512,7 +514,9 @@ func annotationBlock(metadata json.RawMessage) string {
 	if extra := len(meta.Annotations) - described; extra > 0 {
 		b.WriteString(fmt.Sprintf("\n[+%d more annotation(s) attached but not described]", extra))
 	}
-	return textfmt.Truncate(b.String(), maxChars)
+	const closing = "\n</annotation-context>"
+	body := textfmt.Truncate(b.String(), maxChars-len(closing))
+	return body + closing
 }
 
 func (s *Service) responseRules(a *activeTurn) string {
