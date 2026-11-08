@@ -111,6 +111,12 @@ try {
     if ($actual -ne $expected.ToLowerInvariant()) { throw "checksum mismatch for $assetName" }
     Write-Host 'Checksum verified (SHA-256).'
 
+    # A running exe is locked and cannot be overwritten: stop the scheduled
+    # task instance and any manually-started copy of this binary first.
+    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    Get-Process nusamation -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -eq $binary } | Stop-Process -Force
+
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $tmp $assetName) -Destination $binary -Force
     Write-Host "Installed $binary"
@@ -144,8 +150,6 @@ if (-not $NoService) {
         -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
         -MultipleInstances IgnoreNew
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-    # Kill a previous task/console instance so the new hidden one can bind.
-    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     Start-ScheduledTask -TaskName $taskName
     Write-Host "Registered and started scheduled task '$taskName' (logon autostart, runs hidden)."
 } else {
