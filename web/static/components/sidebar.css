@@ -55,16 +55,18 @@
 .project-count { flex: none; min-width: 18px; height: 17px; padding: 0 5px; border-radius: 9px; background: rgba(255,255,255,.07); color: var(--muted); font-size: 10px; font-weight: 650; line-height: 17px; text-align: center; font-variant-numeric: tabular-nums; }
 .project-menu-btn { opacity: .6; }
 .project-head:hover .project-menu-btn, .project-menu-btn:focus-visible { opacity: 1; }
-.project-chats { display: none; padding: 0 0 4px 9px; margin-left: 11px; border-left: 1px solid rgba(255,255,255,.07); min-width: 0; }
+.project-chats { display: none; padding: 2px 0 5px 16px; margin-left: 8px; border-left: 1px solid rgba(255,255,255,.1); min-width: 0; }
 .project-block.is-open > .project-chats, .project-block.show-chats > .project-chats { display: block; }
-.conv-item.conv-child { flex-direction: row; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 7px; margin-bottom: 0; }
-.conv-item.conv-child .conv-title { flex: 1 1 auto; min-width: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.conv-item.conv-child .conv-time { flex: 0 0 auto; font-size: 10.8px; color: var(--muted-2); }
+.conv-item.conv-child { flex-direction: row; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 6px; margin-bottom: 0; color: var(--muted); }
+.conv-item.conv-child:hover { color: var(--text-soft); }
+.conv-item.conv-child.active { border-color: transparent; background: transparent; color: var(--text); }
+.conv-item.conv-child .conv-title { flex: 1 1 auto; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-item.conv-child .conv-time { flex: 0 0 auto; font-size: 10.5px; color: var(--muted-2); }
 .conv-item.conv-child .conv-pin { flex: 0 0 auto; }
 .conv-child-menu { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 24px; height: 20px; opacity: 0; background: rgba(20,23,28,.9); border-radius: 6px; }
 .conv-item.conv-child:hover .conv-child-menu, .conv-item.conv-child .conv-child-menu:focus-visible { opacity: .9; }
 .conv-item.conv-child:hover .conv-time, .conv-item.conv-child:hover .conv-badge { opacity: 0; }
-.conv-item.conv-child.active::before { top: 6px; bottom: 6px; }
+.conv-item.conv-child.active::before { top: 5px; bottom: 5px; }
 .project-none { margin: 0; padding: 4px 10px 2px; color: var(--muted-2); font-size: 11.5px; }
 .project-new { display: flex; align-items: center; gap: 6px; width: 100%; margin-top: 2px; padding: 6px 10px; border-radius: 8px; color: var(--muted); font-size: 12px; text-align: left; }
 .project-new:hover, .project-new:focus-visible { color: var(--text); background: rgba(255,255,255,.045); }
