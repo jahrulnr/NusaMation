@@ -1,10 +1,10 @@
-import { $, clamp, esc, icon, truncate } from "./util.js?v=35";
-import { S, composerKey, onComposerSwitch } from "./state.js?v=35";
-import { cachedBrowserMeta, onBrowserMetaRestored, saveBrowserOpen, saveLastURL, scheduleDraftSave, usableBrowserURL, whenBrowserMeta } from "./convmeta.js?v=35";
-import { api } from "./api.js?v=35";
-import { toast } from "./toast.js?v=35";
-import { closePopover, openPopover } from "./popover.js?v=35";
-import { focusComposer, renderPendingAttachments } from "./composer.js?v=35";
+import { $, clamp, esc, icon, truncate } from "./util.js?v=43";
+import { S, composerKey, onComposerSwitch } from "./state.js?v=43";
+import { cachedBrowserMeta, onBrowserMetaRestored, saveBrowserOpen, saveLastURL, scheduleDraftSave, usableBrowserURL, whenBrowserMeta } from "./convmeta.js?v=43";
+import { api } from "./api.js?v=43";
+import { toast } from "./toast.js?v=43";
+import { closePopover, openPopover } from "./popover.js?v=43";
+import { focusComposer, renderPendingAttachments } from "./composer.js?v=43";
 
 /* ---------------- embedded browser pane ----------------
  * Wire protocol: tmp/browser-api-contract.md

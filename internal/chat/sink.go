@@ -890,6 +890,6 @@ func (s *Service) finishTurn(a *activeTurn, status, stopReason string, runErr er
 		s.mu.Unlock()
 	}
 	a.mu.Unlock()
-	s.clearActive(a)
+	s.finishActive(a)
 	s.log.Info("turn finished", "conversation", a.conversationID, "turn", a.turn.ID, "status", status, "stop", stopReason)
 }

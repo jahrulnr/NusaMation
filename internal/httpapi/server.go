@@ -128,6 +128,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/conversations/{id}/export", s.protected(s.handleExport))
 	mux.HandleFunc("DELETE /api/conversations", s.protected(s.handleDeleteAllConversations))
 
+	mux.HandleFunc("GET /api/projects", s.protected(s.handleListProjects))
+	mux.HandleFunc("POST /api/projects", s.protected(s.handleCreateProject))
+	mux.HandleFunc("PATCH /api/projects/{id}", s.protected(s.handleUpdateProject))
+	mux.HandleFunc("DELETE /api/projects/{id}", s.protected(s.handleDeleteProject))
+	mux.HandleFunc("POST /api/projects/{id}/restore", s.protected(s.handleRestoreProject))
+	mux.HandleFunc("GET /api/fs/list", s.protected(s.handleListDirs))
+
 	mux.HandleFunc("GET /api/approvals", s.protected(s.handleListApprovals))
 	mux.HandleFunc("POST /api/approvals/{id}", s.protected(s.handleResolveApprovalByID))
 	mux.HandleFunc("GET /api/approval-rules", s.protected(s.handleListApprovalRules))
@@ -187,7 +194,7 @@ func (s *Server) Handler() http.Handler {
 
 	static := http.FileServer(http.FS(s.static))
 	mux.Handle("GET /static/", http.StripPrefix("/static/", noDirListing(static)))
-	mux.HandleFunc("GET /favicon.svg", s.serveFile("favicon.svg", "image/svg+xml"))
+	mux.HandleFunc("GET /favicon.png", s.serveFile("mark.png", "image/png"))
 	mux.HandleFunc("/", s.handleSPA)
 
 	return s.recoverer(s.securityHeaders(s.requestLog(mux)))

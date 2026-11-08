@@ -25,14 +25,14 @@ Per-agent process supervision and per-conversation ACP sessions.
   3. `session/resume` if supported;
   4. `session/new`.
 - If load/resume reports an unknown session, NusaMation creates a fresh ACP session and marks it `recovered`; the chat layer prepends a transcript recap.
-- Agent processes get a sanitized environment and a working directory. The ACP terminal manager confines cwd to session roots and truncates output safely.
+- Agent processes get a sanitized environment and a working directory. The ACP terminal manager accepts a cwd inside any session root and truncates output safely.
 - `Probe` launches a temporary process, creates a session, captures capabilities/models/config/auth methods and persists them without disturbing a live conversation.
 
 ### `internal/store`
 
 SQLite via `modernc.org/sqlite` (pure Go, CGO-free). One connection, WAL, foreign keys, busy timeout.
 
-Tables: `settings`, `sessions`, `agents`, `mcp_servers`, `conversations`, `channel_links`, `messages`, `turns`, `approvals`, `approval_rules`, `inbound_messages`, `uploads`.
+Tables: `settings`, `sessions`, `agents`, `mcp_servers`, `conversations`, `projects`, `channel_links`, `messages`, `turns`, `approvals`, `approval_rules`, `inbound_messages`, `uploads`.
 
 Messages have monotonic per-conversation `seq`. Turns represent queued/running/waiting/completed prompts. Channel links map external chat IDs to conversations and are unique per `(channel, external_id, thread_id)`.
 
@@ -42,7 +42,7 @@ The orchestrator. It implements both `agent.Sink` (events coming *from* an agent
 
 Responsibilities:
 
-- conversation lifecycle, titles, pin/archive;
+- conversation lifecycle, titles, pin/archive, and optional local projects (ordered folders, undo);
 - prompt submission and per-conversation turn queue;
 - building ACP prompt content from text, images, text files and resource links;
 - streaming assistant text and thoughts into DB rows and WebSocket events;

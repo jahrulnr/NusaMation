@@ -12,6 +12,20 @@ import (
 )
 
 func (s *Store) CreateConversation(ctx context.Context, agentID, title, cwd, originChannel, originRef, model string) (Conversation, error) {
+	return s.insertConversation(ctx, agentID, title, cwd, originChannel, originRef, model, "", nil)
+}
+
+// CreateProjectConversation inserts a chat whose cwd and additionalDirectories
+// come from a project. extraDirs is stored even when empty so stale directories
+// are not left behind.
+func (s *Store) CreateProjectConversation(ctx context.Context, agentID, title, cwd, originChannel, originRef, model, projectID string, extraDirs []string) (Conversation, error) {
+	if extraDirs == nil {
+		extraDirs = []string{}
+	}
+	return s.insertConversation(ctx, agentID, title, cwd, originChannel, originRef, model, projectID, extraDirs)
+}
+
+func (s *Store) insertConversation(ctx context.Context, agentID, title, cwd, originChannel, originRef, model, projectID string, extraDirs []string) (Conversation, error) {
 	now := nowMS()
 	id := ids.New("cv")
 	if strings.TrimSpace(title) == "" {
@@ -20,12 +34,55 @@ func (s *Store) CreateConversation(ctx context.Context, agentID, title, cwd, ori
 	if originChannel == "" {
 		originChannel = "web"
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO conversations
-		(id,title,agent_id,acp_session_id,cwd,status,origin_channel,origin_ref,model,config_options_json,
+	meta := "{}"
+	if projectID != "" {
+		b, err := json.Marshal(map[string]any{"additionalDirectories": extraDirs})
+		if err != nil {
+			return Conversation{}, err
+		}
+		meta = string(b)
+	}
+	const query = `INSERT INTO conversations
+		(id,title,agent_id,acp_session_id,cwd,project_id,status,origin_channel,origin_ref,model,config_options_json,
 		 routing_json,pinned,archived,plan_json,usage_json,metadata_json,created_at,updated_at,last_message_at)
-		VALUES (?,?,?,'',?,'idle',?,?,?,'[]',?,0,0,'[]','{}','{}',?,?,?)`,
-		id, title, agentID, cwd, originChannel, originRef, model, js(DefaultRouting(), "{}"), now, now, now)
+		VALUES (?,?,?,'',?,?,'idle',?,?,?,'[]',?,0,0,'[]','{}',?,?,?,?)`
+	args := []any{id, title, agentID, cwd, nullable(projectID), originChannel, originRef, model, js(DefaultRouting(), "{}"), meta, now, now, now}
+	if projectID == "" {
+		if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+			return Conversation{}, err
+		}
+		return s.GetConversation(ctx, id)
+	}
+	// The project check shares the write transaction so a delete between the
+	// caller's read and this insert reports ErrNotFound, not a foreign-key 500.
+	// Root paths are read here too so a folders update committed after the
+	// caller's read is not lost on the new member's cwd and metadata.
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return Conversation{}, err
+	}
+	defer tx.Rollback()
+	var rootsRaw string
+	err = tx.QueryRowContext(ctx, `SELECT root_paths FROM projects WHERE id=?`, projectID).Scan(&rootsRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Conversation{}, ErrNotFound
+	}
+	if err != nil {
+		return Conversation{}, err
+	}
+	var roots []string
+	_ = json.Unmarshal([]byte(rootsRaw), &roots)
+	if len(roots) > 0 {
+		b, err := json.Marshal(map[string]any{"additionalDirectories": append([]string{}, roots[1:]...)})
+		if err != nil {
+			return Conversation{}, err
+		}
+		args[3], args[9] = roots[0], string(b)
+	}
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return Conversation{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return Conversation{}, err
 	}
 	return s.GetConversation(ctx, id)
@@ -42,7 +99,7 @@ func (s *Store) GetConversation(ctx context.Context, id string) (Conversation, e
 }
 
 const conversationSelect = `
-SELECT c.id,c.title,c.agent_id,a.name,a.icon,a.color,c.acp_session_id,c.cwd,c.status,
+SELECT c.id,c.title,c.agent_id,a.name,a.icon,a.color,c.acp_session_id,c.cwd,c.project_id,c.status,
        c.origin_channel,c.origin_ref,c.model,c.config_options_json,c.routing_json,c.pinned,
        c.archived,c.plan_json,c.usage_json,c.metadata_json,c.created_at,c.updated_at,c.last_message_at,
        COALESCE((SELECT CASE WHEN m.kind='tool' THEN COALESCE(json_extract(m.content_json,'$.title'),m.text) ELSE m.text END
@@ -55,9 +112,10 @@ FROM conversations c JOIN agents a ON a.id=c.agent_id`
 func (s *Store) scanConversation(row rowScanner) (Conversation, error) {
 	var c Conversation
 	var configs, routing, plan, usage, meta string
+	var projectID sql.NullString
 	var pinned, archived int
 	err := row.Scan(&c.ID, &c.Title, &c.AgentID, &c.AgentName, &c.AgentIcon, &c.AgentColor,
-		&c.ACPSessionID, &c.Cwd, &c.Status, &c.OriginChannel, &c.OriginRef, &c.Model,
+		&c.ACPSessionID, &c.Cwd, &projectID, &c.Status, &c.OriginChannel, &c.OriginRef, &c.Model,
 		&configs, &routing, &pinned, &archived, &plan, &usage, &meta, &c.CreatedAt, &c.UpdatedAt,
 		&c.LastMessageAt, &c.LastMessage, &c.LastMessageRole, &c.MessageCount, &c.PendingCount)
 	if err != nil {
@@ -68,6 +126,9 @@ func (s *Store) scanConversation(row rowScanner) (Conversation, error) {
 	}
 	c.Pinned = pinned != 0
 	c.Archived = archived != 0
+	if projectID.Valid {
+		c.ProjectID = projectID.String
+	}
 	c.ConfigOptions = raw(configs, "[]")
 	c.Plan = raw(plan, "[]")
 	c.Metadata = raw(meta, "{}")

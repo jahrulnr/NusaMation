@@ -1,20 +1,61 @@
-import { $, esc, icon } from "./util.js?v=35";
-import { S } from "./state.js?v=35";
-import { respondElicitation, showPendingRequest } from "./requests.js?v=35";
+import { $, esc, icon } from "./util.js?v=43";
+import { S } from "./state.js?v=43";
+import { respondElicitation, showPendingRequest } from "./requests.js?v=43";
 
 /* ---------------- modals ---------------- */
-export function openModal(html, opts = {}) {
-  const root = $("#modal-root");
-  root.innerHTML = `<div class="modal-overlay" data-modal-overlay="1"><div class="modal ${opts.size || ""}" role="dialog" aria-modal="true">${html}</div></div>`;
-  const overlay = root.firstElementChild;
+const modalCloseHooks = new Set();
+
+export function onModalClose(fn) {
+  modalCloseHooks.add(fn);
+  return () => modalCloseHooks.delete(fn);
+}
+
+function modalShell(html, opts = {}) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay" + (opts.fit ? " modal-fit" : "");
+  overlay.dataset.modalOverlay = "1";
+  const dialogClass = ["modal", opts.size || "", opts.dialogClass || ""].filter(Boolean).join(" ");
+  overlay.innerHTML = `<div class="${dialogClass}" role="dialog" aria-modal="true">${html}</div>`;
   overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeModal(); });
+  return overlay;
+}
+
+function focusIn(root) {
   setTimeout(() => {
-    const focus = root.querySelector("[autofocus]");
+    const focus = root?.querySelector?.("[autofocus]");
     if (focus) focus.focus();
   }, 30);
 }
 
+export function openModal(html, opts = {}) {
+  const root = $("#modal-root");
+  const overlay = modalShell(html, opts);
+  root.innerHTML = "";
+  root.appendChild(overlay);
+  focusIn(overlay);
+}
+
+export function stackModal(html, opts = {}) {
+  const root = $("#modal-root");
+  if (!root) return null;
+  const overlay = modalShell(html, opts);
+  root.appendChild(overlay);
+  focusIn(overlay);
+  return overlay;
+}
+
 export function closeModal(cancelRequest = true) {
+  const root = $("#modal-root");
+  const overlays = root ? [...root.children].filter((node) => node.classList?.contains("modal-overlay")) : [];
+  if (overlays.length > 1) {
+    const active = document.activeElement;
+    overlays[overlays.length - 1].remove();
+    if (!active || !root.contains(active)) {
+      const focus = root.querySelector("[autofocus]") || root.querySelector("button, input, textarea, select");
+      focus?.focus();
+    }
+    return;
+  }
   const previousType = S.modal?.type;
   if (cancelRequest && S.modal?.type === "elicitation") {
     const { id, conversationId } = S.modal;
@@ -28,9 +69,20 @@ export function closeModal(cancelRequest = true) {
   if (S.qrTimer) { clearInterval(S.qrTimer); S.qrTimer = null; }
   S.modal = null;
   S.confirmAction = null;
-  const root = $("#modal-root");
   if (root) root.innerHTML = "";
+  for (const fn of modalCloseHooks) {
+    try { fn(); } catch (err) { console.warn("modal close hook failed", err); }
+  }
   if (previousType === "agent-slow") setTimeout(showPendingRequest, 0);
+}
+
+export function closeAllModals() {
+  const root = $("#modal-root");
+  if (root) {
+    const overlays = [...root.querySelectorAll(".modal-overlay")];
+    for (let i = overlays.length - 1; i > 0; i--) overlays[i].remove();
+  }
+  closeModal();
 }
 
 export function modalHead(title, sub, close = true) {

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -69,13 +71,22 @@ func (s *Store) migrate(ctx context.Context) error {
 		if m.Version <= version {
 			continue
 		}
+		// ADD COLUMN is not idempotent. Upgrade tests rewind user_version and
+		// apply the same file again, so a column that already exists is skipped.
+		// Check before the write transaction: this store has one connection.
+		script, err := s.omitExistingAddColumns(ctx, m.SQL)
+		if err != nil {
+			return err
+		}
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("apply %s: %w", m.Name, err)
+		if strings.TrimSpace(script) != "" {
+			if _, err := tx.ExecContext(ctx, script); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("apply %s: %w", m.Name, err)
+			}
 		}
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, m.Version)); err != nil {
 			_ = tx.Rollback()
@@ -99,8 +110,54 @@ func nullable(s string) any {
 
 var ErrNotFound = errors.New("not found")
 
+// ErrConflict reports a stale project revision or an id that already exists.
+var ErrConflict = errors.New("conflict")
+
 // ErrNotQueued reports a turn that exists but is not waiting in the queue —
 // e.g. it already started or finished, so it cannot be cancelled as queued.
 var ErrNotQueued = errors.New("turn is not queued")
 
 func IsNotFound(err error) bool { return errors.Is(err, ErrNotFound) || errors.Is(err, sql.ErrNoRows) }
+
+var addColumnStmt = regexp.MustCompile(`(?is)ALTER\s+TABLE\s+([A-Za-z_][A-Za-z0-9_]*)\s+ADD\s+COLUMN\s+([A-Za-z_][A-Za-z0-9_]*)\b[^;]*;`)
+
+// omitExistingAddColumns removes ALTER TABLE ... ADD COLUMN statements whose
+// column is already present. The rest of the script, including comments, is
+// left for SQLite to parse.
+func (s *Store) omitExistingAddColumns(ctx context.Context, script string) (string, error) {
+	if !strings.Contains(strings.ToUpper(script), "ADD COLUMN") {
+		return script, nil
+	}
+	var dropErr error
+	out := addColumnStmt.ReplaceAllStringFunc(script, func(stmt string) string {
+		if dropErr != nil {
+			return stmt
+		}
+		match := addColumnStmt.FindStringSubmatch(stmt)
+		if len(match) < 3 {
+			return stmt
+		}
+		exists, err := s.columnExists(ctx, match[1], match[2])
+		if err != nil {
+			dropErr = err
+			return stmt
+		}
+		if exists {
+			return ""
+		}
+		return stmt
+	})
+	if dropErr != nil {
+		return "", dropErr
+	}
+	return out, nil
+}
+
+func (s *Store) columnExists(ctx context.Context, table, column string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, table, column).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}

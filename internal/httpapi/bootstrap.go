@@ -19,6 +19,10 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		publicAgents = append(publicAgents, a.Public())
 	}
 	convs, _ := s.store.ListConversations(ctx, store.ConversationFilter{Limit: 250})
+	projects, _ := s.store.ListProjects(ctx)
+	if projects == nil {
+		projects = []store.Project{}
+	}
 	approvals, _ := s.store.ListPendingApprovals(ctx, 100)
 	mcp, _ := s.store.ListMCP(ctx)
 	publicMCP := make([]store.MCPServer, 0, len(mcp))
@@ -43,6 +47,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		"mcp":             publicMCP,
 		"channels":        s.channelStatuses(),
 		"conversations":   convs,
+		"projects":        projects,
 		"approvals":       approvals,
 		"routingDefaults": routing,
 		"agentDefaults":   agentDefaults,

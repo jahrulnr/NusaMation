@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -128,15 +129,7 @@ func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, root
 	if strings.TrimSpace(req.Command) == "" {
 		return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: "command is required"}
 	}
-	if len(roots) == 0 {
-		return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: "session has no workspace root"}
-	}
-	cwd := req.Cwd
-	if cwd == "" {
-		cwd = roots[0]
-	}
-	var err error
-	cwd, err = security.SafePath(roots[0], cwd, true)
+	cwd, err := terminalCwd(roots, req.Cwd)
 	if err != nil {
 		return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: err.Error()}
 	}
@@ -213,6 +206,36 @@ func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, root
 		tm.log.Debug("terminal exited", "id", t.id, "command", t.command, "status", status)
 	}()
 	return acp.TerminalCreateResponse{TerminalID: t.id}, nil
+}
+
+// terminalCwd accepts a working directory inside any session root. An empty
+// cwd uses the primary root. Paths outside every root are rejected.
+func terminalCwd(roots []string, cwd string) (string, error) {
+	if len(roots) == 0 {
+		return "", errors.New("session has no workspace root")
+	}
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		cwd = roots[0]
+	}
+	if !filepath.IsAbs(cwd) {
+		return "", errors.New("path must be absolute")
+	}
+	var last error
+	for _, root := range roots {
+		if strings.TrimSpace(root) == "" {
+			continue
+		}
+		abs, err := security.SafePath(root, cwd, true)
+		if err == nil {
+			return abs, nil
+		}
+		last = err
+	}
+	if last != nil {
+		return "", last
+	}
+	return "", errors.New("session has no workspace root")
 }
 
 // terminalCommand builds the process for terminal/create. ACP sends a program

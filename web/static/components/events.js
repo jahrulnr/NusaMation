@@ -1,26 +1,27 @@
-import { $, agentById, isMobile, parseJSON } from "./util.js?v=35";
-import { S, composerFor, composerKey, saveActivityState, switchComposer } from "./state.js?v=35";
-import { api } from "./api.js?v=35";
-import { toast } from "./toast.js?v=35";
-import { closeModal, confirmModal, promptModal } from "./modal.js?v=35";
-import { closePopover } from "./popover.js?v=35";
-import { openToolMenu, previewAnnotation, renderChat, toolPreFor } from "./chat.js?v=35";
-import { renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js?v=35";
-import { autoGrow, editAnnotationComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js?v=35";
-import { browserEscape, browserHistory, browserReconnect, cancelAnnotation, closeBrowserPane, submitAnnotation, toggleAnnotate, toggleBrowserPane } from "./browser.js?v=35";
-import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, openConversationMenu, openMoreMenu, openRoutingMenu, renameConversation, selectConversation, setRoute, togglePin, toggleRouting } from "./conversations.js?v=35";
-import { renderOffline } from "./shell.js?v=35";
-import { scheduleDraftSave } from "./convmeta.js?v=35";
-import { closeMobileSidebar, filterSidebar, openMobileSidebar, renderSidebar, toggleSidebarCollapsed } from "./sidebar.js?v=35";
-import { renderTopbar } from "./topbar.js?v=35";
-import { closeWS, connectWS } from "./ws.js?v=35";
-import { openAuthTerminal } from "./terminal.js?v=35";
-import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications } from "./settings.js?v=35";
-import { loadAutomations, saveAutomation, updateAutomationBuilder } from "./automations.js?v=35";
-import { refreshChannels, saveWaSettings, waAction } from "./whatsapp.js?v=35";
-import { openPalette, runPalette } from "./palette.js?v=35";
-import { doLogin, doLogout } from "./auth.js?v=35";
-import { startApp } from "./boot.js?v=35";
+import { $, agentById, isMobile, parseJSON } from "./util.js?v=43";
+import { S, composerFor, composerKey, saveActivityState, setSelectedProject, switchComposer } from "./state.js?v=43";
+import { api } from "./api.js?v=43";
+import { toast } from "./toast.js?v=43";
+import { closeModal, confirmModal, promptModal } from "./modal.js?v=43";
+import { closePopover } from "./popover.js?v=43";
+import { openToolMenu, previewAnnotation, renderChat, toolPreFor } from "./chat.js?v=43";
+import { renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js?v=43";
+import { autoGrow, editAnnotationComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js?v=43";
+import { browserEscape, browserHistory, browserReconnect, cancelAnnotation, closeBrowserPane, submitAnnotation, toggleAnnotate, toggleBrowserPane } from "./browser.js?v=43";
+import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, newProjectChat, openConversationMenu, openMoreMenu, openRoutingMenu, renameConversation, selectConversation, setRoute, togglePin, toggleRouting } from "./conversations.js?v=43";
+import { renderOffline } from "./shell.js?v=43";
+import { scheduleDraftSave } from "./convmeta.js?v=43";
+import { closeMobileSidebar, filterSidebar, openMobileSidebar, renderSidebar, toggleProjectRow, toggleSidebarCollapsed } from "./sidebar.js?v=43";
+import { addDraftSource, confirmAddedFolders, deleteProject, loadFolderBrowser, makeDraftPrimary, noteProjectName, openFolderBrowser, openProjectEditor, openProjectMenu, openProjectMenuAt, removeDraftSource, saveProjectEditor, toggleProjectPin } from "./projects.js?v=43";
+import { renderTopbar } from "./topbar.js?v=43";
+import { closeWS, connectWS } from "./ws.js?v=43";
+import { openAuthTerminal } from "./terminal.js?v=43";
+import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications } from "./settings.js?v=43";
+import { loadAutomations, saveAutomation, updateAutomationBuilder } from "./automations.js?v=43";
+import { refreshChannels, saveWaSettings, waAction } from "./whatsapp.js?v=43";
+import { openPalette, runPalette } from "./palette.js?v=43";
+import { doLogin, doLogout } from "./auth.js?v=43";
+import { startApp } from "./boot.js?v=43";
 
 export const syncAppHeight = () => {
   const vv = window.visualViewport;
@@ -104,7 +105,59 @@ function bindConversationGestures() {
   }, true);
 }
 
+let swallowClickUntil = 0;
+let projectPress = null;
+
+function cancelProjectPress() {
+  if (!projectPress) return;
+  clearTimeout(projectPress.timer);
+  projectPress = null;
+}
+
+function bindProjectMenuGestures() {
+  // A long press ends with a click on its row. Drop that click in the capture phase, before the
+  // popover's outside-click listener closes the menu the press just opened. A click anywhere
+  // else (e.g. the popover it opened) is real and must go through.
+  window.addEventListener("click", (e) => {
+    if (performance.now() > swallowClickUntil) return;
+    swallowClickUntil = 0;
+    if (!e.target.closest?.("#sidebar .project-head")) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+  document.addEventListener("contextmenu", (e) => {
+    const block = e.target.closest?.("#sidebar [data-project-id]");
+    if (!block || e.target.closest?.(".conv-item")) return;
+    e.preventDefault();
+    openProjectMenuAt(block.dataset.projectId, e.clientX, e.clientY);
+  });
+  document.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" || e.button !== 0) return;
+    const row = e.target.closest?.("#sidebar .project-head");
+    if (!row || e.target.closest?.(".project-menu-btn")) return;
+    cancelProjectPress();
+    const press = { id: row.dataset.id, x: e.clientX, y: e.clientY, pointerId: e.pointerId, timer: 0, fired: false };
+    press.timer = setTimeout(() => {
+      if (projectPress !== press) return;
+      press.fired = true;
+      openProjectMenuAt(press.id, press.x, press.y);
+    }, 550);
+    projectPress = press;
+  });
+  document.addEventListener("pointermove", (e) => {
+    if (!projectPress || e.pointerId !== projectPress.pointerId) return;
+    if (Math.hypot(e.clientX - projectPress.x, e.clientY - projectPress.y) > 10) cancelProjectPress();
+  });
+  document.addEventListener("pointerup", (e) => {
+    if (!projectPress || e.pointerId !== projectPress.pointerId) return;
+    if (projectPress.fired) swallowClickUntil = performance.now() + 500;
+    cancelProjectPress();
+  });
+  document.addEventListener("pointercancel", cancelProjectPress);
+}
+
 export function bindEvents() {
+  bindProjectMenuGestures();
   bindConversationGestures();
   /* ---------------- event delegation ---------------- */
   document.addEventListener("submit", (e) => {
@@ -117,6 +170,7 @@ export function bindEvents() {
     else if (form.dataset.form === "mcp") saveMCP(form);
     else if (form.dataset.form === "password") savePassword(form);
     else if (form.dataset.form === "elicitation") submitElicitation(form);
+    else if (form.dataset.form === "project") saveProjectEditor();
   });
 
   document.addEventListener("input", (e) => {
@@ -127,6 +181,7 @@ export function bindEvents() {
       S.query = e.target.value;
       filterSidebar();
     }
+    if (e.target.matches("[data-input=project-name]")) noteProjectName(e.target.value);
   });
 
   document.addEventListener("change", (e) => {
@@ -165,7 +220,12 @@ export function bindEvents() {
       await selectConversation(id);
       return;
     }
-    if (action !== "conv-menu") closePopover();
+    if (action === "toggle-project") {
+      e.preventDefault();
+      toggleProjectRow(id);
+      return;
+    }
+    if (action !== "conv-menu" && action !== "project-menu") closePopover();
     switch (action) {
       case "toast-close": target.closest(".toast")?.remove(); break;
       case "toggle-password": {
@@ -174,6 +234,24 @@ export function bindEvents() {
         break;
       }
       case "new-chat": e.preventDefault(); newConversation(); break;
+      case "project-new-chat": e.preventDefault(); newProjectChat(id); break;
+      case "project-clear-scope": setSelectedProject(""); renderSidebar(); renderComposer(); break;
+      case "new-project": openProjectEditor(null); break;
+      case "project-menu": e.preventDefault(); openProjectMenu(target, id); break;
+      case "project-settings": {
+        const project = (S.projects || []).find((p) => p.id === id);
+        if (project) openProjectEditor(project);
+        break;
+      }
+      case "project-pin": await toggleProjectPin(id); break;
+      case "project-delete": await deleteProject(id); break;
+      case "project-add-folder": openFolderBrowser(); break;
+      case "project-make-primary": makeDraftPrimary(target.dataset.index); break;
+      case "project-remove-source": removeDraftSource(target.dataset.index); break;
+      case "project-confirm-folders": await confirmAddedFolders(); break;
+      case "fs-open":
+      case "fs-retry": await loadFolderBrowser(target.getAttribute("data-path") || ""); break;
+      case "fs-add": addDraftSource(target.getAttribute("data-path") || ""); break;
       case "open-sidebar": openMobileSidebar(); break;
       case "toggle-sidebar": toggleSidebarCollapsed(); break;
       case "close-sidebar": closeMobileSidebar(); break;

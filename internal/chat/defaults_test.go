@@ -89,7 +89,7 @@ func TestAgentDefaultsFollowDynamicOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := svc.sessionRequest(switched, ag).DefaultConfig; len(got) != 2 || got[1].Value != "high" {
+	if got := svc.sessionRequest(ctx, switched, ag).DefaultConfig; len(got) != 2 || got[1].Value != "high" {
 		t.Fatalf("switch defaults = %#v", got)
 	}
 }

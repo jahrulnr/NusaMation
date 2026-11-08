@@ -157,7 +157,7 @@
 
 /* Welcome */
 .welcome { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 30px 80px; text-align: center; }
-.welcome-orb { width: 64px; height: 64px; border-radius: 20px; background: conic-gradient(from 200deg, #f5b544, #ffd27b, #7ad9c4, #f5b544); display: grid; place-items: center; color: #17130b; font-weight: 850; font-size: 30px; box-shadow: 0 20px 60px rgba(245,181,68,.22); margin-bottom: 22px; animation: welcomeFloat 5s ease-in-out infinite; }
+.welcome-orb { width: 64px; height: 64px; border-radius: 20px; display: block; object-fit: cover; box-shadow: 0 20px 60px rgba(245,181,68,.22); margin-bottom: 22px; animation: welcomeFloat 5s ease-in-out infinite; }
 @keyframes welcomeFloat { 0%,100% { transform: translateY(0) rotate(-2deg) } 50% { transform: translateY(-6px) rotate(2deg) } }
 .welcome h1 { font-size: clamp(26px, 3.4vw, 38px); line-height: 1.1; letter-spacing: -.04em; margin: 0 0 11px; font-weight: 620; }
 .welcome h1 em { font-style: normal; color: var(--accent); }

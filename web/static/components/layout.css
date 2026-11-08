@@ -60,7 +60,7 @@
   .msg-avatar { width: 26px; height: 26px; }
   .welcome { padding: 30px 18px 60px; }
   .suggestion-grid { grid-template-columns: 1fr; }
-  .welcome-orb { width: 54px; height: 54px; font-size: 25px; }
+  .welcome-orb { width: 54px; height: 54px; }
   .modal.settings-modal { height: 94dvh; }
   .settings-modal .settings-layout { flex: 1; min-height: 0; }
   .settings-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }

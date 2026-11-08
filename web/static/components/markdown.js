@@ -1,4 +1,4 @@
-import { $, $$, esc, icon } from "./util.js?v=35";
+import { $, $$, esc, icon } from "./util.js?v=43";
 
 /* ---------------- markdown ---------------- */
 export const markdownCache = new Map();

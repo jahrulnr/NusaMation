@@ -7,6 +7,7 @@
 .menu-item:hover { background: var(--panel-2); color: var(--text); }
 .menu-item.selected { background: rgba(245,181,68,.08); color: var(--text); }
 .menu-item .icon { color: var(--muted); }
+.menu-item .menu-slot { width: 15px; flex: none; }
 .menu-item.danger { color: #ff9d9d; }
 .menu-item.danger .icon { color: var(--danger); }
 .menu-item .agent-orb { width: 20px; height: 20px; font-size: 9px; border-radius: 6px; }

@@ -13,6 +13,13 @@ import (
 	"github.com/jahrulnr/nusamation/internal/testutil"
 )
 
+func TestMain(m *testing.M) {
+	if os.Getenv("NUSAMATION_TERMINAL_HELPER") == "1" {
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
 func TestTerminalStreamsFullOutputAndKeepsACPOutputLimit(t *testing.T) {
 	testutil.RequirePosixShell(t)
 	root := t.TempDir()
@@ -91,6 +98,40 @@ func TestTerminalKeepsArgvForProgramPathWithSpaces(t *testing.T) {
 	output := runTerminalToExit(t, acp.TerminalCreateRequest{SessionID: "s", Command: program, Cwd: root}, root)
 	if output != "argv-ok" {
 		t.Fatalf("program output = %q", output)
+	}
+}
+
+func TestTerminalCreateAllowsAnySessionRoot(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary := t.TempDir()
+	second := filepath.Join(t.TempDir(), "nested")
+	if err := os.Mkdir(second, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	roots := []string{primary, filepath.Dir(second)}
+	tm := NewTerminalManager(nil)
+	t.Cleanup(tm.CloseAll)
+
+	params, _ := json.Marshal(acp.TerminalCreateRequest{
+		SessionID: "s", Command: exe, Cwd: second,
+		Env: []acp.EnvVar{{Name: "NUSAMATION_TERMINAL_HELPER", Value: "1"}},
+	})
+	result, rpcErr := tm.Handle(context.Background(), "terminal/create", params, roots, nil)
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	ref, _ := json.Marshal(acp.TerminalRef{SessionID: "s", TerminalID: result.(acp.TerminalCreateResponse).TerminalID})
+	if _, rpcErr := tm.Handle(context.Background(), "terminal/wait_for_exit", ref, roots, nil); rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+
+	outsideParams, _ := json.Marshal(acp.TerminalCreateRequest{SessionID: "s", Command: exe, Cwd: outside})
+	if _, rpcErr := tm.Handle(context.Background(), "terminal/create", outsideParams, roots, nil); rpcErr == nil {
+		t.Fatal("cwd outside every root was accepted")
 	}
 }
 

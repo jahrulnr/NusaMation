@@ -1,8 +1,8 @@
-import { $, agentById, agentName, esc, icon } from "./util.js?v=35";
-import { S } from "./state.js?v=35";
-import { api } from "./api.js?v=35";
-import { toast } from "./toast.js?v=35";
-import { renderSettings, settingsHead } from "./settings.js?v=35";
+import { $, agentById, agentName, esc, icon } from "./util.js?v=43";
+import { S } from "./state.js?v=43";
+import { api } from "./api.js?v=43";
+import { toast } from "./toast.js?v=43";
+import { renderSettings, settingsHead } from "./settings.js?v=43";
 
 export function automationDate(ms, zone) {
   if (!ms) return "";

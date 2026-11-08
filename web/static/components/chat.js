@@ -1,11 +1,11 @@
-import { $, $$, TOOL_KINDS, agentById, agentName, agentOrb, clock, currentAgent, dayLabel, esc, fmtBytes, icon, parseJSON, pretty, truncate } from "./util.js?v=35";
-import { S } from "./state.js?v=35";
-import { enhanceMarkdown, plainMarkdown, renderMarkdown } from "./markdown.js?v=35";
-import { closeDetachedPopovers, openPopover } from "./popover.js?v=35";
-import { openModal } from "./modal.js?v=35";
-import { approvalCard } from "./requests.js?v=35";
-import { isBusyTurn, queuedTurnFor, queueStatusLabel } from "./composer.js?v=35";
-import { loadConversation, renderHistoryControl } from "./conversations.js?v=35";
+import { $, $$, TOOL_KINDS, agentById, agentName, agentOrb, brandImage, clock, currentAgent, dayLabel, esc, fmtBytes, icon, parseJSON, pretty, truncate } from "./util.js?v=43";
+import { S } from "./state.js?v=43";
+import { enhanceMarkdown, plainMarkdown, renderMarkdown } from "./markdown.js?v=43";
+import { closeDetachedPopovers, openPopover } from "./popover.js?v=43";
+import { openModal } from "./modal.js?v=43";
+import { approvalCard } from "./requests.js?v=43";
+import { isBusyTurn, queuedTurnFor, queueStatusLabel } from "./composer.js?v=43";
+import { loadConversation, renderHistoryControl } from "./conversations.js?v=43";
 
 /* ---------------- chat ---------------- */
 export function renderChat(skeleton = false) {
@@ -437,10 +437,10 @@ export function welcomeHTML(compact = false) {
   const agents = S.agents.filter((a) => a.enabled);
   const selected = S.current ? currentAgent() : (agentById(S.welcomeAgent) || agents[0]);
   if (!agents.length) {
-    return `<div class="welcome"><div class="welcome-orb">N</div><h1>Add your first <em>agent.</em></h1><p>NusaMation connects to ACP agents such as Devin, Claude Code, Codex or Gemini CLI. Tell the control center how to launch yours.</p><button class="btn btn-primary" data-action="add-agent">${icon("plus")} Add an ACP agent</button></div>`;
+    return `<div class="welcome">${brandImage("welcome-orb")}<h1>Add your first <em>agent.</em></h1><p>NusaMation connects to ACP agents such as Devin, Claude Code, Codex or Gemini CLI. Tell the control center how to launch yours.</p><button class="btn btn-primary" data-action="add-agent">${icon("plus")} Add an ACP agent</button></div>`;
   }
   return `<div class="welcome ${compact ? "compact" : ""}">
-    <div class="welcome-orb">N</div>
+    ${brandImage("welcome-orb")}
     <div class="agent-strip">${agents.map((a) => `<button class="agent-chip ${selected && a.id === selected.id ? "active" : ""}" data-action="pick-agent" data-id="${esc(a.id)}">${agentOrb(a)}<span>${esc(a.name)}</span></button>`).join("")}</div>
     <h1>${compact ? "This thread is <em>ready.</em>" : "What should we <em>build</em> today?"}</h1>
     <p>${compact ? `Message ${esc(agentName(selected))} below. The web control center shows every thought, tool call and approval; chat channels only receive the final answer.` : "Your agent has hands on this workspace, full tool visibility in the web, and a concise presence on WhatsApp. Start with a sentence — or pick a thread below."}</p>

@@ -1,15 +1,15 @@
-import { $, $$, agentById, agentName, agentOrb, configChoices, configLabel, currentAgent, esc, icon, isMobile, isShort, parseConfigs } from "./util.js?v=35";
-import { S, composerFor, composerKey, moveComposer } from "./state.js?v=35";
-import { api } from "./api.js?v=35";
-import { toast } from "./toast.js?v=35";
-import { closeModal, promptModal } from "./modal.js?v=35";
-import { closePopover, menuItem, openPopover } from "./popover.js?v=35";
-import { renderChat } from "./chat.js?v=35";
-import { showAgentBlocker, showSlowAgent } from "./requests.js?v=35";
-import { loadConversation, normalizeMessage, setRoute, upsertConversation, upsertMessage } from "./conversations.js?v=35";
-import { clearDraft, saveDraftNow, scheduleDraftSave } from "./convmeta.js?v=35";
-import { renderTopbar } from "./topbar.js?v=35";
-import { openSettings } from "./settings.js?v=35";
+import { $, $$, agentById, agentName, agentOrb, configChoices, configLabel, currentAgent, esc, icon, isMobile, isShort, parseConfigs } from "./util.js?v=43";
+import { S, composerFor, composerKey, moveComposer } from "./state.js?v=43";
+import { api } from "./api.js?v=43";
+import { toast } from "./toast.js?v=43";
+import { closeModal, promptModal } from "./modal.js?v=43";
+import { closePopover, menuItem, openPopover } from "./popover.js?v=43";
+import { renderChat } from "./chat.js?v=43";
+import { showAgentBlocker, showSlowAgent } from "./requests.js?v=43";
+import { loadConversation, normalizeMessage, setRoute, upsertConversation, upsertMessage } from "./conversations.js?v=43";
+import { clearDraft, saveDraftNow, scheduleDraftSave } from "./convmeta.js?v=43";
+import { renderTopbar } from "./topbar.js?v=43";
+import { openSettings } from "./settings.js?v=43";
 
 /* ---------------- composer ---------------- */
 export function renderComposer() {
@@ -31,9 +31,11 @@ export function renderComposer() {
   const links = (conv && conv.links || []).filter((l) => l.channel !== "web");
   const active = S.active && ["running", "waiting_approval", "cancelling"].includes(S.active.status);
   const mobileSummary = mobileConfigSummary();
+  const scope = conv ? null : (S.projects || []).find((p) => p.id === S.selectedProjectId);
   const markup = `<div class="composer-inner">
     <div class="composer" id="composer">
       <div class="composer-attachments" id="pending-attachments"></div>
+      <div class="composer-scope" id="composer-scope">${scope ? `<span class="composer-scope-label">${icon("folder", "sm")}<span>New chat in <b>${esc(scope.name || "project")}</b></span></span><button type="button" class="icon-btn sm" data-action="project-clear-scope" aria-label="Stop adding new chats to ${esc(scope.name || "project")}" title="Stop adding new chats to ${esc(scope.name || "project")}">${icon("x", "sm")}</button>` : ""}</div>
       <textarea id="prompt" rows="1" placeholder="Message ${esc(agentName(agent))}…" aria-label="Message">${esc(S.draft)}</textarea>
       <div class="composer-bar">
         <button class="icon-btn sm" data-action="attach" title="Attach files">${icon("paperclip", "sm")}</button>
@@ -60,6 +62,7 @@ export function renderComposer() {
   const existing = $(".composer-inner", wrap);
   if (existing && oldTa) {
     $("#pending-attachments", existing).replaceWith($("#pending-attachments", next));
+    $("#composer-scope", existing).replaceWith($("#composer-scope", next));
     $(".composer-bar", existing).replaceWith($(".composer-bar", next));
     $(".composer-foot", existing).replaceWith($(".composer-foot", next));
     if (oldTa.dataset.composerKey !== composerKey) oldTa.value = S.draft;
@@ -313,7 +316,9 @@ export async function sendMessage() {
       const ag = agentById(S.welcomeAgent) || S.agents.find((a) => a.enabled);
       if (!ag) { openSettings("agents"); throw new Error("Add an agent before sending a message."); }
       owner.pendingSelections = S.draftSelections.slice();
-      const d = await api("/conversations", { method: "POST", body: { agentId: ag.id } });
+      const created = { agentId: ag.id };
+      if (S.selectedProjectId && (S.projects || []).some((p) => p.id === S.selectedProjectId)) created.projectId = S.selectedProjectId;
+      const d = await api("/conversations", { method: "POST", body: created });
       conversation = d.conversation;
       moveComposer(sourceKey, conversation.id);
       upsertConversation(d.conversation);

@@ -35,7 +35,7 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 ```json
 {
   "app": {"name": "NusaMation", "version": "0.2.0", "publicUrl": "...", "dataDir": "...", "dev": false},
-  "agents": [], "mcp": {}, "channels": [], "conversations": [], "approvals": [],
+  "agents": [], "mcp": {}, "channels": [], "conversations": [], "projects": [], "approvals": [],
   "routingDefaults": {"replyToOrigin": true, "mirrorFinal": false, "notifyApprovals": true},
   "whatsapp": {"enabled": true, "groupPolicy": "mention", "...": "..."},
   "stats": {"conversations": 0, "active": 0, "pendingApprovals": 0}
@@ -47,7 +47,7 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/conversations?q=&agentId=&channel=&archived=&limit=&offset=` | list |
-| `POST` | `/conversations` | `{agentId?, title?, cwd?}` |
+| `POST` | `/conversations` | `{agentId?, title?, cwd?, projectId?}`. When `projectId` is set, cwd and `additionalDirectories` come from that project (unknown project → 404 `not_found`). When it is omitted, cwd falls back to the agent cwd, then the service workspace. |
 | `GET` | `/conversations/{id}` | conversation + latest messages + their turn timing + approvals + configs + active turn + agent |
 | `PATCH` | `/conversations/{id}` | `{title?, pinned?, archived?, routing?, agentId?}` |
 | `DELETE` | `/conversations/{id}` | cancels a live turn, then deletes |
@@ -67,6 +67,27 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | `GET` | `/conversations/{id}/export` | JSON download |
 
 Messages have `role`, `kind` (`text`, `thought`, `tool`, `system`, `error`, `notice`), `text`, `content`, `status`, `attachments`, `toolCallId`, `seq`, timestamps.
+
+A conversation includes `projectId` when it belongs to a project. Chats join a project only when created with `projectId` or restored by undo while still unassigned.
+
+## Projects
+
+`rootPaths[0]` is the only primary folder. A member's cwd is that path, and `metadata.additionalDirectories` is `rootPaths[1:]` (an empty list when there are no extras). Switching agents leaves that cwd and those directories in place. Removing a project deletes no directory and no chat. A pin change does not change folders or the ACP session.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/projects` | `{projects}` |
+| `POST` | `/projects` | `{name?, sources, foldersConfirmed?}` → 201 `{project}`. An empty trimmed name is the basename of `sources[0]`. Every path is new, so a non-empty list without `foldersConfirmed:true` returns 409 `confirmation_required` and writes nothing. |
+| `PATCH` | `/projects/{id}` | `{name?, sources?, pinned?, updatedAt?, foldersConfirmed?}`. `sources` and/or `name` (`""` derives the basename) require `updatedAt` — a missing one is 400 `invalid`, a different stored revision returns 409 `conflict` and changes nothing. Paths absent from the stored list need `foldersConfirmed:true`, otherwise 409 `confirmation_required` with `added`. Pin alone does not change folders; an omitted pin stays as stored. |
+| `DELETE` | `/projects/{id}` | `{project, conversationIds}` for undo. cwd stays. |
+| `POST` | `/projects/{id}/restore` | `{name, sources, conversationIds, pinned?}` recreates that id and its pin. Returns `{project, conversationIds}` with the chats that reattached — one is skipped when its `projectId` is no longer empty. 409 `conflict` if the id exists. |
+| `GET` | `/fs/list?path=` | `{path, parent, dirs:[{name, path}]}`. An empty `path` lists the user home directory. Only child directories. `parent` is empty at the filesystem root. |
+
+Project JSON: `id`, `name`, `rootPaths`, `pinned`, `createdAt`, `updatedAt`. Timestamps are Unix milliseconds.
+
+`confirmation_required` is `{"error","code","added"}`. Other project errors stay `{"error","code"}`: 400 `invalid`, 404 `not_found`, 409 `conflict`.
+
+`project.updated` follows a mutation. A delete sends `{"id","deleted":true}`. Member chats whose cwd or `projectId` changed also emit `conversation.updated`.
 
 ## Approvals
 

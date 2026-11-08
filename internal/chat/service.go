@@ -37,15 +37,21 @@ type Service struct {
 	uploadDir string
 	workspace string
 
-	mu            sync.Mutex
-	metaMu        sync.Mutex
-	active        map[string]*activeTurn
-	running       map[string]bool
-	kick          map[string]bool
-	waiters       map[string]chan approvalDecision
-	elicitations  map[string]*elicitationWaiter
-	pollWaiters   map[string]*pollWaiter
-	terminalTurns map[string]*activeTurn
+	mu               sync.Mutex
+	metaMu           sync.Mutex
+	rootResetCond    *sync.Cond
+	pendingRootReset map[string]bool
+	rootResetBusy    map[string]bool
+	preparing        map[string]int
+	active           map[string]*activeTurn
+	running          map[string]bool
+	kick             map[string]bool
+	waiters          map[string]chan approvalDecision
+	elicitations     map[string]*elicitationWaiter
+	pollWaiters      map[string]*pollWaiter
+	terminalTurns    map[string]*activeTurn
+	// resetConversation drops the loaded ACP session. Tests replace it to hold a drop open.
+	resetConversation func(context.Context, string)
 
 	cancelNoticeAfter time.Duration
 	turnTimeout       time.Duration
@@ -68,7 +74,7 @@ func New(opts Options) *Service {
 	if opts.Events == nil {
 		opts.Events = events.Nop{}
 	}
-	return &Service{
+	s := &Service{
 		store:             opts.Store,
 		agents:            opts.Agents,
 		channels:          opts.Channels,
@@ -77,6 +83,9 @@ func New(opts Options) *Service {
 		uploadDir:         opts.UploadDir,
 		workspace:         opts.Workspace,
 		active:            map[string]*activeTurn{},
+		pendingRootReset:  map[string]bool{},
+		rootResetBusy:     map[string]bool{},
+		preparing:         map[string]int{},
 		running:           map[string]bool{},
 		kick:              map[string]bool{},
 		waiters:           map[string]chan approvalDecision{},
@@ -86,6 +95,13 @@ func New(opts Options) *Service {
 		cancelNoticeAfter: defaultCancelNoticeAfter,
 		turnTimeout:       defaultTurnTimeout,
 	}
+	s.rootResetCond = sync.NewCond(&s.mu)
+	s.resetConversation = func(ctx context.Context, conversationID string) {
+		if s.agents != nil {
+			s.agents.ResetConversation(ctx, conversationID)
+		}
+	}
+	return s
 }
 
 // SetChannels allows the channel manager to be wired after construction, which
@@ -484,18 +500,94 @@ func (s *Service) activeFor(conversationID string) *activeTurn {
 	return s.active[conversationID]
 }
 
+// setActive publishes the turn. It waits until an in-progress root drop for
+// this conversation finishes, so the turn is not active while ResetConversation
+// runs and the next session load happens after the drop. The wait, the busy
+// flag, and the active map share s.mu.
 func (s *Service) setActive(a *activeTurn) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	for s.rootResetBusy[a.conversationID] {
+		s.rootResetCond.Wait()
+	}
 	s.active[a.conversationID] = a
+}
+
+// clearActive removes this turn. When a project-root reset was waiting, it
+// marks that drop busy before releasing s.mu and reports that this caller must
+// drop the session. The active check, the pending flag, and the busy flag
+// share s.mu with markRootReset and setActive.
+func (s *Service) clearActive(a *activeTurn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active[a.conversationID] != a {
+		return false
+	}
+	delete(s.active, a.conversationID)
+	pending := s.pendingRootReset[a.conversationID]
+	delete(s.pendingRootReset, a.conversationID)
+	if pending {
+		s.rootResetBusy[a.conversationID] = true
+	}
+	return pending
+}
+
+func (s *Service) endRootResetBusy(conversationID string) {
+	s.mu.Lock()
+	delete(s.rootResetBusy, conversationID)
+	s.rootResetCond.Broadcast()
 	s.mu.Unlock()
 }
 
-func (s *Service) clearActive(a *activeTurn) {
+// beginPrepare marks a session preparation so a root reset that lands while
+// EnsureSession runs defers its drop like a running turn. The returned func
+// ends the preparation; the last one out runs the deferred drop.
+func (s *Service) beginPrepare(conversationID string) func() {
 	s.mu.Lock()
-	if s.active[a.conversationID] == a {
-		delete(s.active, a.conversationID)
+	for s.rootResetBusy[conversationID] {
+		s.rootResetCond.Wait()
+	}
+	if s.preparing == nil {
+		s.preparing = map[string]int{}
+	}
+	s.preparing[conversationID]++
+	s.mu.Unlock()
+	return func() { s.endPrepare(conversationID) }
+}
+
+// endPrepare ends a preparation. The last one out runs a deferred drop unless
+// a turn became active meanwhile — then finishActive owns it. The count, the
+// pending flag, and the busy flag share s.mu.
+func (s *Service) endPrepare(conversationID string) {
+	s.mu.Lock()
+	if s.preparing[conversationID] > 1 {
+		s.preparing[conversationID]--
+		s.mu.Unlock()
+		return
+	}
+	delete(s.preparing, conversationID)
+	pending := s.pendingRootReset[conversationID] && s.active[conversationID] == nil
+	if pending {
+		delete(s.pendingRootReset, conversationID)
+		s.rootResetBusy[conversationID] = true
 	}
 	s.mu.Unlock()
+	if !pending {
+		return
+	}
+	defer s.endRootResetBusy(conversationID)
+	s.resetConversation(context.Background(), conversationID)
+}
+
+// finishActive clears the turn, then drops a session whose roots changed while
+// the turn was running. The drop happens after the lock is released. setActive
+// waits until that drop clears the busy flag.
+func (s *Service) finishActive(a *activeTurn) {
+	if a == nil || !s.clearActive(a) {
+		return
+	}
+	defer s.endRootResetBusy(a.conversationID)
+	s.resetConversation(context.Background(), a.conversationID)
 }
 
 func (s *Service) ActiveStatus(conversationID string) (turnID, status string, ok bool) {
@@ -528,6 +620,32 @@ func (s *Service) ActiveMessageTexts(conversationID string) map[string]string {
 }
 
 func (s *Service) CreateConversation(ctx context.Context, agentID, title, cwd, channel, ref string) (store.Conversation, error) {
+	return s.createConversation(ctx, agentID, title, cwd, channel, ref, "")
+}
+
+// CreateProjectConversation starts a chat in a project. cwd and
+// additionalDirectories come from that project.
+func (s *Service) CreateProjectConversation(ctx context.Context, agentID, title, channel, ref, projectID string) (store.Conversation, error) {
+	return s.createConversation(ctx, agentID, title, "", channel, ref, projectID)
+}
+
+func (s *Service) createConversation(ctx context.Context, agentID, title, cwd, channel, ref, projectID string) (store.Conversation, error) {
+	projectID = strings.TrimSpace(projectID)
+	var roots []string
+	if projectID != "" {
+		project, err := s.store.GetProject(ctx, projectID)
+		if err != nil {
+			if store.IsNotFound(err) {
+				return store.Conversation{}, ErrProjectNotFound
+			}
+			return store.Conversation{}, err
+		}
+		if len(project.RootPaths) == 0 {
+			return store.Conversation{}, invalidProject("A project needs at least one folder.")
+		}
+		roots = project.RootPaths
+		cwd = project.RootPaths[0]
+	}
 	var defaults store.AgentDefaults
 	_ = s.store.GetJSONSetting(ctx, "agent.defaults", &defaults)
 	if agentID == "" {
@@ -556,7 +674,19 @@ func (s *Service) CreateConversation(ctx context.Context, agentID, title, cwd, c
 	if channel == "" {
 		channel = "web"
 	}
-	conv, err := s.store.CreateConversation(ctx, agentID, title, cwd, channel, ref, ag.DefaultModel)
+	var conv store.Conversation
+	if projectID != "" {
+		extra := []string{}
+		if len(roots) > 1 {
+			extra = append(extra, roots[1:]...)
+		}
+		conv, err = s.store.CreateProjectConversation(ctx, agentID, title, cwd, channel, ref, ag.DefaultModel, projectID, extra)
+		if store.IsNotFound(err) {
+			return store.Conversation{}, ErrProjectNotFound
+		}
+	} else {
+		conv, err = s.store.CreateConversation(ctx, agentID, title, cwd, channel, ref, ag.DefaultModel)
+	}
 	if err != nil {
 		return conv, err
 	}
@@ -646,7 +776,9 @@ func (s *Service) SwitchAgent(ctx context.Context, conversationID, agentID strin
 	if newAgent.DefaultModel != "" {
 		_ = s.store.SetConversationModel(ctx, conversationID, newAgent.DefaultModel)
 	}
-	if conv.Cwd == "" || conv.Cwd == oldAgent.Cwd {
+	// A project member's cwd stays on the project's primary folder for the life
+	// of the membership, even when that folder is also the previous agent's cwd.
+	if conv.ProjectID == "" && (conv.Cwd == "" || conv.Cwd == oldAgent.Cwd) {
 		_ = s.store.SetConversationCwd(ctx, conversationID, newAgent.Cwd)
 	}
 	patch := map[string]any{

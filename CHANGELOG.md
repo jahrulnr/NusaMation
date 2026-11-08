@@ -8,6 +8,8 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ### Added
 
+
+- **Projects:** local projects group chats under ordered folders. `rootPaths[0]` is the primary folder and becomes each member's cwd; the rest are `additionalDirectories`. A chat joins only when created with `projectId` or restored by undo, which also restores the pin. Removing a project deletes no directory and no chat. A folder change drops an idle ACP session, or waits until the running turn finishes, without clearing `acpSessionId`. Terminal cwd is accepted inside any session root. New routes cover projects and `GET /api/fs/list`. The composer shows which project new chats join.
 - **browser_use:** each ACP session is given a stdio MCP server named `browser_use` (`nusamation browser-use`). The agent drives that conversation's embedded browser with `navigate`, `snapshot`, `move`, `click`, `type`, `press`, and `scroll`. `navigate` and `snapshot` return the page URL, title, viewport size, and a JPEG. Clicks and pointer moves draw a blue cursor on the live pane; the first action opens the pane. Coordinates are CSS pixels of the viewport size in the tool result. While the agent is driving, the pane letterboxes that viewport instead of resizing the remote page, so a later click still matches the screenshot. These calls are MCP tool calls inside the agent and do not create NusaMation approval cards. A user-configured MCP server already named `browser_use` is replaced by this one. Queued turns resume only after the server is registered, so a restart does not open an ACP session that lacks it.
 - **Web styles:** `web/static/app.css` is an import list. Component styles live in `web/static/components/*.css`, in cascade order.
 

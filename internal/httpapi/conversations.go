@@ -88,16 +88,27 @@ func (s *Server) handleListConversations(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		AgentID string `json:"agentId"`
-		Title   string `json:"title"`
-		Cwd     string `json:"cwd"`
+		AgentID   string `json:"agentId"`
+		Title     string `json:"title"`
+		Cwd       string `json:"cwd"`
+		ProjectID string `json:"projectId"`
 	}
 	if err := readJSON(w, r, &in, 64<<10); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid conversation payload.")
 		return
 	}
-	conv, err := s.chat.CreateConversation(r.Context(), in.AgentID, in.Title, in.Cwd, "web", "")
+	var conv store.Conversation
+	var err error
+	if strings.TrimSpace(in.ProjectID) != "" {
+		conv, err = s.chat.CreateProjectConversation(r.Context(), in.AgentID, in.Title, "web", "", in.ProjectID)
+	} else {
+		conv, err = s.chat.CreateConversation(r.Context(), in.AgentID, in.Title, in.Cwd, "web", "")
+	}
 	if err != nil {
+		if errors.Is(err, chat.ErrProjectNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Project not found.")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "create_failed", err.Error())
 		return
 	}

@@ -111,7 +111,7 @@ func (s *Service) runPrompt(a *activeTurn) (status, stopReason string, runErr er
 	a.mu.Lock()
 	conv := a.conv
 	a.mu.Unlock()
-	req := s.sessionRequest(conv, a.agent)
+	req := s.sessionRequest(a.ctx, conv, a.agent)
 	meta, _ := s.metaMap(conv)
 
 	session, err := s.agents.EnsureSession(a.ctx, req)
@@ -180,7 +180,11 @@ func (s *Service) runPrompt(a *activeTurn) (status, stopReason string, runErr er
 }
 
 // PrepareSession discovers the current agent's options before the first prompt.
+// A root reset that lands while EnsureSession runs defers its drop until this
+// returns, the same as a running turn.
 func (s *Service) PrepareSession(ctx context.Context, conversationID string) error {
+	done := s.beginPrepare(conversationID)
+	defer done()
 	conv, err := s.store.GetConversation(ctx, conversationID)
 	if err != nil {
 		return err
@@ -189,12 +193,21 @@ func (s *Service) PrepareSession(ctx context.Context, conversationID string) err
 	if err != nil {
 		return err
 	}
-	_, err = s.agents.EnsureSession(ctx, s.sessionRequest(conv, ag))
+	_, err = s.agents.EnsureSession(ctx, s.sessionRequest(ctx, conv, ag))
 	return err
 }
 
-func (s *Service) sessionRequest(conv store.Conversation, ag store.Agent) agent.EnsureRequest {
+func (s *Service) sessionRequest(ctx context.Context, conv store.Conversation, ag store.Agent) agent.EnsureRequest {
 	cwd := conv.Cwd
+	var projectDirs []string
+	useProject := false
+	if conv.ProjectID != "" && s.store != nil {
+		if project, err := s.store.GetProject(ctx, conv.ProjectID); err == nil && len(project.RootPaths) > 0 {
+			cwd = project.RootPaths[0]
+			projectDirs = append([]string{}, project.RootPaths[1:]...)
+			useProject = true
+		}
+	}
 	if cwd == "" {
 		cwd = ag.Cwd
 	}
@@ -234,10 +247,15 @@ func (s *Service) sessionRequest(conv store.Conversation, ag store.Agent) agent.
 		DefaultConfig:  defaultConfig,
 		CachedConfig:   cached,
 	}
-	if dirs, ok := meta["additionalDirectories"].([]any); ok {
+	if useProject {
+		if projectDirs == nil {
+			projectDirs = []string{}
+		}
+		req.AdditionalDirs = projectDirs
+	} else if dirs, ok := meta["additionalDirectories"].([]any); ok {
 		for _, d := range dirs {
-			if s, ok := d.(string); ok && s != "" {
-				req.AdditionalDirs = append(req.AdditionalDirs, s)
+			if dir, ok := d.(string); ok && dir != "" {
+				req.AdditionalDirs = append(req.AdditionalDirs, dir)
 			}
 		}
 	}

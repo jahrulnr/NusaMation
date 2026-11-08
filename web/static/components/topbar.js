@@ -1,7 +1,7 @@
-import { $, agentName, agentOrb, configLabel, currentAgent, esc, icon } from "./util.js?v=35";
-import { S } from "./state.js?v=35";
-import { closeDetachedPopovers } from "./popover.js?v=35";
-import { browserIsOpen } from "./browser.js?v=35";
+import { $, agentName, agentOrb, configLabel, currentAgent, esc, icon } from "./util.js?v=43";
+import { S } from "./state.js?v=43";
+import { closeDetachedPopovers } from "./popover.js?v=43";
+import { browserIsOpen } from "./browser.js?v=43";
 
 /* ---------------- topbar ---------------- */
 export function renderTopbar() {
@@ -15,8 +15,9 @@ export function renderTopbar() {
   const links = (c && c.links || []).filter((l) => l.channel !== "web");
   const active = S.active && ["running", "waiting_approval", "cancelling", "queued"].includes(S.active.status);
   let sub = "Your ACP control center";
+  const project = c?.projectId ? (S.projects || []).find((p) => p.id === c.projectId) : null;
   if (c) {
-    sub = `${esc(c.agentName || agentName(agent))}${active ? ` <span class="dot"></span> <span style="color:var(--accent)">${esc(activeLabel())}</span>` : ` <span class="dot"></span> ${esc(c.status || "idle")}`}`;
+    sub = `${project ? `${esc(project.name || "Untitled project")} <span class="dot"></span> ` : ""}${esc(c.agentName || agentName(agent))}${active ? ` <span class="dot"></span> <span style="color:var(--accent)">${esc(activeLabel())}</span>` : ` <span class="dot"></span> ${esc(c.status || "idle")}`}`;
   }
   el.innerHTML = `
     <button class="icon-btn menu-btn" data-action="open-sidebar" aria-label="Open sidebar">${icon("menu")}</button>

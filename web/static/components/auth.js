@@ -1,11 +1,12 @@
-import { $, esc, icon } from "./util.js?v=35";
-import { S, composers, switchComposer } from "./state.js?v=35";
-import { REQUEST_TIMEOUT_MS, api } from "./api.js?v=35";
-import { closeModal } from "./modal.js?v=35";
-import { closeWS } from "./ws.js?v=35";
-import { startApp } from "./boot.js?v=35";
-import { resetBrowserPane } from "./browser.js?v=35";
-import { resetConvMeta } from "./convmeta.js?v=35";
+import { $, brandImage, esc, icon } from "./util.js?v=43";
+import { S, composers, setSelectedProject, switchComposer } from "./state.js?v=43";
+import { REQUEST_TIMEOUT_MS, api } from "./api.js?v=43";
+import { closeModal } from "./modal.js?v=43";
+import { closeWS } from "./ws.js?v=43";
+import { startApp } from "./boot.js?v=43";
+import { resetBrowserPane } from "./browser.js?v=43";
+import { resetConvMeta } from "./convmeta.js?v=43";
+import { resetSidebarState } from "./sidebar.js?v=43";
 
 export function renderLogin(error = "") {
   S.booted = false;
@@ -16,7 +17,7 @@ export function renderLogin(error = "") {
   $("#app").innerHTML = `
     <div class="login">
       <div class="login-art">
-        <div class="login-brand"><span class="brand-mark">N</span><span>NusaMation</span></div>
+        <div class="login-brand">${brandImage("brand-mark")}<span>NusaMation</span></div>
         <div class="login-copy">
           <h1>Your agent.<br>Everywhere.<br><em>One mesh.</em></h1>
           <p>ACP-native personal agents with full-fidelity web controls and a concise, human-sized presence on WhatsApp. Thoughts, tools, approvals and models — all in one place.</p>
@@ -29,7 +30,7 @@ export function renderLogin(error = "") {
       </div>
       <div class="login-panel">
         <div class="login-card">
-          <div class="login-mobile-brand"><span class="brand-mark">N</span><span>NusaMation</span></div>
+          <div class="login-mobile-brand">${brandImage("brand-mark")}<span>NusaMation</span></div>
           <h2>Welcome back</h2>
           <p class="lead">Sign in to your control center.</p>
           ${error ? `<div class="login-error">${icon("alert", "sm")}<span>${esc(error)}</span></div>` : ""}
@@ -83,6 +84,7 @@ export async function doLogout() {
   try { await api("/auth/logout", { method: "POST" }); } catch {}
   closeModal(); closeWS();
   S.csrf = ""; S.current = null; S.messages = []; S.conversations = []; S.approvals = []; S.approvalsById.clear();
+  S.projects = []; S.expandedProjects = new Set(); setSelectedProject(""); resetSidebarState();
   composers.clear(); resetConvMeta(); switchComposer("");
   S.sendDelivery = "steer"; S.turns = {};
   renderLogin();

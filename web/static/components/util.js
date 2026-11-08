@@ -1,4 +1,4 @@
-import { S } from "./state.js?v=35";
+import { S } from "./state.js?v=43";
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -20,6 +20,10 @@ export const isShort = () => window.matchMedia("(max-height: 500px)").matches;
 
 export function icon(name, cls = "") {
   return `<svg class="icon ${cls}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
+}
+
+export function brandImage(className) {
+  return `<img class="${className}" src="/static/mark.png?v=43" alt="">`;
 }
 
 export const AGENT_COLORS = {

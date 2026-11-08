@@ -14,6 +14,9 @@ export const S = {
   mcp: [],
   channels: [],
   conversations: [],
+  projects: [],
+  selectedProjectId: (() => { try { return localStorage.getItem("nusamation:selected-project") || ""; } catch { return ""; } })(),
+  expandedProjects: new Set(),
   approvals: [],
   approvalsById: new Map(),
   elicitations: [],
@@ -119,6 +122,16 @@ export function moveComposer(from, to) {
   composers.set(to, composerFor(from));
   composers.delete(from);
   if (composerKey === from) switchComposer(to);
+}
+
+const SELECTED_PROJECT_KEY = "nusamation:selected-project";
+
+export function setSelectedProject(id) {
+  S.selectedProjectId = id || "";
+  try {
+    if (S.selectedProjectId) localStorage.setItem(SELECTED_PROJECT_KEY, S.selectedProjectId);
+    else localStorage.removeItem(SELECTED_PROJECT_KEY);
+  } catch {}
 }
 
 export function saveActivityState() {

@@ -1,8 +1,8 @@
-import { $, esc, icon } from "./util.js?v=35";
-import { S } from "./state.js?v=35";
+import { $, esc, icon } from "./util.js?v=43";
+import { S } from "./state.js?v=43";
 
 /* ---------------- toasts ---------------- */
-export function toast(title, description = "", type = "info", ttl = 5200) {
+export function toast(title, description = "", type = "info", ttl = 5200, action = null) {
   const root = $("#toasts");
   if (!root) return;
   const key = title + "|" + description;
@@ -12,8 +12,15 @@ export function toast(title, description = "", type = "info", ttl = 5200) {
   const el = document.createElement("div");
   el.className = "toast " + (type || "info");
   const ic = type === "error" ? "alert" : type === "success" ? "check" : "info";
-  el.innerHTML = `${icon(ic)}<div class="grow"><div class="toast-title">${esc(title)}</div>${description ? `<div class="toast-desc">${esc(description)}</div>` : ""}</div><button class="toast-close" data-action="toast-close" aria-label="Dismiss">${icon("x", "sm")}</button>`;
+  el.innerHTML = `${icon(ic)}<div class="grow"><div class="toast-title">${esc(title)}</div>${description ? `<div class="toast-desc">${esc(description)}</div>` : ""}</div>${action ? `<button type="button" class="toast-action">${esc(action.label || "Undo")}</button>` : ""}<button class="toast-close" data-action="toast-close" aria-label="Dismiss">${icon("x", "sm")}</button>`;
   root.appendChild(el);
   const timer = setTimeout(() => el.remove(), ttl);
   el.querySelector("[data-action=toast-close]").addEventListener("click", () => { clearTimeout(timer); el.remove(); });
+  if (action) {
+    el.querySelector(".toast-action").addEventListener("click", () => {
+      clearTimeout(timer);
+      el.remove();
+      try { action.run?.(); } catch (err) { console.warn("toast action failed", err); }
+    });
+  }
 }

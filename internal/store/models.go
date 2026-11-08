@@ -139,6 +139,7 @@ type Conversation struct {
 	AgentColor      string          `json:"agentColor,omitempty"`
 	ACPSessionID    string          `json:"acpSessionId,omitempty"`
 	Cwd             string          `json:"cwd"`
+	ProjectID       string          `json:"projectId,omitempty"`
 	Status          string          `json:"status"`
 	OriginChannel   string          `json:"originChannel"`
 	OriginRef       string          `json:"originRef,omitempty"`
@@ -158,6 +159,16 @@ type Conversation struct {
 	MessageCount    int             `json:"messageCount"`
 	PendingCount    int             `json:"pendingApprovals"`
 	Links           []ChannelLink   `json:"links,omitempty"`
+}
+
+// Project is a local folder group. RootPaths[0] is the only primary folder.
+type Project struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	RootPaths []string `json:"rootPaths"`
+	Pinned    bool     `json:"pinned"`
+	CreatedAt int64    `json:"createdAt"`
+	UpdatedAt int64    `json:"updatedAt"`
 }
 
 type ChannelLink struct {

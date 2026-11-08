@@ -1,12 +1,12 @@
-import { $, esc, icon } from "./util.js?v=35";
-import { S } from "./state.js?v=35";
-import { api } from "./api.js?v=35";
-import { selectInitialConversation } from "./conversations.js?v=35";
-import { renderShell } from "./shell.js?v=35";
-import { renderSidebar } from "./sidebar.js?v=35";
-import { renderTopbar } from "./topbar.js?v=35";
-import { connectWS } from "./ws.js?v=35";
-import { renderLogin } from "./auth.js?v=35";
+import { $, esc, icon } from "./util.js?v=43";
+import { S, setSelectedProject } from "./state.js?v=43";
+import { api } from "./api.js?v=43";
+import { selectInitialConversation } from "./conversations.js?v=43";
+import { renderShell } from "./shell.js?v=43";
+import { renderSidebar } from "./sidebar.js?v=43";
+import { renderTopbar } from "./topbar.js?v=43";
+import { connectWS } from "./ws.js?v=43";
+import { renderLogin } from "./auth.js?v=43";
 
 /* ---------------- boot / auth ---------------- */
 export async function boot() {
@@ -70,6 +70,8 @@ export function applyBootstrap(data) {
   S.mcp = data.mcp || [];
   S.channels = data.channels || [];
   S.conversations = data.conversations || [];
+  S.projects = data.projects || [];
+  if (S.selectedProjectId && !S.projects.some((p) => p.id === S.selectedProjectId)) setSelectedProject("");
   S.approvals = data.approvals || [];
   S.approvalsById = new Map(S.approvals.map((a) => [a.id, a]));
   S.agentDefaults = data.agentDefaults || { agentId: "", selections: [] };

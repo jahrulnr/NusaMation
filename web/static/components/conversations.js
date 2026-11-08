@@ -1,15 +1,15 @@
-import { $, agentById, esc, isMobile, now, parseConfigs } from "./util.js?v=35";
-import { S, composers, switchComposer } from "./state.js?v=35";
-import { api } from "./api.js?v=35";
-import { toast } from "./toast.js?v=35";
-import { closeModal, confirmModal, promptModal } from "./modal.js?v=35";
-import { closePopover, menuItem, openPopover } from "./popover.js?v=35";
-import { applyStreamDelta, renderChat, scheduleStreamResync } from "./chat.js?v=35";
-import { showPendingRequest } from "./requests.js?v=35";
-import { focusComposer, prepareComposer, renderComposer, upsertTurn } from "./composer.js?v=35";
-import { closeMobileSidebar, renderSidebar, scheduleSidebarRender } from "./sidebar.js?v=35";
-import { renderTopbar } from "./topbar.js?v=35";
-import { saveTitle } from "./convmeta.js?v=35";
+import { $, agentById, esc, isMobile, now, parseConfigs } from "./util.js?v=43";
+import { S, composers, setSelectedProject, switchComposer } from "./state.js?v=43";
+import { api } from "./api.js?v=43";
+import { toast } from "./toast.js?v=43";
+import { closeModal, confirmModal, promptModal } from "./modal.js?v=43";
+import { closePopover, menuItem, openPopover } from "./popover.js?v=43";
+import { applyStreamDelta, renderChat, scheduleStreamResync } from "./chat.js?v=43";
+import { showPendingRequest } from "./requests.js?v=43";
+import { focusComposer, prepareComposer, renderComposer, upsertTurn } from "./composer.js?v=43";
+import { closeMobileSidebar, renderSidebar, scheduleSidebarRender } from "./sidebar.js?v=43";
+import { renderTopbar } from "./topbar.js?v=43";
+import { saveTitle } from "./convmeta.js?v=43";
 
 export async function selectInitialConversation() {
   const m = location.pathname.match(/^\/c\/([^/]+)/);
@@ -169,11 +169,19 @@ export function setRoute(id) {
 
 export function upsertConversation(conv, render = true) {
   if (!conv || !conv.id) return;
+  // Full conversation records omit an empty projectId. A present createdAt marks
+  // that shape so a chat moved out of a project leaves its old group.
+  const projectId = "projectId" in conv ? (conv.projectId || "") : ("createdAt" in conv ? "" : undefined);
   const i = S.conversations.findIndex((c) => c.id === conv.id);
-  if (i >= 0) S.conversations[i] = { ...S.conversations[i], ...conv };
-  else S.conversations.unshift(conv);
+  const next = { ...(i >= 0 ? S.conversations[i] : {}), ...conv };
+  if (projectId !== undefined) next.projectId = projectId;
+  if (i >= 0) S.conversations[i] = next;
+  else S.conversations.unshift(next);
   S.conversations.sort((a, b) => (Number(b.pinned) - Number(a.pinned)) || ((b.lastMessageAt || b.updatedAt || 0) - (a.lastMessageAt || a.updatedAt || 0)));
-  if (S.current && S.current.id === conv.id) S.current = { ...S.current, ...conv };
+  if (S.current && S.current.id === conv.id) {
+    S.current = { ...S.current, ...conv };
+    if (projectId !== undefined) S.current.projectId = projectId;
+  }
   if (render) { renderSidebar(); renderTopbar(); }
 }
 
@@ -311,7 +319,16 @@ export function renameConversation(id) {
 }
 
 /* ---------------- actions ---------------- */
+export function newProjectChat(id) {
+  if (!id || !(S.projects || []).some((p) => p.id === id)) return;
+  if (!S.expandedProjects) S.expandedProjects = new Set();
+  S.expandedProjects.add(id);
+  setSelectedProject(id);
+  newConversation();
+}
+
 export async function newConversation() {
+  if (S.selectedProjectId && !(S.projects || []).some((p) => p.id === S.selectedProjectId)) setSelectedProject("");
   ++S.loadSeq;
   ++S.draftPreviewSeq;
   S.prepareController?.abort();

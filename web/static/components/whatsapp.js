@@ -1,10 +1,10 @@
-import { $, esc, icon } from "./util.js?v=35";
-import { S } from "./state.js?v=35";
-import { api } from "./api.js?v=35";
-import { toast } from "./toast.js?v=35";
-import { closeModal, confirmModal } from "./modal.js?v=35";
-import { renderSidebar } from "./sidebar.js?v=35";
-import { channelCard, openSettings, renderSettings } from "./settings.js?v=35";
+import { $, esc, icon } from "./util.js?v=43";
+import { S } from "./state.js?v=43";
+import { api } from "./api.js?v=43";
+import { toast } from "./toast.js?v=43";
+import { closeModal, confirmModal } from "./modal.js?v=43";
+import { renderSidebar } from "./sidebar.js?v=43";
+import { channelCard, openSettings, renderSettings } from "./settings.js?v=43";
 
 export function whatsappPanel() {
   const ch = S.whatsapp || S.channels.find((c) => c.name === "whatsapp");

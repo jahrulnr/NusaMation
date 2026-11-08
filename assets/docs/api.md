@@ -29,6 +29,10 @@ POST /api/settings/agent-defaults/preview
 PUT  /api/settings/agent-defaults
 GET|POST /api/conversations
 GET|PATCH|DELETE /api/conversations/{id}
+GET|POST /api/projects
+PATCH|DELETE /api/projects/{id}
+POST /api/projects/{id}/restore
+GET  /api/fs/list?path=                 # child directories; empty path is the home directory
 GET|POST /api/conversations/{id}/messages
 POST /api/conversations/{id}/cancel|retry|config|agent|routing|prepare
 POST /api/conversations/{id}/turns/{turnId}/cancel   # queued turn only; {"dropMessage":true} also removes the queued message
@@ -83,6 +87,31 @@ before retrying. `PATCH /api/automations/{id}/enabled` takes
 `{"enabled":false}` or `{"enabled":true}`. `DELETE` removes the job and its
 run history, leaving chat transcripts intact. See [automations.md](automations.md)
 for scheduling and recovery behavior.
+
+## Projects
+
+`POST /api/conversations` accepts optional `projectId`. When it is set, the
+chat's cwd and `additionalDirectories` come from that project; an unknown id
+is 404 `not_found`. When it is omitted, cwd still falls back to the agent cwd,
+then the service workspace. Switching agents leaves a member's cwd and
+`additionalDirectories` in place. A chat joins a project only at create time
+or when undo restores it while `projectId` is still empty.
+
+`POST /api/projects` takes `{name?, sources, foldersConfirmed?}`. `sources` is
+the full folder list and `sources[0]` is the only primary. An empty name is
+stored as that folder's basename. New paths (every path on create) need
+`foldersConfirmed:true`; otherwise the response is 409 `confirmation_required`
+with `added` and nothing is written. `PATCH /api/projects/{id}` requires `updatedAt` to save `name`
+and/or `sources`; a missing `updatedAt` is 400 `invalid`, a stale revision is
+409 `conflict`, and either way nothing changes. Pin alone does not change
+folders; an omitted pin stays as stored. `DELETE /api/projects/{id}` returns
+`{project, conversationIds}` and deletes no directory and no chat.
+`POST /api/projects/{id}/restore` recreates that id from
+`{name, sources, conversationIds}` plus optional `pinned`, and reattaches a
+chat only when it still has no project. The response is
+`{project, conversationIds}` with the chats that actually reattached.
+
+`GET /api/bootstrap` includes `projects`. Mutations emit `project.updated`.
 
 ## Default ACP payloads
 

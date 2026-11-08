@@ -1,29 +1,32 @@
-import { $, $$, agentById, esc, icon, timeAgo, truncate } from "./util.js?v=35";
-import { S } from "./state.js?v=35";
-import { closeDetachedPopovers } from "./popover.js?v=35";
+import { $, $$, brandImage, esc, icon, timeAgo, truncate } from "./util.js?v=43";
+import { S } from "./state.js?v=43";
+import { closeDetachedPopovers } from "./popover.js?v=43";
+import { groupProjectless, partitionProjects, sortConversations, visibleProjectId } from "./projectmodel.js?v=43";
+
+let expandedReady = false;
+
+function ensureExpanded() {
+  if (expandedReady) return;
+  if (!(S.projects || []).length) return;
+  expandedReady = true;
+  if (!S.expandedProjects) S.expandedProjects = new Set();
+  for (const project of S.projects) S.expandedProjects.add(project.id);
+}
+
+// resetSidebarState lets a fresh login re-expand every project.
+export function resetSidebarState() {
+  expandedReady = false;
+}
 
 /* ---------------- sidebar ---------------- */
 export function renderSidebar() {
   const el = $("#sidebar");
   if (!el) return;
   closeDetachedPopovers();
-  const convs = S.conversations.filter((c) => !c.archived);
-  const pinned = convs.filter((c) => c.pinned);
-  const rest = convs.filter((c) => !c.pinned);
-  const groups = [];
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const yesterday = new Date(today.getTime() - 864e5);
-  const gToday = [], gYesterday = [], gEarlier = [];
-  rest.forEach((c) => {
-    const t = c.lastMessageAt || c.updatedAt || 0;
-    if (t >= today.getTime()) gToday.push(c);
-    else if (t >= yesterday.getTime()) gYesterday.push(c);
-    else gEarlier.push(c);
-  });
-  if (pinned.length) groups.push(["Pinned", pinned]);
-  if (gToday.length) groups.push(["Today", gToday]);
-  if (gYesterday.length) groups.push(["Yesterday", gYesterday]);
-  if (gEarlier.length) groups.push(["Earlier", gEarlier]);
+  ensureExpanded();
+  const parts = partitionProjects(S.projects);
+  const chatGroups = groupProjectless(S.conversations, S.projects);
+  const targetProject = (S.projects || []).find((p) => p.id === S.selectedProjectId);
 
   const prevList = $("#conv-list", el);
   const prevScroll = prevList ? prevList.scrollTop : 0;
@@ -31,24 +34,37 @@ export function renderSidebar() {
   const searchFocused = document.activeElement === prevSearch;
   const selStart = searchFocused ? prevSearch.selectionStart : 0;
   const selEnd = searchFocused ? prevSearch.selectionEnd : 0;
+  const focused = !searchFocused && el.contains(document.activeElement) ? document.activeElement : null;
+  const focusKey = focused?.dataset?.action ? `${focused.dataset.action}|${focused.dataset.id || ""}` : "";
+
+  const projectGroups = [
+    parts.pinned.length ? `<div class="conv-section" data-project-group><div class="conv-section-title">Pinned</div>${parts.pinned.map(projectBlockHTML).join("")}</div>` : "",
+    parts.loose.length ? `<div class="conv-section" data-project-group>${parts.loose.map(projectBlockHTML).join("")}</div>` : "",
+  ].join("");
+
+  const chatsEmpty = !chatGroups.length ? `<div class="sidebar-empty" data-empty="chats"><p>No conversations yet.<br>Start one and it will show up here.</p></div>` : "";
+  const chatsHTML = chatGroups.length ? `<div class="chats-group" data-chats><div class="conv-section-title">Chats</div>${chatGroups.map(([label, list]) => `
+        <div class="conv-section" data-group>
+          <div class="conv-section-title">${esc(label)}</div>
+          ${list.map(convItemHTML).join("")}
+        </div>`).join("")}</div>` : "";
 
   el.innerHTML = `
     <div class="sidebar-top">
       <div class="brand">
-        <span class="brand-mark">N</span>
+        ${brandImage("brand-mark")}
         <div><div class="brand-name">NusaMation</div><div class="brand-tag">agent mesh</div></div>
         <button class="icon-btn sm" style="margin-left:auto" data-action="open-settings" title="Settings">${icon("settings", "sm")}</button>
         <button class="icon-btn sm sidebar-collapse-btn" data-action="toggle-sidebar" title="Collapse sidebar">${icon("panel-left", "sm")}</button>
       </div>
-      <button class="new-chat" data-action="new-chat">${icon("plus")} New conversation</button>
-      <div class="sidebar-search">${icon("search")}<input id="conv-search" type="search" placeholder="Search conversations…" value="${esc(S.query)}" data-input="conv-search" autocomplete="off"></div>
+      <button class="new-chat" data-action="new-chat">${icon("plus")} <span>${targetProject ? `New chat in ${esc(targetProject.name || "project")}` : "New conversation"}</span></button>
+      <div class="sidebar-search">${icon("search")}<input id="conv-search" type="search" placeholder="Search chats and projects…" value="${esc(S.query)}" data-input="conv-search" autocomplete="off"></div>
     </div>
     <div class="sidebar-scroll" id="conv-list">
-      ${groups.length ? groups.map(([label, list]) => `
-        <div class="conv-section" data-group>
-          <div class="conv-section-title">${esc(label)}</div>
-          ${list.map(convItemHTML).join("")}
-        </div>`).join("") : `<div class="sidebar-empty">${S.query ? "No conversations match your search." : "No conversations yet.<br>Start one and it will show up here."}</div>`}
+      <div class="conv-section-title projects-label"><span>Projects</span><button type="button" class="project-add-btn" data-action="new-project" title="New project">${icon("plus", "sm")}<span>New project</span></button></div>
+      ${projectGroups}
+      ${chatsHTML}
+      ${chatsEmpty}
     </div>
     <div class="sidebar-bottom">
       <div class="connection-pill" title="Live event stream">
@@ -65,12 +81,44 @@ export function renderSidebar() {
     const next = $("#conv-search", el);
     next?.focus();
     try { next?.setSelectionRange(selStart, selEnd); } catch {}
+  } else if (focusKey) {
+    $$("[data-action]", el).find((node) => `${node.dataset.action}|${node.dataset.id || ""}` === focusKey)?.focus({ preventScroll: true });
   }
   filterSidebar();
 }
 
+function projectBlockHTML(project) {
+  const open = !!S.expandedProjects?.has(project.id);
+  const isTarget = S.selectedProjectId === project.id;
+  const id = esc(project.id);
+  const name = esc(project.name || "Untitled project");
+  const chats = sortConversations((S.conversations || []).filter((c) => c && !c.archived && c.projectId === project.id));
+  return `<div class="project-block ${open ? "is-open" : ""}" data-project-id="${id}" data-project-name="${esc((project.name || "").toLowerCase())}">
+    <div class="project-head ${isTarget ? "is-target" : ""}" data-id="${id}">
+      <button type="button" class="project-toggle" data-action="toggle-project" data-id="${id}" aria-expanded="${open ? "true" : "false"}">
+        ${icon(open ? "chevron-down" : "chevron-right", "sm")}
+        <span class="project-name">${name}</span>
+        ${project.pinned ? icon("pin", "conv-pin") : ""}
+        ${chats.length ? `<span class="project-count" title="${chats.length} chat${chats.length === 1 ? "" : "s"}">${chats.length}</span>` : ""}
+      </button>
+      <button type="button" class="icon-btn sm project-menu-btn" data-action="project-menu" data-id="${id}" title="Project menu" aria-label="Project menu: ${name}">${icon("more", "sm")}</button>
+    </div>
+    <div class="project-chats">
+      ${chats.length ? chats.map(convItemHTML).join("") : `<p class="project-none">No chats yet</p>`}
+      <button type="button" class="project-new" data-action="project-new-chat" data-id="${id}">${icon("plus", "sm")} New chat</button>
+    </div>
+  </div>`;
+}
+
+export function toggleProjectRow(id) {
+  if (!id) return;
+  if (!S.expandedProjects) S.expandedProjects = new Set();
+  if (S.expandedProjects.has(id)) S.expandedProjects.delete(id);
+  else S.expandedProjects.add(id);
+  renderSidebar();
+}
+
 export function convItemHTML(c) {
-  const agent = agentById(c.agentId);
   const links = c.links || [];
   const external = links.find((l) => l.channel !== "web");
   const channel = external ? external.channel : (c.originChannel && c.originChannel !== "web" ? c.originChannel : "");
@@ -94,8 +142,29 @@ export function filterSidebar() {
   const q = S.query.trim().toLowerCase();
   const list = $("#conv-list");
   if (!list) return;
-  $$(".sidebar-empty", list).forEach((e) => e.remove());
-  $$(".conv-section", list).forEach((group) => {
+  $$(".sidebar-empty[data-empty=query]", list).forEach((e) => e.remove());
+  const chatsZero = $(".sidebar-empty[data-empty=chats]", list);
+  if (chatsZero) chatsZero.classList.toggle("hidden", !!q);
+
+  $$("[data-project-id]", list).forEach((block) => {
+    const nameHit = !!q && (block.dataset.projectName || "").includes(q);
+    let chatHits = 0;
+    $$(".conv-item", block).forEach((item) => {
+      const hit = !q || nameHit || (item.dataset.title || "").includes(q) || (item.dataset.preview || "").includes(q);
+      item.classList.toggle("hidden", !hit);
+      if (q && hit) chatHits++;
+    });
+    const visible = !q || nameHit || chatHits > 0;
+    block.classList.toggle("hidden", !visible);
+    block.classList.toggle("show-chats", !!q && visible);
+    $$(".project-new, .project-none", block).forEach((node) => node.classList.toggle("hidden", !!q && !nameHit));
+  });
+
+  $$("[data-project-group]", list).forEach((group) => {
+    group.classList.toggle("hidden", !$("[data-project-id]:not(.hidden)", group));
+  });
+
+  $$(".conv-section[data-group]", list).forEach((group) => {
     let visible = 0;
     $$(".conv-item", group).forEach((item) => {
       const hit = !q || (item.dataset.title || "").includes(q) || (item.dataset.preview || "").includes(q);
@@ -104,8 +173,14 @@ export function filterSidebar() {
     });
     group.classList.toggle("hidden", !visible);
   });
-  if (!$(".conv-section:not(.hidden)", list) && q) {
-    list.insertAdjacentHTML("beforeend", `<div class="sidebar-empty">No conversations match “${esc(q)}”.</div>`);
+
+  const chats = $("[data-chats]", list);
+  if (chats) chats.classList.toggle("hidden", !$(".conv-section[data-group]:not(.hidden)", chats));
+
+  const anyProject = $("[data-project-id]:not(.hidden)", list);
+  const anyChat = $(".conv-section[data-group]:not(.hidden)", list);
+  if (q && !anyProject && !anyChat) {
+    list.insertAdjacentHTML("beforeend", `<div class="sidebar-empty" data-empty="query">Nothing matches “${esc(q)}”.</div>`);
   }
 }
 
@@ -157,6 +232,8 @@ export function patchSidebarConversations() {
   for (const c of convs) {
     const node = list.querySelector(`.conv-item[data-id="${CSS.escape(c.id)}"]`);
     if (!node) { renderSidebar(); return; }
+    const host = node.closest("[data-project-id]")?.dataset.projectId || "";
+    if (host !== visibleProjectId(c, S.projects)) { renderSidebar(); return; }
     const previewText = c.lastMessage ? truncate(c.lastMessage.replace(/\s+/g, " "), 70) : "No messages yet";
     const preview = $(".conv-preview", node);
     if (preview && preview.textContent !== previewText) preview.textContent = previewText;

@@ -1,8 +1,8 @@
-import { $, $$, esc, icon, timeAgo } from "./util.js?v=35";
-import { S } from "./state.js?v=35";
-import { renderApprovalsModal } from "./requests.js?v=35";
-import { newConversation, selectConversation } from "./conversations.js?v=35";
-import { openSettings } from "./settings.js?v=35";
+import { $, $$, esc, icon, timeAgo } from "./util.js?v=43";
+import { S } from "./state.js?v=43";
+import { renderApprovalsModal } from "./requests.js?v=43";
+import { newConversation, selectConversation } from "./conversations.js?v=43";
+import { openSettings } from "./settings.js?v=43";
 
 /* ---------------- command palette ---------------- */
 export function openPalette() {
