@@ -6,6 +6,16 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ### Changed
 
+- **Annotation prompts are tagged.** The prompt block for page annotations is wrapped in `<annotation-context>…</annotation-context>` so agents can tell injected context apart from user text, and it now points at the `browser_use` tools for inspecting the live page behind the screenshots.
+
+### Fixed
+
+- **Empty user bubble on annotation-only sends.** Sending only annotations (no text) no longer renders an empty dark card above the attachment chips — the bubble renders only when it has a quote, reply sender, or text.
+
+## [0.2.2] - 2026-11-08
+
+### Changed
+
 - **Static asset caching:** files under `/static/` are now served with a strong ETag (SHA-256 of the content) and `Cache-Control: no-cache`, so browsers revalidate every load and get a cheap `304 Not Modified` when nothing changed — fresh assets no longer depend on `?v=` cache-bust specifiers. The app shell and login page still use `no-store`.
 
 - **Agent browser pointer:** the overlay marking where `browser_use` moves or clicks inside the embedded browser pane is now a real arrow cursor image (36px, LightsOut theme) instead of a small blue dot. The image's tip hotspot lands on the remote coordinates, and click events still shrink it briefly with a blue halo.

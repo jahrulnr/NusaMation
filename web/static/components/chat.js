@@ -167,10 +167,11 @@ export function userHTML(m) {
   const attachments = attachmentsHTML(visible) + annotationsHTML(anns);
   const qt = queuedTurnFor(m);
   const qLabel = qt && qt.status === "queued" ? queueStatusLabel(m) : "";
+  const bubble = `${sender}${quote}${text && text.trim() ? `<div class="markdown">${renderMarkdown(text, m.id, format)}</div>` : ""}${match ? attachments : ""}`;
   return `<div class="msg user" data-msg-id="${esc(m.id)}">
     <div class="msg-body">
       ${messageHead(m)}
-      <div class="user-bubble">${sender}${quote}${text ? `<div class="markdown">${renderMarkdown(text, m.id, format)}</div>` : ""}${match ? attachments : ""}</div>
+      ${bubble ? `<div class="user-bubble">${bubble}</div>` : ""}
       ${match ? "" : attachments}
       ${qLabel ? `<div class="queue-status"><span>${esc(qLabel)}</span><span class="queue-actions"><button class="btn btn-ghost btn-xs" data-action="queue-edit" data-id="${esc(m.id)}" data-turn="${esc(qt.id)}" title="Edit this queued message">${icon("edit", "sm")} Edit</button><button class="btn btn-ghost btn-xs" data-action="queue-cancel" data-id="${esc(m.id)}" data-turn="${esc(qt.id)}" title="Cancel this queued message">${icon("x", "sm")} Cancel</button></span></div>` : ""}
     </div>
