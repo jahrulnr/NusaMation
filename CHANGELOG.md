@@ -6,7 +6,7 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ### Fixed
 
-- **`browser_use` MCP server:** the stdio framing reader no longer dies on blank lines between messages. Transports that emit a stray newline after each message body — observed on Windows — killed the process right after `initialize`, so the agent saw the server registered but every `tools/list`/`tools/call` failed.
+- **`browser_use` MCP server:** the stdio transport now mirrors the client's framing. The spec's stdio transport is newline-delimited JSON; real MCP clients (Claude Code SDK, Devin) speak NDJSON while the server only replied with LSP-style `Content-Length` headers, so clients timed out waiting for a line they could parse — `mcp_list_tools` failed while spawning the server by hand worked. Replies now come back in the request's framing, and the reader still tolerates blank lines between messages.
 
 - **Send menu:** the composer's delivery menu now has just **Steer** and **Add to queue**. "Steer" is one concept again: the agent gets the input mid-turn when it supports steering, otherwise NusaMation waits for the current tools, cancels, and resends — the path previously shown as a separate "Send after tools" item.
 

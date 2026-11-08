@@ -20,7 +20,10 @@ const (
 	EnvToken = "NUSAMATION_BROWSER_USE_TOKEN"
 )
 
-// Serve speaks MCP stdio (Content-Length framing) until in closes.
+// Serve speaks MCP stdio until in closes. Requests may arrive newline-
+// delimited (the MCP spec's stdio transport) or Content-Length framed (LSP
+// style); each response goes out in the same framing as its request — spec
+// clients cannot parse headers and header clients ignore bare lines.
 // baseURL is the NusaMation loopback origin, without a trailing slash.
 func Serve(in io.Reader, out io.Writer, baseURL, token string) error {
 	if baseURL == "" || token == "" {
@@ -30,7 +33,7 @@ func Serve(in io.Reader, out io.Writer, baseURL, token string) error {
 	r := bufio.NewReader(in)
 	w := bufio.NewWriter(out)
 	for {
-		body, err := readMessage(r)
+		body, framed, err := readMessage(r)
 		if err == io.EOF {
 			return nil
 		}
@@ -45,7 +48,7 @@ func Serve(in io.Reader, out io.Writer, baseURL, token string) error {
 			continue
 		}
 		resp := handle(client, baseURL, token, req)
-		if err := writeMessage(w, resp); err != nil {
+		if err := writeMessage(w, resp, framed); err != nil {
 			return err
 		}
 	}
@@ -200,14 +203,17 @@ func callTool(client *http.Client, baseURL, token, name string, args json.RawMes
 	return map[string]any{"content": content, "isError": false}, nil
 }
 
-func readMessage(r *bufio.Reader) ([]byte, error) {
+// readMessage returns the next request body and whether it arrived
+// Content-Length framed (true) or as a bare newline-delimited JSON line
+// (false), so the response can mirror the client's transport.
+func readMessage(r *bufio.Reader) ([]byte, bool, error) {
 	// Some transports separate framed messages with blank lines; skip them
 	// instead of treating the empty line as a missing Content-Length.
 	var trim string
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		trim = strings.TrimSpace(line)
 		if trim != "" {
@@ -215,7 +221,7 @@ func readMessage(r *bufio.Reader) ([]byte, error) {
 		}
 	}
 	if strings.HasPrefix(trim, "{") {
-		return []byte(trim), nil
+		return []byte(trim), false, nil
 	}
 	header := trim
 	length := 0
@@ -227,39 +233,46 @@ func readMessage(r *bufio.Reader) ([]byte, error) {
 		if strings.HasPrefix(strings.ToLower(t), "content-length:") {
 			n, err := strconv.Atoi(strings.TrimSpace(t[len("content-length:"):]))
 			if err != nil || n < 0 {
-				return nil, fmt.Errorf("bad Content-Length")
+				return nil, false, fmt.Errorf("bad Content-Length")
 			}
 			length = n
 		}
 		next, err := r.ReadString('\n')
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		header = next
 	}
 	if length == 0 {
-		return nil, fmt.Errorf("missing Content-Length")
+		return nil, false, fmt.Errorf("missing Content-Length")
 	}
 	if length > 4<<20 {
-		return nil, fmt.Errorf("Content-Length too large")
+		return nil, false, fmt.Errorf("Content-Length too large")
 	}
 	buf := make([]byte, length)
 	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return buf, nil
+	return buf, true, nil
 }
 
-func writeMessage(w *bufio.Writer, v any) error {
+func writeMessage(w *bufio.Writer, v any, framed bool) error {
 	body, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "Content-Length: %d\r\n\r\n", len(body)); err != nil {
-		return err
+	if framed {
+		if _, err := fmt.Fprintf(w, "Content-Length: %d\r\n\r\n", len(body)); err != nil {
+			return err
+		}
 	}
 	if _, err := w.Write(body); err != nil {
 		return err
+	}
+	if !framed {
+		if _, err := w.WriteString("\n"); err != nil {
+			return err
+		}
 	}
 	return w.Flush()
 }

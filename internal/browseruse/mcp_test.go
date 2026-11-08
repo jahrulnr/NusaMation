@@ -20,17 +20,63 @@ func TestReadMessageSkipsBlankLines(t *testing.T) {
 	stream := frame + "\r\n" + frame + "\r\n"
 	r := bufio.NewReader(strings.NewReader(stream))
 	for i := 0; i < 2; i++ {
-		got, err := readMessage(r)
+		got, framed, err := readMessage(r)
 		if err != nil {
 			t.Fatalf("message %d: %v", i, err)
+		}
+		if !framed {
+			t.Fatalf("message %d not flagged framed", i)
 		}
 		if string(got) != body {
 			t.Fatalf("message %d = %s", i, got)
 		}
 	}
-	if _, err := readMessage(r); err != io.EOF {
+	if _, _, err := readMessage(r); err != io.EOF {
 		t.Fatalf("expected io.EOF, got %v", err)
 	}
+}
+
+// MCP spec clients speak newline-delimited JSON; the reply must come back in
+// the same framing or the client waits forever on a line it can't parse.
+func TestResponseMirrorsRequestFraming(t *testing.T) {
+	req := `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+
+	var ndOut strings.Builder
+	ndW := bufio.NewWriter(&ndOut)
+	if err := writeMessage(ndW, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: map[string]any{}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := ndOut.String(); !strings.HasPrefix(got, "{") || !strings.HasSuffix(got, "\n") || strings.Contains(got, "Content-Length") {
+		t.Fatalf("ndjson reply malformed: %q", got)
+	}
+
+	var frOut strings.Builder
+	frW := bufio.NewWriter(&frOut)
+	if err := writeMessage(frW, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: map[string]any{}}, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := frOut.String(); !strings.HasPrefix(got, "Content-Length:") {
+		t.Fatalf("framed reply missing header: %q", got)
+	}
+
+	// Round trip: NDJSON in, NDJSON back.
+	serverR, clientW := io.Pipe()
+	clientR, serverW := io.Pipe()
+	errc := make(chan error, 1)
+	go func() { errc <- Serve(serverR, serverW, "http://unused", "tok") }()
+	if _, err := clientW.Write([]byte(req + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(clientR).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(line, "{") {
+		t.Fatalf("ndjson request got framed reply: %q", line)
+	}
+	_ = clientW.Close()
+	_ = serverW.Close()
+	<-errc
 }
 
 func TestMCPNavigate(t *testing.T) {
@@ -92,7 +138,7 @@ func mustWrite(t *testing.T, w io.Writer, v any) {
 func mustRead(t *testing.T, r io.Reader) map[string]any {
 	t.Helper()
 	br := bufio.NewReader(r)
-	body, err := readMessage(br)
+	body, _, err := readMessage(br)
 	if err != nil {
 		t.Fatal(err)
 	}
