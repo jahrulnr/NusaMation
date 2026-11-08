@@ -4,6 +4,8 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-09
+
 ### Changed
 
 - **Tool calls and thoughts render as flat rows, not stacked cards.** Collapsed rows show only a kind glyph, the title, and a chevron — the icon box, `name · N locations` sub-line, per-call `DONE` pill, preview snippet, and per-message avatar are gone. Expanded bodies open a single box with the section labels and actions inside it, and shell inputs render as `$ command` under `Command in <cwd>` instead of the raw JSON. Status only appears when it matters: `Failed · Exit N` in red or a pulsing `Running`; metadata-only result envelopes (`{"metadata": …}`) are no longer dumped as their own section.
@@ -26,9 +28,7 @@ All notable changes to the Go core will be documented in this file. The format i
 
 - **Annotation prompts are tagged.** The prompt block for page annotations is wrapped in `<annotation-context>…</annotation-context>` so agents can tell injected context apart from user text, and it now points at the `browser_use` tools for inspecting the live page behind the screenshots.
 - **Static asset caching:** files under `/static/` are now served with a strong ETag (SHA-256 of the content) and `Cache-Control: no-cache`, so browsers revalidate every load and get a cheap `304 Not Modified` when nothing changed — fresh assets no longer depend on `?v=` cache-bust specifiers. The app shell and login page still use `no-store`.
-
 - **Agent browser pointer:** the overlay marking where `browser_use` moves or clicks inside the embedded browser pane is now a real arrow cursor image (36px, LightsOut theme) instead of a small blue dot. The image's tip hotspot lands on the remote coordinates, and click events still shrink it briefly with a blue halo.
-
 - **"New conversation" wording:** every user-facing "New chat" label — the sidebar button, the per-project menu item, the composer scope chip, and the automation session mode — now reads "New conversation". Internal ids and classes are unchanged.
 
 ### Added
