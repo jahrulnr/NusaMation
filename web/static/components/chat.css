@@ -75,56 +75,61 @@
 .activity-items { display: none; border-left: 1px solid var(--border); margin: 3px 0 0 6px; padding-left: 12px; }
 .activity.open .activity-items { display: block; }
 .activity-items .msg { margin: 0; gap: 0; }
-.activity-items .msg-avatar { display: none; }
 .activity-items .tool-card, .activity-items .thought { margin-bottom: 8px; }
-.thought { border: 1px solid var(--border); background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.012)); border-radius: 11px; margin-bottom: 12px; overflow: hidden; }
-.thought-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 11px; color: var(--muted); font-size: 11.5px; text-align: left; }
-.thought-head:hover { color: var(--text-soft); background: rgba(255,255,255,.025); }
+.activity-items .msg.tool-msg, .activity-items .msg.thought-msg { margin: 0; }
+.msg.tool-msg, .msg.thought-msg { margin: 0 0 8px 39px; }
+.thought { margin-bottom: 6px; }
+.thought-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; color: var(--muted); font-size: 11.5px; text-align: left; border-radius: 8px; }
+.thought-head:hover { color: var(--text-soft); background: rgba(255,255,255,.03); }
 .thought-head .icon { width: 13px; height: 13px; color: var(--purple); }
 .thought-head .label { font-weight: 550; letter-spacing: .01em; }
 .thought-head .preview { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted-2); font-size: 11px; }
 .thought-head .chev { transition: transform .15s; width: 13px; height: 13px; }
 .thought.open .thought-head .chev { transform: rotate(90deg); }
-.thought-body { display: none; padding: 0 13px 11px 32px; color: var(--muted); font-size: 12.5px; border-top: 1px solid rgba(255,255,255,.04); }
+.thought-body { display: none; padding: 2px 12px 10px 30px; color: var(--muted); font-size: 12.5px; }
 .thought-body .markdown { color: var(--muted); }
 .thought-body .markdown code { color: #c9b78f; }
 .thought.open .thought-body { display: block; }
 
-/* Tool cards */
-.tool-card { border: 1px solid var(--border); background: var(--panel); border-radius: 11px; margin-bottom: 11px; overflow: hidden; }
-.tool-head { display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px; width: 100%; text-align: left; }
+/* Tool cards: flat row collapsed, a single box when expanded */
+.tool-card { margin-bottom: 6px; }
+.tool-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; text-align: left; color: var(--muted); border-radius: 8px; }
+.tool-head:hover { background: rgba(255,255,255,.03); color: var(--text-soft); }
+.tool-glyph { width: 15px; height: 15px; flex: none; display: grid; place-items: center; color: var(--blue); }
+.tool-glyph .icon { width: 14px; height: 14px; }
+.tool-glyph.kind-execute { color: var(--mint); }
+.tool-glyph.kind-edit, .tool-glyph.kind-move { color: var(--accent); }
+.tool-glyph.kind-delete { color: var(--danger); }
+.tool-card.failed .tool-glyph { color: var(--danger); }
+/* Shared icon box reused by settings/channel cards outside tool rows. */
 .tool-icon { width: 27px; height: 27px; border-radius: 8px; display: grid; place-items: center; background: rgba(131,184,255,.08); color: var(--blue); flex: none; border: 1px solid rgba(131,184,255,.14); }
 .tool-icon.kind-execute { color: var(--mint); background: var(--mint-dim); border-color: rgba(118,215,196,.18); }
 .tool-icon.kind-edit, .tool-icon.kind-move { color: var(--accent); background: var(--accent-dim); border-color: var(--accent-line); }
 .tool-icon.kind-delete { color: var(--danger); background: var(--danger-dim); border-color: rgba(255,118,118,.2); }
-.tool-main { flex: 1; min-width: 0; }
-.tool-title-row { display: flex; align-items: center; gap: 7px; }
-.tool-title { font-size: 12.5px; font-weight: 600; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tool-sub { font-size: 10.5px; color: var(--muted-2); display: flex; align-items: center; gap: 6px; margin-top: 1px; }
+.tool-title { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 550; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tool-status { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; flex: none; color: var(--muted); }
 .tool-status .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-.tool-status.completed { color: var(--green); } .tool-status.failed { color: var(--danger); } .tool-status.in_progress, .tool-status.pending { color: var(--accent); }
-.tool-head .chev { color: var(--muted-2); margin-top: 6px; transition: transform .15s; width: 13px; height: 13px; }
+.tool-status.failed, .tool-status.error { color: var(--danger); }
+.tool-status.in_progress, .tool-status.pending { color: var(--accent); }
+.tool-status.in_progress .dot, .tool-status.pending .dot { animation: typing 1.2s infinite ease-in-out; }
+.tool-head .chev { color: var(--muted-2); transition: transform .15s; width: 13px; height: 13px; flex: none; }
 .tool-card.open .tool-head .chev { transform: rotate(90deg); }
-.tool-preview { max-height: 4.5em; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 12px 10px 48px; color: var(--muted-2); font: 11px/1.5 var(--mono); }
-.tool-card.open .tool-preview { display: none; }
-.tool-body { display: none; border-top: 1px solid var(--border); padding: 10px 12px 12px 48px; background: rgba(0,0,0,.12); }
+.tool-body { display: none; margin: 3px 2px 8px; border: 1px solid var(--border); background: rgba(0,0,0,.16); border-radius: 10px; overflow: hidden; }
 .tool-card.open .tool-body { display: block; }
-.tool-section { margin-bottom: 10px; }
-.tool-section:last-child { margin-bottom: 0; }
-.tool-section-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; margin-bottom: 5px; }
+.tool-section { border-top: 1px solid var(--border); }
+.tool-section:first-child { border-top: 0; }
+.tool-section-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; padding: 7px 11px 0; }
 .tool-label { flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; font-size: 9.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted-2); font-weight: 700; }
 .tool-actions { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
 .tool-actions button { color: var(--muted); font-size: 10.5px; padding: 4px 5px; border-radius: 5px; }
 .tool-actions button:hover, .tool-actions button:focus-visible { color: var(--text); background: rgba(255,255,255,.07); }
 .tool-menu-button { display: none; flex: none; color: var(--muted); font-size: 18px; line-height: 1; width: 36px; height: 36px; border-radius: 6px; }
 .tool-menu-button:hover, .tool-menu-button:focus-visible { color: var(--text); background: rgba(255,255,255,.07); }
-.tool-pre { margin: 0; background: #0a0b0e; border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; font-family: var(--mono); font-size: 11.2px; line-height: 1.55; color: #c8c5bc; white-space: pre-wrap; word-break: break-word; max-height: min(320px, 45vh); overflow: auto; }
+.tool-pre { margin: 0; padding: 8px 11px 10px; font-family: var(--mono); font-size: 11.2px; line-height: 1.55; color: #c8c5bc; white-space: pre-wrap; word-break: break-word; max-height: min(320px, 45vh); overflow: auto; }
 .tool-pre.no-wrap { white-space: pre; word-break: normal; }
-.tool-text { font-size: 12px; color: var(--muted); white-space: pre-wrap; }
-.tool-locs { display: flex; flex-wrap: wrap; gap: 5px; }
+.tool-text { padding: 10px 11px; font-size: 12px; color: var(--muted); white-space: pre-wrap; }
+.tool-locs { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 11px 10px; }
 .tool-loc { font-family: var(--mono); font-size: 10.5px; color: var(--mint); background: var(--mint-dim); border-radius: 5px; padding: 2px 6px; }
-.tool-card.failed { border-color: rgba(255,118,118,.2); }
 
 /* Plan */
 .plan-card { border: 1px solid var(--border); border-radius: 11px; background: var(--panel); margin-bottom: 13px; overflow: hidden; }

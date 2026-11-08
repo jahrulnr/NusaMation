@@ -4,6 +4,10 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+### Changed
+
+- **Tool calls and thoughts render as flat rows, not stacked cards.** Collapsed rows show only a kind glyph, the title, and a chevron — the icon box, `name · N locations` sub-line, per-call `DONE` pill, preview snippet, and per-message avatar are gone. Expanded bodies open a single box with the section labels and actions inside it, and shell inputs render as `$ command` under `Command in <cwd>` instead of the raw JSON. Status only appears when it matters: `Failed · Exit N` in red or a pulsing `Running`; metadata-only result envelopes (`{"metadata": …}`) are no longer dumped as their own section.
+
 ### Fixed
 
 - **Raw HTML in messages no longer renders as elements.** Agent text like `srcdoc="<button>Inner</button>"` used to produce a real (dead) `<button>` inside the bubble — DOMPurify's allowlist permits interactive tags. Marked `html` tokens are now escaped to text before sanitizing, so embedded markup always displays literally.

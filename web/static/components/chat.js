@@ -196,8 +196,7 @@ export function thoughtHTML(m) {
   const open = S.openThoughts.has(m.id);
   const streaming = m.status === "streaming";
   const preview = truncate(plainMarkdown(m.text || ""), 110);
-  return `<div class="msg assistant" data-msg-id="${esc(m.id)}">
-    <div class="msg-avatar" style="background:rgba(180,155,255,.1);border-color:rgba(180,155,255,.22);color:var(--purple)">${icon("brain")}</div>
+  return `<div class="msg assistant thought-msg" data-msg-id="${esc(m.id)}">
     <div class="msg-body">
       <div class="thought ${open ? "open" : ""}" data-thought-id="${esc(m.id)}">
         <button class="thought-head" data-action="toggle-thought" data-id="${esc(m.id)}" aria-expanded="${open}">
@@ -239,23 +238,22 @@ export function toolHTML(m) {
   const iconName = toolIcon(kind);
   const iconClass = `kind-${TOOL_KINDS.has(kind) ? kind : "other"}`;
   const sections = toolSections(t, m.id);
-  const preview = toolPreview(t);
-  const exits = Object.values(t.terminals || {}).map((term) => term.exitStatus).filter(Boolean);
+  const failed = ["failed", "error"].includes(status);
+  const running = ["in_progress", "pending", "streaming"].includes(status);
+  const exits = failed ? Object.values(t.terminals || {}).map((term) => term.exitStatus).filter(Boolean) : [];
   const exitText = exits.map((exit) => exit.exitCode !== undefined && exit.exitCode !== null ? `Exit ${exit.exitCode}` : exit.signal ? `Signal ${exit.signal}` : "").filter(Boolean).join(", ");
-  return `<div class="msg assistant" data-msg-id="${esc(m.id)}">
-    <div class="msg-avatar" style="background:rgba(131,184,255,.08);border-color:rgba(131,184,255,.2);color:var(--blue)">${icon("zap")}</div>
+  const statusHtml = failed || running
+    ? `<span class="tool-status ${esc(status)}"><span class="dot"></span>${esc(statusLabel(status))}${exitText ? ` · ${esc(exitText)}` : ""}</span>`
+    : "";
+  return `<div class="msg assistant tool-msg" data-msg-id="${esc(m.id)}">
     <div class="msg-body">
-      <div class="tool-card ${open ? "open" : ""} ${status === "failed" ? "failed" : ""}" data-tool-id="${esc(t.toolCallId || m.toolCallId || m.id)}">
+      <div class="tool-card ${open ? "open" : ""} ${failed ? "failed" : ""}" data-tool-id="${esc(t.toolCallId || m.toolCallId || m.id)}">
         <button class="tool-head" data-action="toggle-tool" data-id="${esc(m.id)}" aria-expanded="${open}">
-          <span class="tool-icon ${iconClass}">${icon(iconName)}</span>
-          <span class="tool-main">
-            <span class="tool-title-row"><span class="tool-title">${esc(title)}</span></span>
-            <span class="tool-sub">${esc(t.name || kind || "tool")}${t.locations && t.locations.length ? ` · ${t.locations.length} location${t.locations.length === 1 ? "" : "s"}` : ""}${exitText ? ` · ${esc(exitText)}` : ""}</span>
-          </span>
-          <span class="tool-status ${esc(status)}"><span class="dot"></span>${esc(statusLabel(status))}</span>
+          <span class="tool-glyph ${iconClass}">${icon(iconName)}</span>
+          <span class="tool-title">${esc(title)}</span>
+          ${statusHtml}
           ${icon("chevron-right", "chev")}
         </button>
-        ${preview ? `<div class="tool-preview">${esc(preview)}</div>` : ""}
         <div class="tool-body">${sections || `<div class="tool-text">No tool details were provided.</div>`}</div>
       </div>
     </div>
@@ -301,8 +299,12 @@ export function toolSections(t, messageId) {
       contentTexts.push(item.text);
     } else contentTexts.push(pretty(item));
   });
+  const usedLabels = new Map();
   const section = (label, value, language = "") => {
-    const key = messageId + ":" + label;
+    // data-scroll-key feeds wrap state, scroll restore, and the mobile actions popover — it must be unique per section.
+    const seen = usedLabels.get(label) || 0;
+    usedLabels.set(label, seen + 1);
+    const key = messageId + ":" + label + (seen ? ":" + seen : "");
     const wrap = !S.unwrappedTools.has(key);
     return `<div class="tool-section"><div class="tool-section-head"><div class="tool-label">${esc(label)}</div><div class="tool-actions">
       <button type="button" data-action="tool-wrap" title="Toggle line wrapping">${wrap ? "No wrap" : "Wrap"}</button>
@@ -311,7 +313,15 @@ export function toolSections(t, messageId) {
       <button type="button" data-action="copy-tool" title="Copy the complete output">Copy</button>
     </div><button type="button" class="tool-menu-button" data-action="tool-menu" aria-label="${esc(label)} options" title="${esc(label)} options">+</button></div><pre class="tool-pre ${wrap ? "" : "no-wrap"}" data-scroll-key="${esc(key)}"><code class="${language ? `language-${language}` : "nohighlight"}">${esc(value)}</code></pre></div>`;
   };
-  if (t.rawInput !== undefined && t.rawInput !== null) {
+  const command = t.rawInput && typeof t.rawInput === "object" && typeof t.rawInput.command === "string" ? t.rawInput.command : "";
+  if (command) {
+    const cwd = typeof t.rawInput.cwd === "string" && t.rawInput.cwd ? ` in ${t.rawInput.cwd}` : "";
+    out.push(section(`Command${cwd}`, "$ " + command));
+    const rest = { ...t.rawInput };
+    delete rest.command;
+    delete rest.cwd;
+    if (Object.keys(rest).length) out.push(section("Input", pretty(rest), "json"));
+  } else if (t.rawInput !== undefined && t.rawInput !== null) {
     out.push(section("Input", typeof t.rawInput === "string" ? t.rawInput : pretty(t.rawInput), typeof t.rawInput === "object" ? "json" : ""));
   }
   if (contentTexts.length) {
@@ -320,22 +330,17 @@ export function toolSections(t, messageId) {
   if (diffs.length) {
     diffs.forEach((d, i) => out.push(section(`Changes ${i + 1}`, String(d.path || "") + "\n" + diffText(d), "diff")));
   }
-  Object.values(t.terminals || {}).forEach((term) => out.push(section(`Terminal ${term.id}`, term.output || "")));
-  if (t.rawOutput !== undefined && t.rawOutput !== null) {
+  const terms = Object.values(t.terminals || {});
+  terms.forEach((term) => out.push(section(terms.length > 1 ? `Terminal ${term.id}` : "Output", term.output || "")));
+  // Agent-wrapped results like {"metadata": {status, exit}} add no information beyond the status badge — skip the envelope, keep anything richer.
+  const envelopeOnly = t.rawOutput && typeof t.rawOutput === "object" && !Array.isArray(t.rawOutput) && Object.keys(t.rawOutput).length === 1 && t.rawOutput.metadata && typeof t.rawOutput.metadata === "object";
+  if (t.rawOutput !== undefined && t.rawOutput !== null && !envelopeOnly) {
     out.push(section("Result", typeof t.rawOutput === "string" ? t.rawOutput : pretty(t.rawOutput), typeof t.rawOutput === "object" ? "json" : ""));
   }
   if (Array.isArray(t.locations) && t.locations.length) {
-    out.push(`<div class="tool-section"><div class="tool-label">Locations</div><div class="tool-locs">${t.locations.map((l) => `<span class="tool-loc">${esc((l.path || "") + (l.line ? ":" + l.line : ""))}</span>`).join("")}</div></div>`);
+    out.push(`<div class="tool-section"><div class="tool-section-head"><div class="tool-label">Locations</div></div><div class="tool-locs">${t.locations.map((l) => `<span class="tool-loc">${esc((l.path || "") + (l.line ? ":" + l.line : ""))}</span>`).join("")}</div></div>`);
   }
   return out.join("");
-}
-
-export function toolPreview(t) {
-  const content = Array.isArray(t.content) ? t.content : [];
-  const texts = content.map((item) => item?.type === "content" ? item.content?.text : item?.type === "text" ? item.text : "").filter(Boolean);
-  const terminalOutput = Object.values(t.terminals || {}).map((term) => term.output || "").filter(Boolean).join("\n");
-  const text = terminalOutput || texts.join("\n") || (typeof t.rawOutput === "string" ? t.rawOutput : "");
-  return text ? truncate(text.trim(), 280) : "";
 }
 
 export function diffText(d) {

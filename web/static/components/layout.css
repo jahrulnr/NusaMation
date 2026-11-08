@@ -97,9 +97,8 @@
   .qr-img { width: 200px; height: 200px; align-self: center; }
   .toasts { left: 10px; top: 64px; right: 10px; transform: none; max-width: none; align-items: stretch; }
   .palette { margin-top: 2vh; }
-  .tool-body { padding-left: 13px; }
-  .tool-preview { padding-left: 13px; }
   .activity { margin-left: 0; }
+  .msg.tool-msg, .msg.thought-msg { margin-left: 0; }
   .thought-body { padding-left: 13px; }
   .msg.user .msg-body { max-width: 92%; }
   .topbar-title-wrap { flex: 1; }
