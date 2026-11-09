@@ -4,6 +4,12 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-09
+
+### Fixed
+
+- **Skipping an agent question no longer fails the tool.** Closing the elicitation popup (X, Esc, backdrop) on a form whose fields are all optional now answers it with empty content, so the agent receives "Unanswered" and the turn keeps going. Forms with required fields and URL requests still cancel. Previously a dismissal sent `cancel`, which OpenCode's `question` tool turns into a failed call ("The user dismissed this question").
+
 ## [0.2.3] - 2026-11-09
 
 ### Changed

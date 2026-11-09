@@ -1,6 +1,6 @@
 import { $, esc, icon } from "./util.js";
 import { S } from "./state.js";
-import { respondElicitation, showPendingRequest } from "./requests.js";
+import { dismissElicitation, showPendingRequest } from "./requests.js";
 
 /* ---------------- modals ---------------- */
 const modalCloseHooks = new Set();
@@ -59,7 +59,7 @@ export function closeModal(cancelRequest = true) {
   const previousType = S.modal?.type;
   if (cancelRequest && S.modal?.type === "elicitation") {
     const { id, conversationId } = S.modal;
-    respondElicitation(conversationId, id, { action: "cancel" });
+    dismissElicitation(conversationId, id);
   }
   if (S.authTerminal) {
     S.authTerminal.socket.close();

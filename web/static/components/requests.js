@@ -126,6 +126,24 @@ export function showElicitation(entry) {
   openModal(`<form data-form="elicitation" id="elicitation-form">${modalHead("Agent needs input", agentName(agent))}<div class="modal-body" style="padding:18px">${body}</div><div class="modal-foot"><button type="button" class="btn btn-secondary" data-action="elicitation-decline">Decline</button><button type="submit" class="btn btn-primary" ${unsupported ? "disabled" : ""}>${req.mode === "url" ? "Open link" : "Continue"}</button></div></form>`, { size: "md" });
 }
 
+// A dismissal is not a rejection. Closing the popup on a form whose fields are
+// all optional answers it with no content: the agent's question tool reports
+// "Unanswered" and the turn keeps going. Requests that need content, and URL
+// requests, still cancel.
+export function dismissalResponse(request) {
+  if (!request || request.mode === "url") return { action: "cancel" };
+  const schema = request.requestedSchema || {};
+  if ((schema.required || []).length > 0) return { action: "cancel" };
+  return { action: "accept", content: {} };
+}
+
+export function dismissElicitation(conversationId, id) {
+  const entry = S.elicitations.find((e) => e.id === id);
+  // No local copy means the form cannot be proven optional; keep the old
+  // cancellable behaviour.
+  respondElicitation(conversationId, id, dismissalResponse(entry?.request));
+}
+
 export async function respondElicitation(conversationId, id, response) {
   try {
     await api(`/conversations/${encodeURIComponent(conversationId)}/elicitations/${encodeURIComponent(id)}`, { method: "POST", body: response });
