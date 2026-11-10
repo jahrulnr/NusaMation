@@ -64,7 +64,6 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | `GET` | `/conversations/{id}/meta` | file-backed UI meta: `{title?, browser?:{lastUrl, open?}, draft?:{text, attachments, sendDelivery, replyToChannel, updatedAt}}`; missing file → `{meta:{}}` |
 | `PUT` | `/conversations/{id}/meta` | merge patch `{title?, browser?:{lastUrl, open?}, draft?}`; `lastUrl` and `open` merge independently; `about:blank` does not replace `lastUrl`; `draft:null` clears the draft (sent after a successful message send) |
 | `POST` | `/conversations/{id}/routing` | full `Routing` object |
-| `PUT` | `/conversations/{id}/orchestration` | `{enabled, readOnly, scope, spawn, progressPings}` (`scope` = `all` or `project`) → `{conversation}`. Enables the conversation-control MCP tools for this chat; the global switch still applies. |
 | `GET` | `/conversations/{id}/export` | JSON download |
 
 Messages have `role`, `kind` (`text`, `thought`, `tool`, `system`, `error`, `notice`), `text`, `content`, `status`, `attachments`, `toolCallId`, `seq`, timestamps.
@@ -134,19 +133,18 @@ Approval option kinds: `allow_once`, `allow_always`, `reject_once`, `reject_alwa
 `POST /conversation-control` is the loopback bridge for the
 `nusamation_conversation` MCP child. Like `/browser-use` it uses
 `Authorization: Bearer <token>` instead of the admin cookie; the token selects
-the caller conversation and the body cannot retarget it. The bridge is off
-unless the `orchestration.enabled` setting is true and the caller conversation's
-metadata has `orchestration.enabled: true`.
+the caller conversation and the body cannot retarget it. Every conversation
+may use every tool — there is no opt-in.
 
 The body is `{tool, ...}`. Supported tools: `list`, `projects_list`, `search`, `export`, `read`, `wait`, `send`, `stop`, `spawn`, `report`. A caller whose running turn has `originChannel: "agent"` is rejected with `orchestrated_turn`. Read responses exclude thoughts and raw tool payloads by default and cap each message and the whole response; `read`/`wait` include `seq` cursors for pagination.
 
-`list` accepts `project` (id, exact name, or folder basename) and returns `projectId`/`projectName` plus a compact `lastTurn` status/prompt/answer preview on each row. `projects_list` accepts `query` and returns project ids, names, root paths, pin state and active conversation counts. `spawn` accepts `project` or `projectId`. Project scope limits both the list and the projects result to the caller's project.
+`list` accepts `project` (id, exact name, or folder basename) and returns `projectId`/`projectName` plus a compact `lastTurn` status/prompt/answer preview on each row. `projects_list` accepts `query` and returns project ids, names, root paths, pin state and active conversation counts. `spawn` accepts `project` or `projectId`.
 
 `search` runs the SQLite FTS5 index (`messages_fts`) and returns ranked message hits with `conversationId`, `title`, `projectName`, `seq`, `role`, `kind`, `snippet` (matches in brackets), `score` and `at`. Filters: `project`, `agent`, `channel`, `conversationId`, `kinds` (default `text,error`), `after`/`before` Unix ms, `archived`, `limit`, `offset`.
 
-`export` writes a policy-scoped JSONL file (`format:"jsonl"`, default) for a conversation or project and returns `{path, messages, bytes, conversations, truncated, expiresAt}`. Files are `0600` under `<data>/exports/`, expire after ten minutes, and never point at the SQLite database or secret files. `includeThoughts` and `includeToolOutput` opt into thought rows and raw tool content; `limit` caps messages (default 10000).
+`export` writes a JSONL file (`format:"jsonl"`, default) for a conversation or project and returns `{path, messages, bytes, conversations, truncated, expiresAt}`. Files are `0600` under `<data>/exports/`, expire after ten minutes, and never point at the SQLite database or secret files. `includeThoughts` and `includeToolOutput` opt into thought rows and raw tool content; `limit` caps messages (default 10000).
 
-`send` takes `{conversationId, text, delivery, requestId}`. `delivery` is `queue` (default), `steer`, or `after_tools`; cross-conversation `steer` becomes `after_tools` for a running target and `queue` for an idle target. `requestId` deduplicates retries for ten minutes in memory. `stop` takes `{conversationId, turnId?}`. `spawn` takes `{agent, title?, prompt?, project|projectId?}` and requires the caller's `spawn` policy (10 active children, three creates per minute). `report` takes `{text}` and requires `progressPings` (one per minute, maximum 500 bytes).
+`send` takes `{conversationId, text, delivery, requestId}`. `delivery` is `queue` (default), `steer`, or `after_tools`; cross-conversation `steer` becomes `after_tools` for a running target and `queue` for an idle target. `requestId` deduplicates retries for ten minutes in memory. `stop` takes `{conversationId, turnId?}`. `spawn` takes `{agent, title?, prompt?, project|projectId?}` (10 active children, three creates per minute). `report` takes `{text}` (one per minute, maximum 500 bytes).
 
 `GET /conversation-control/activity?caller=&target=&limit=` returns the in-memory audit trail. Writes are rate limited (20/minute, burst 5); `spawn` uses its own tighter bucket. Target turns created by the bridge use origin `agent`, so their final answer is not delivered to the target's own channel and `mirrorFinal` is suppressed; target approvals notify the target's first linked chat. The bridge never answers an approval itself.
 
@@ -224,8 +222,8 @@ Client→server text messages: `{type:"mousemove"|"click"|"wheel"|"text"|"key"|"
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/settings` | routing defaults, notifications, orchestration switch, update status, version, public URL |
-| `PUT` | `/settings` | `{routing}`, `{notifications:{enabled}}`, and/or `{orchestration:{enabled}}` |
+| `GET` | `/settings` | routing defaults, notifications, update status, version, public URL |
+| `PUT` | `/settings` | `{routing}` and/or `{notifications:{enabled}}` |
 | `GET` | `/update` | current/latest versions, availability, apply state |
 | `POST` | `/update/check` | synchronous release check → update status |
 | `POST` | `/update/apply` | download + verify + install the latest release; 202 on start, 409 when already installing or not updatable |

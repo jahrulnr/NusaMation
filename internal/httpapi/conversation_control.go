@@ -141,8 +141,6 @@ type controlMessage struct {
 	Truncated  bool   `json:"truncated,omitempty"`
 }
 
-var errControlScope = errors.New("target is outside the allowed project scope")
-
 const controlSendTTL = 10 * time.Minute
 
 type controlSendRecord struct {
@@ -303,54 +301,31 @@ func (s *Server) conversationControlCaller(r *http.Request) (string, bool) {
 
 type controlPolicy struct {
 	Caller       store.Conversation
-	Global       bool
-	Enabled      bool
-	ReadOnly     bool
 	Orchestrated bool
-	Scope        string
 }
 
-// conversationPolicy resolves the kill switch, the per-conversation opt-in,
-// and whether this turn was itself started through orchestration. Every
-// failure path leaves control disabled.
+// conversationPolicy resolves whether the caller's running turn was itself
+// started through orchestration. Every failure path leaves control denied.
 func (s *Server) conversationPolicy(ctx context.Context, callerID string) (controlPolicy, error) {
 	caller, err := s.store.GetConversation(ctx, callerID)
 	if err != nil {
 		return controlPolicy{}, err
 	}
-	p := controlPolicy{Caller: caller, Scope: "all"}
-	if !s.orchestrationEnabled(ctx) {
-		return p, nil
-	}
-	p.Global = true
-	policy := chat.OrchestrationFrom(caller.Metadata)
-	p.Scope = policy.Scope
-	if !policy.Enabled {
-		return p, nil
-	}
+	p := controlPolicy{Caller: caller}
 	turn, err := s.store.ActiveTurn(ctx, callerID)
-	if err != nil {
-		return p, nil
-	}
-	if turn.OriginChannel == "agent" {
+	switch {
+	case store.IsNotFound(err):
+	case err != nil:
+		return controlPolicy{}, err
+	case turn.OriginChannel == "agent":
 		p.Orchestrated = true
-		return p, nil
 	}
-	p.Enabled = true
-	p.ReadOnly = policy.ReadOnly
 	return p, nil
 }
 
 func controlDenied(w http.ResponseWriter, p controlPolicy) bool {
-	switch {
-	case !p.Global:
-		writeError(w, http.StatusForbidden, "orchestration_disabled", "Orchestration is disabled globally.")
-		return true
-	case p.Orchestrated:
+	if p.Orchestrated {
 		writeError(w, http.StatusForbidden, "orchestrated_turn", "This turn was started by another conversation and cannot control others.")
-		return true
-	case !p.Enabled:
-		writeError(w, http.StatusForbidden, "policy_denied", "Orchestration is not enabled for this conversation.")
 		return true
 	}
 	return false
@@ -359,21 +334,7 @@ func controlDenied(w http.ResponseWriter, p controlPolicy) bool {
 func controlCaller(p controlPolicy) map[string]any {
 	return map[string]any{
 		"id": p.Caller.ID, "title": p.Caller.Title,
-		"readOnly": p.ReadOnly, "canManage": p.Enabled && !p.ReadOnly,
-		"scope": p.Scope,
 	}
-}
-
-func controlTargetAllowed(p controlPolicy, target store.Conversation) error {
-	if target.ID == p.Caller.ID {
-		return nil
-	}
-	if p.Scope == "project" {
-		if p.Caller.ProjectID == "" || target.ProjectID != p.Caller.ProjectID {
-			return errControlScope
-		}
-	}
-	return nil
 }
 
 func (s *Server) resolveControlProject(ctx context.Context, ref string) (store.Project, bool, bool) {
@@ -428,15 +389,6 @@ func (s *Server) controlProjects(w http.ResponseWriter, r *http.Request, callerI
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list_failed", err.Error())
 		return
-	}
-	if p.Scope == "project" {
-		filtered := make([]store.Project, 0, 1)
-		for _, project := range projects {
-			if project.ID == p.Caller.ProjectID {
-				filtered = append(filtered, project)
-			}
-		}
-		projects = filtered
 	}
 	query := strings.ToLower(strings.TrimSpace(in.Query))
 	out := make([]controlProject, 0, len(projects))
@@ -510,41 +462,25 @@ func (s *Server) controlList(w http.ResponseWriter, r *http.Request, callerID st
 			requestedProjectID = project.ID
 		}
 	}
-	if p.Scope == "project" && p.Caller.ProjectID == "" && requestedProjectID != "" {
-		writeError(w, http.StatusForbidden, "policy_denied", "This conversation has no project scope.")
-		return
+	filter := store.ConversationFilter{
+		Query: in.Query, Channel: in.Channel, Status: in.Status,
+		Archived: in.Archived, Limit: limit, Offset: offset,
 	}
-	if p.Scope == "project" && p.Caller.ProjectID != "" && requestedProjectID != "" && requestedProjectID != p.Caller.ProjectID {
-		writeError(w, http.StatusForbidden, "policy_denied", "The project is outside the allowed scope.")
-		return
+	if requestedProjectID != "" {
+		filter.ProjectID = requestedProjectID
 	}
-
-	list := []store.Conversation{}
-	if p.Scope == "project" && p.Caller.ProjectID == "" {
-		list = append(list, p.Caller)
-	} else {
-		filter := store.ConversationFilter{
-			Query: in.Query, Channel: in.Channel, Status: in.Status,
-			Archived: in.Archived, Limit: limit, Offset: offset,
-		}
-		if p.Scope == "project" {
-			filter.ProjectID = p.Caller.ProjectID
-		} else if requestedProjectID != "" {
-			filter.ProjectID = requestedProjectID
-		}
-		if in.Agent != "" {
-			agentID, ok := s.resolveControlAgent(r.Context(), in.Agent)
-			if !ok {
-				writeError(w, http.StatusBadRequest, "invalid_agent", "Unknown agent.")
-				return
-			}
-			filter.AgentID = agentID
-		}
-		list, err = s.store.ListConversations(r.Context(), filter)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "list_failed", err.Error())
+	if in.Agent != "" {
+		agentID, ok := s.resolveControlAgent(r.Context(), in.Agent)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "invalid_agent", "Unknown agent.")
 			return
 		}
+		filter.AgentID = agentID
+	}
+	list, err := s.store.ListConversations(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list_failed", err.Error())
+		return
 	}
 	projectNames := map[string]string{}
 	if projects, err := s.store.ListProjects(r.Context()); err == nil {
@@ -562,7 +498,7 @@ func (s *Server) controlList(w http.ResponseWriter, r *http.Request, callerID st
 		out = append(out, s.controlConversationView(r.Context(), conv, p, false, projectNames, lastTurns))
 	}
 	next := 0
-	if len(list) == limit && (p.Scope != "project" || p.Caller.ProjectID != "") {
+	if len(list) == limit {
 		next = offset + len(list)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -628,31 +564,13 @@ func (s *Server) controlSearch(w http.ResponseWriter, r *http.Request, callerID 
 	if filter.Limit > 50 {
 		filter.Limit = 50
 	}
-	if p.Scope == "project" {
-		if p.Caller.ProjectID == "" {
-			if requestedProjectID != "" {
-				writeError(w, http.StatusForbidden, "policy_denied", "This conversation has no project scope.")
-				return
-			}
-			filter.ConversationID = p.Caller.ID
-		} else {
-			if requestedProjectID != "" && requestedProjectID != p.Caller.ProjectID {
-				writeError(w, http.StatusForbidden, "policy_denied", "The project is outside the allowed scope.")
-				return
-			}
-			filter.ProjectID = p.Caller.ProjectID
-		}
-	} else if requestedProjectID != "" {
+	if requestedProjectID != "" {
 		filter.ProjectID = requestedProjectID
 	}
 	if in.ConversationID != "" {
 		target, err := s.store.GetConversation(r.Context(), in.ConversationID)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "not_found", "Target conversation not found.")
-			return
-		}
-		if err := controlTargetAllowed(p, target); err != nil {
-			writeError(w, http.StatusForbidden, "policy_denied", err.Error())
 			return
 		}
 		filter.ConversationID = target.ID
@@ -716,10 +634,6 @@ func (s *Server) controlExport(w http.ResponseWriter, r *http.Request, callerID 
 			writeError(w, http.StatusNotFound, "not_found", "Target conversation not found.")
 			return
 		}
-		if err := controlTargetAllowed(p, target); err != nil {
-			writeError(w, http.StatusForbidden, "policy_denied", err.Error())
-			return
-		}
 		targets = append(targets, target)
 	case in.Project != "":
 		project, found, ambiguous := s.resolveControlProject(r.Context(), in.Project)
@@ -729,10 +643,6 @@ func (s *Server) controlExport(w http.ResponseWriter, r *http.Request, callerID 
 			return
 		case !found:
 			writeError(w, http.StatusBadRequest, "invalid_project", "Unknown project.")
-			return
-		}
-		if p.Scope == "project" && project.ID != p.Caller.ProjectID {
-			writeError(w, http.StatusForbidden, "policy_denied", "The project is outside the allowed scope.")
 			return
 		}
 		list, err := s.store.ListConversations(r.Context(), store.ConversationFilter{
@@ -890,10 +800,6 @@ func (s *Server) controlRead(w http.ResponseWriter, r *http.Request, callerID st
 		writeError(w, http.StatusNotFound, "not_found", "Target conversation not found.")
 		return
 	}
-	if err := controlTargetAllowed(p, target); err != nil {
-		writeError(w, http.StatusForbidden, "policy_denied", err.Error())
-		return
-	}
 	limit := in.Limit
 	if limit <= 0 {
 		limit = controlMessageLimit
@@ -941,10 +847,6 @@ func (s *Server) controlWait(w http.ResponseWriter, r *http.Request, callerID st
 	target, err := s.store.GetConversation(r.Context(), in.ConversationID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "Target conversation not found.")
-		return
-	}
-	if err := controlTargetAllowed(p, target); err != nil {
-		writeError(w, http.StatusForbidden, "policy_denied", err.Error())
 		return
 	}
 	if !s.acquireControlWait(callerID) {
@@ -1054,10 +956,6 @@ func (s *Server) controlTarget(w http.ResponseWriter, r *http.Request, callerID,
 		writeError(w, http.StatusNotFound, "not_found", "Target conversation not found.")
 		return controlPolicy{}, store.Conversation{}, false
 	}
-	if err := controlTargetAllowed(p, target); err != nil {
-		writeError(w, http.StatusForbidden, "policy_denied", err.Error())
-		return controlPolicy{}, store.Conversation{}, false
-	}
 	return p, target, true
 }
 
@@ -1083,10 +981,6 @@ func controlNote(parts ...string) string {
 func (s *Server) controlSend(w http.ResponseWriter, r *http.Request, callerID string, in conversationControlRequest) {
 	p, target, ok := s.controlTarget(w, r, callerID, in.ConversationID)
 	if !ok {
-		return
-	}
-	if p.ReadOnly {
-		writeError(w, http.StatusForbidden, "policy_denied", "This conversation is read-only.")
 		return
 	}
 	if target.ID == p.Caller.ID {
@@ -1255,10 +1149,6 @@ func (s *Server) controlStop(w http.ResponseWriter, r *http.Request, callerID st
 	if !ok {
 		return
 	}
-	if p.ReadOnly {
-		writeError(w, http.StatusForbidden, "policy_denied", "This conversation is read-only.")
-		return
-	}
 	if target.ID == p.Caller.ID {
 		writeError(w, http.StatusForbidden, "target_self", "A conversation cannot stop itself through the bridge.")
 		return
@@ -1346,15 +1236,6 @@ func (s *Server) controlSpawn(w http.ResponseWriter, r *http.Request, callerID s
 	if controlDenied(w, p) {
 		return
 	}
-	if p.ReadOnly {
-		writeError(w, http.StatusForbidden, "policy_denied", "This conversation is read-only.")
-		return
-	}
-	policy := chat.OrchestrationFrom(p.Caller.Metadata)
-	if !policy.Spawn {
-		writeError(w, http.StatusForbidden, "spawn_not_allowed", "Spawning is not enabled for this conversation.")
-		return
-	}
 	if s.chat == nil {
 		writeError(w, http.StatusServiceUnavailable, "unavailable", "Conversation service is not available.")
 		return
@@ -1419,13 +1300,6 @@ func (s *Server) controlSpawn(w http.ResponseWriter, r *http.Request, callerID s
 			projectID = project.ID
 		}
 	}
-	if projectID == "" && p.Scope == "project" {
-		projectID = p.Caller.ProjectID
-	}
-	if projectID != "" && p.Scope == "project" && projectID != p.Caller.ProjectID {
-		writeError(w, http.StatusForbidden, "policy_denied", "The project is outside the allowed scope.")
-		return
-	}
 	orch := &chat.Orchestrator{ConversationID: p.Caller.ID, Title: p.Caller.Title, AgentID: p.Caller.AgentID}
 	origin, _ := json.Marshal(orch)
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
@@ -1474,11 +1348,6 @@ func (s *Server) controlReport(w http.ResponseWriter, r *http.Request, callerID 
 		return
 	}
 	if controlDenied(w, p) {
-		return
-	}
-	policy := chat.OrchestrationFrom(p.Caller.Metadata)
-	if !policy.ProgressPings {
-		writeError(w, http.StatusForbidden, "pings_not_allowed", "Progress pings are not enabled for this conversation.")
 		return
 	}
 	text := strings.TrimSpace(in.Text)

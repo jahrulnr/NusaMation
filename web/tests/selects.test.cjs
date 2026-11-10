@@ -59,3 +59,20 @@ test('no ?v= cache-bust specifiers were introduced', () => {
     assert.doesNotMatch(fs.readFileSync(root(f), 'utf8'), /slimselect[^"']*\?v=/);
   }
 });
+
+// SlimSelect's Select.updateSelect writes its generated `ss-*` id into the
+// enhanced <select>'s own data-id, so any select-level data-id read back
+// garbage. Config ids must ride on data-tag instead.
+test('selects never carry ids on data-id; handlers read data-tag', () => {
+  const components = path.join(__dirname, '..', 'static', 'components');
+  for (const f of fs.readdirSync(components).filter((f) => f.endsWith('.js'))) {
+    const src = fs.readFileSync(path.join(components, f), 'utf8');
+    for (const m of src.matchAll(/<select[^>`]*>/g)) {
+      assert.equal(m[0].includes('data-id='), false, `${f}: ${m[0]} — data-id is overwritten by SlimSelect; use data-tag`);
+    }
+  }
+  const eventsSrc = fs.readFileSync(path.join(components, 'events.js'), 'utf8');
+  for (const m of eventsSrc.matchAll(/dataset\.change === "(set-config|default-choice)"[^}]+}/g)) {
+    assert.doesNotMatch(m[0], /dataset\.id\b/, `${m[0].slice(0, 80)}… — reads the clobbered data-id; use dataset.tag`);
+  }
+});

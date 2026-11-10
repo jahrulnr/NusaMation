@@ -8,6 +8,10 @@ import SlimSelect from "../vendor/slimselect.es.js";
 // event on it, and its own observer re-syncs when options or the disabled
 // attribute are mutated. More than five options gets a search field; five or
 // fewer stays a plain list. Opt out with `data-select-raw` on the element.
+//
+// SlimSelect writes its own generated id into the select's `data-id`
+// (Select.updateSelect), so data-id on an enhanced <select> reads as `ss-*`.
+// Carry option/config ids on `data-tag` instead.
 
 const SEARCH_MIN = 6;
 const registry = new Map(); // HTMLSelectElement -> SlimSelect

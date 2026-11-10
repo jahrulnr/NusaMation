@@ -441,7 +441,7 @@ export function configControl(o) {
     return `<div class="config-row"><div class="config-label">${label}<small>${esc(o.description || "")}</small></div><button role="switch" aria-checked="${on}" class="switch ${on ? "on" : ""}" data-action="set-config-toggle" data-id="${id}" data-value="${on ? "false" : "true"}"></button></div>`;
   }
   return `<div class="config-row"><div class="config-label">${label}<small>${esc(o.description || "")}</small></div>
-    <select class="select config-select" data-change="set-config" data-id="${id}">
+    <select class="select config-select" data-change="set-config" data-tag="${id}">
       ${configChoices(o).map((c) => `<option value="${esc(c.value)}" ${String(c.value) === String(current) ? "selected" : ""}>${esc(c.groupName ? c.groupName + " · " + (c.name || c.value) : (c.name || c.value))}</option>`).join("") || `<option value="${esc(current)}">${esc(current)}</option>`}
     </select></div>`;
 }

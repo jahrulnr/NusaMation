@@ -76,6 +76,9 @@ func replaySelections(ctx context.Context, s *selectionSession, appliedCount int
 			return fmt.Errorf("option %q or its value is not available in the current configuration", choice.ID)
 		}
 		seen[choice.ID] = true
+		if anyEqual(findConfigCurrent(s.configs, choice.ID), choice.Value) {
+			continue
+		}
 		if err := s.apply(ctx, choice); err != nil {
 			return err
 		}

@@ -19,8 +19,8 @@ import (
 const (
 	EnvURL   = "NUSAMATION_CONVERSATION_URL"
 	EnvToken = "NUSAMATION_CONVERSATION_TOKEN"
-	// EnvTools optionally limits tools/list to a comma-separated set. Phase 1
-	// sets list,read,wait until the write bridge exists.
+	// EnvTools optionally limits tools/list to a comma-separated set. The
+	// desktop injection never sets it; it is a manual-launch escape hatch.
 	EnvTools = "NUSAMATION_CONVERSATION_TOOLS"
 )
 
@@ -77,7 +77,7 @@ func toolList() []stdio.Tool {
 	return []stdio.Tool{
 		{
 			Name: "list",
-			Description: "List NusaMation conversations this conversation may inspect. Returns id, title, agent, status, active turn, last message preview and pending approvals. " +
+			Description: "List NusaMation conversations. Returns id, title, agent, status, active turn, last message preview and pending approvals. " +
 				"Archived conversations are excluded unless archived=true. Use the id with the other tools.",
 			InputSchema: obj(map[string]any{
 				"query": str, "agent": str, "channel": str, "status": str,
@@ -87,7 +87,7 @@ func toolList() []stdio.Tool {
 		{
 			Name: "projects_list",
 			Description: "List local projects so a delegated conversation can be created or found by project name. " +
-				"Returns id, name, root paths, pin state and active conversation count. Project scope limits the result to the caller's project.",
+				"Returns id, name, root paths, pin state and active conversation count.",
 			InputSchema: obj(map[string]any{"query": str, "limit": num}),
 		},
 		{
@@ -102,7 +102,7 @@ func toolList() []stdio.Tool {
 		},
 		{
 			Name: "export",
-			Description: "Write a policy-scoped JSONL export of one conversation or a whole project and return its path. " +
+			Description: "Write a JSONL export of one conversation or a whole project and return its path. " +
 				"Use it for deep grep/jq/python analysis; the file expires in ten minutes. It never exposes the database or data directory.",
 			InputSchema: obj(map[string]any{
 				"conversationId": str, "project": str, "includeThoughts": boolean,
@@ -137,7 +137,7 @@ func toolList() []stdio.Tool {
 		{
 			Name: "send",
 			Description: "Send a prompt to another conversation. delivery is queue (default), steer, or after_tools. Cross-conversation steer is delivered as after_tools " +
-				"for a running target and queue for an idle target. Refused for self, archived, read-only, pending-approval, or disabled-agent targets. " +
+				"for a running target and queue for an idle target. Refused for self, archived, pending-approval, or disabled-agent targets. " +
 				"A timed-out send may already be stored; read the target before retrying.",
 			InputSchema: obj(map[string]any{
 				"conversationId": str, "text": str, "delivery": str, "requestId": str,
@@ -145,7 +145,7 @@ func toolList() []stdio.Tool {
 		},
 		{
 			Name: "spawn",
-			Description: "Create a delegated conversation and optionally queue its first prompt. Requires the caller's spawn policy. " +
+			Description: "Create a delegated conversation and optionally queue its first prompt. " +
 				"The child has no control access. Returns its conversation, message and turn ids.",
 			InputSchema: obj(map[string]any{
 				"agent": str, "title": str, "prompt": str, "projectId": str, "project": str,
@@ -153,7 +153,7 @@ func toolList() []stdio.Tool {
 		},
 		{
 			Name: "report",
-			Description: "Send a short progress message to the caller's origin chat. Requires progressPings and is limited to one per minute. " +
+			Description: "Send a short progress message to the caller's origin chat, limited to one per minute. " +
 				"Use it while waiting on a long target turn; the normal turn digest still runs once when the turn finishes.",
 			InputSchema: obj(map[string]any{"text": str}, "text"),
 		},

@@ -9,7 +9,7 @@ import { openToolMenu, previewAnnotation, previewFile, renderChat, renderPlanDoc
 import { changeElicitationPage, renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js";
 import { autoGrow, editAnnotationComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js";
 import { browserDeviceMode, browserEscape, browserHistory, browserReconnect, browserTakeover, cancelAnnotation, closeBrowserPane, openProfilePicker, runDevEval, submitAnnotation, toggleAnnotate, toggleBrowserPane, toggleDeviceBar, toggleDevtools } from "./browser.js";
-import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, newProjectChat, openControlActivity, openConversationMenu, openMoreMenu, openOrchestrationMenu, openRoutingMenu, openTeamPanel, renameConversation, selectConversation, setOrchestration, setRoute, toggleOrchestrationFlag, togglePin, toggleRouting } from "./conversations.js";
+import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, newProjectChat, openControlActivity, openConversationMenu, openMoreMenu, openRoutingMenu, openTeamPanel, renameConversation, selectConversation, setRoute, togglePin, toggleRouting } from "./conversations.js";
 import { renderOffline } from "./shell.js";
 import { scheduleDraftSave } from "./convmeta.js";
 import { closeMobileSidebar, filterSidebar, openMobileSidebar, renderSidebar, toggleProjectRow, toggleSidebarCollapsed } from "./sidebar.js";
@@ -17,7 +17,7 @@ import { addDraftSource, confirmAddedFolders, deleteProject, loadFolderBrowser, 
 import { renderTopbar } from "./topbar.js";
 import { closeWS, connectWS } from "./ws.js";
 import { openAuthTerminal } from "./terminal.js";
-import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadControlSettings, loadMCP, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, reloadActiveAgents, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications, toggleOrchestration } from "./settings.js";
+import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadMCP, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, reloadActiveAgents, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications } from "./settings.js";
 import { copyEnvRef, insertSecretRef, openSecretRefPopover, refreshAgentEnvRow } from "./browser-secrets.js";
 import { loadAutomations, saveAutomation, updateAutomationBuilder } from "./automations.js";
 import { refreshChannels, saveWaSettings, waAction } from "./whatsapp.js";
@@ -192,7 +192,7 @@ export function bindEvents() {
     if (e.target.matches("[data-automation-build]")) { updateAutomationBuilder(e.target.closest("form")); return; }
     const sel = e.target.closest("[data-change]");
     if (!sel) return;
-    if (sel.dataset.change === "set-config") setConfig(sel.dataset.id, sel.value);
+    if (sel.dataset.change === "set-config") setConfig(sel.dataset.tag, sel.value);
     if (sel.dataset.change === "default-send-delivery") {
       try { localStorage.setItem("nusamation:sendDelivery", sel.value); } catch {}
       S.sendDelivery = sel.value;
@@ -212,8 +212,8 @@ export function bindEvents() {
       previewAgentDefaults();
     }
     if (sel.dataset.change === "default-choice" && sel.value) {
-      const opt = S.defaultConfigs.find((o) => o.id === sel.dataset.id);
-      S.defaultDraft.selections.push({ id: sel.dataset.id, value: sel.dataset.type === "boolean" ? sel.value === "true" : sel.value, name: opt?.name, label: sel.selectedOptions[0]?.textContent });
+      const opt = S.defaultConfigs.find((o) => o.id === sel.dataset.tag);
+      S.defaultDraft.selections.push({ id: sel.dataset.tag, value: sel.dataset.type === "boolean" ? sel.value === "true" : sel.value, name: opt?.name, label: sel.selectedOptions[0]?.textContent });
       previewAgentDefaults();
     }
   });
@@ -277,12 +277,12 @@ export function bindEvents() {
           previewAgentDefaults();
         } else {
           if (S.settingsTab === "account" || S.settingsTab === "about") loadUpdateInfo();
-          if (S.settingsTab === "control") loadControlSettings();
           if (S.settingsTab === "mcp") loadMCP();
           renderSettings();
         }
         break;
       case "default-undo": S.defaultDraft.selections.pop(); previewAgentDefaults(); break;
+      case "default-edit": S.defaultDraft.selections = S.defaultDraft.selections.slice(0, Number(target.dataset.index)); previewAgentDefaults(); break;
       case "default-retry": previewAgentDefaults(); break;
       case "save-agent-defaults": await saveAgentDefaults(); break;
       case "automations-list": await loadAutomations(); break;
@@ -352,9 +352,6 @@ export function bindEvents() {
       }
       case "routing-menu": openRoutingMenu(target); break;
       case "more-menu": openMoreMenu(target); break;
-      case "orchestration-menu": openOrchestrationMenu(id); break;
-      case "orchestration-set": await setOrchestration(target.dataset.mode, id); break;
-      case "orchestration-flag": await toggleOrchestrationFlag(target.dataset.key, id); break;
       case "orchestration-activity": openControlActivity(id); break;
       case "team-panel": openTeamPanel(id); break;
       case "team-open": closeModal(); await selectConversation(id); break;
@@ -562,7 +559,6 @@ export function bindEvents() {
       case "update-check": await checkUpdate(); break;
       case "update-apply": applyUpdate(); break;
       case "notify-toggle": await toggleNotifications(); break;
-      case "orchestration-toggle": await toggleOrchestration(); break;
       case "notify-test": await testNotification(); break;
       case "logout": doLogout(); break;
       case "delete-all-conversations": {

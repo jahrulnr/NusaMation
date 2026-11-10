@@ -472,24 +472,6 @@ func (s *Server) handleRouting(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"conversation": conv})
 }
 
-func (s *Server) handleOrchestration(w http.ResponseWriter, r *http.Request) {
-	var policy chat.OrchestrationPolicy
-	if err := readJSON(w, r, &policy, 64<<10); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "Invalid orchestration policy.")
-		return
-	}
-	conv, err := s.chat.SetOrchestration(r.Context(), r.PathValue("id"), policy)
-	if err != nil {
-		if errors.Is(err, chat.ErrInvalidOrchestrationScope) {
-			writeError(w, http.StatusBadRequest, "invalid", err.Error())
-			return
-		}
-		writeError(w, http.StatusBadRequest, "orchestration_failed", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"conversation": conv})
-}
-
 func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
 	convID, approvalID := r.PathValue("id"), r.PathValue("approvalId")
 	ap, err := s.store.GetApproval(r.Context(), approvalID)

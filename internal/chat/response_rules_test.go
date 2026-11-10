@@ -108,9 +108,6 @@ func rulesTestService(t *testing.T) *Service {
 func TestOrchestrationPromptContext(t *testing.T) {
 	svc := rulesTestService(t)
 	a := rulesTurn("web", true)
-	a.conv.Metadata = mustJSON(map[string]any{
-		"orchestration": map[string]any{"enabled": true, "scope": "all"},
-	})
 	blocks := svc.withTurnContext(a, svc.buildPrompt(a, ""))
 	last := blocks[len(blocks)-1].Text
 	if !strings.Contains(last, "nusamation_conversation") || !strings.Contains(last, "untrusted data") {

@@ -15,9 +15,9 @@ import (
 
 func TestFilterTools(t *testing.T) {
 	all := toolList()
-	readOnly := filterTools(all, "list, read, wait")
-	if len(readOnly) != 3 || readOnly[0].Name != "list" || readOnly[1].Name != "read" || readOnly[2].Name != "wait" {
-		t.Fatalf("readOnly = %+v", readOnly)
+	subset := filterTools(all, "list, read, wait")
+	if len(subset) != 3 || subset[0].Name != "list" || subset[1].Name != "read" || subset[2].Name != "wait" {
+		t.Fatalf("subset = %+v", subset)
 	}
 	if got := filterTools(all, ""); len(got) != len(all) {
 		t.Fatalf("empty filter = %d", len(got))
@@ -119,11 +119,11 @@ func TestCallToolRejectsNonObjectArguments(t *testing.T) {
 func TestCallToolSurfacesBridgeError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": "orchestration is disabled", "code": "orchestration_disabled"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "orchestrated turns have no control access", "code": "orchestrated_turn"})
 	}))
 	defer srv.Close()
 	client := loopback.New(srv.URL, "tok")
-	if _, err := callTool(client, "list", nil); err == nil || err.Error() != "orchestration is disabled" {
+	if _, err := callTool(client, "list", nil); err == nil || err.Error() != "orchestrated turns have no control access" {
 		t.Fatalf("err = %v", err)
 	}
 }

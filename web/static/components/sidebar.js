@@ -119,13 +119,6 @@ export function toggleProjectRow(id) {
   renderSidebar();
 }
 
-function controlBadge(c) {
-  const meta = c && c.metadata && typeof c.metadata === "object" ? c.metadata : {};
-  return meta.orchestration && meta.orchestration.enabled
-    ? `<span class="conv-control" title="Multi-agent control enabled">${icon("zap", "sm")}</span>`
-    : "";
-}
-
 function spawnedBadge(c) {
   const meta = c && c.metadata && typeof c.metadata === "object" ? c.metadata : {};
   return meta.spawnedBy
@@ -142,7 +135,6 @@ export function convItemHTML(c) {
   return `<div class="conv-item ${S.current && S.current.id === c.id ? "active" : ""}" role="button" tabindex="0" data-action="select-conv" data-id="${esc(c.id)}" data-title="${esc((c.title || "").toLowerCase())}" data-preview="${esc((c.lastMessage || "").toLowerCase())}">
     <div class="conv-title-row">
       ${c.pinned ? icon("pin", "conv-pin") : ""}
-      ${controlBadge(c)}
       ${spawnedBadge(c)}
       <span class="conv-title">${esc(c.title || "Untitled")}</span>
       ${unread ? `<span class="conv-badge">${unread > 9 ? "9+" : unread}</span>` : `<span class="conv-time">${timeAgo(c.lastMessageAt || c.updatedAt)}</span>`}
@@ -161,7 +153,6 @@ function convChildHTML(c) {
   const unread = S.unread.get(c.id) || 0;
   return `<div class="conv-item conv-child ${S.current && S.current.id === c.id ? "active" : ""}" role="button" tabindex="0" data-action="select-conv" data-id="${esc(c.id)}" data-title="${esc((c.title || "").toLowerCase())}" data-preview="${esc((c.lastMessage || "").toLowerCase())}" title="${esc(c.title || "Untitled")}">
     ${c.pinned ? icon("pin", "conv-pin") : ""}
-    ${controlBadge(c)}
     ${spawnedBadge(c)}
     <span class="conv-title">${esc(c.title || "Untitled")}</span>
     ${unread ? `<span class="conv-badge">${unread > 9 ? "9+" : unread}</span>` : `<span class="conv-time">${timeAgo(c.lastMessageAt || c.updatedAt)}</span>`}

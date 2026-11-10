@@ -40,7 +40,7 @@ SQLite via `modernc.org/sqlite` (pure Go, CGO-free). One connection, WAL, foreig
 
 Tables: `settings`, `sessions`, `agents`, `mcp_servers`, `conversations`, `projects`, `channel_links`, `messages`, `turns`, `approvals`, `approval_rules`, `inbound_messages`, `uploads`.
 
-Messages have monotonic per-conversation `seq`. Turns represent queued/running/waiting/completed prompts. Channel links map external chat IDs to conversations and are unique per `(channel, external_id, thread_id)`. `conversations.metadata_json` carries UI and orchestration policy such as `orchestration: {enabled, readOnly, scope, spawn, progressPings}`. `messages_fts` is an external-content FTS5 index maintained by triggers (migration 0010) for ranked message search. Conversation-control exports are written as JSONL under `<data>/exports/` with a ten-minute expiry.
+Messages have monotonic per-conversation `seq`. Turns represent queued/running/waiting/completed prompts. Channel links map external chat IDs to conversations and are unique per `(channel, external_id, thread_id)`. `conversations.metadata_json` carries UI state such as `spawnedBy`, `titleSource` and `defaultConfig`. `messages_fts` is an external-content FTS5 index maintained by triggers (migration 0010) for ranked message search. Conversation-control exports are written as JSONL under `<data>/exports/` with a ten-minute expiry.
 
 ### `internal/chat`
 

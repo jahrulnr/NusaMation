@@ -81,7 +81,6 @@ export function applyBootstrap(data) {
   S.channels.forEach((c) => { if (c.name === "whatsapp") S.whatsapp = c; });
   S.whatsappSettings = data.whatsapp || S.whatsappSettings || null;
   S.routingDefaults = data.routingDefaults || S.routingDefaults || null;
-  S.orchestrationSettings = data.orchestration || S.orchestrationSettings || { enabled: false };
   // S.current stays untouched: it is the room actually loaded by
   // selectInitialConversation/loadConversation, not a guess at the top row —
   // event handlers gate on it (or on composerKey) as "what is on screen".

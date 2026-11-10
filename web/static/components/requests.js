@@ -11,7 +11,7 @@ export function approvalModeRow() {
   const opt = S.configs.find((o) => o && o.id && o.type === "select" && String(o.category || "").toLowerCase() === "mode");
   const choices = opt ? configChoices(opt) : [];
   if (!choices.length) return "";
-  return `<label class="approval-mode"><span>${esc(opt.name || "Mode")}</span><select class="select config-select" data-change="set-config" data-id="${esc(opt.id)}">${choices.map((c) => `<option value="${esc(c.value)}" ${String(c.value) === String(opt.currentValue) ? "selected" : ""}>${esc(c.name || c.value)}</option>`).join("")}</select></label>`;
+  return `<label class="approval-mode"><span>${esc(opt.name || "Mode")}</span><select class="select config-select" data-change="set-config" data-tag="${esc(opt.id)}">${choices.map((c) => `<option value="${esc(c.value)}" ${String(c.value) === String(opt.currentValue) ? "selected" : ""}>${esc(c.name || c.value)}</option>`).join("")}</select></label>`;
 }
 
 export function refreshApprovalModal() {

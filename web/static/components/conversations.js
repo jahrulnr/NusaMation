@@ -260,83 +260,13 @@ export function openMoreMenu(anchor) {
   openPopover(anchor, `<div class="popover-list">
     ${menuItem(c.pinned ? "pin" : "pin", c.pinned ? "Unpin conversation" : "Pin conversation", "toggle-pin", `data-id="${esc(c.id)}"`)}
     ${menuItem("edit", "Rename", "rename-conv", `data-id="${esc(c.id)}"`)}
-    ${menuItem("zap", "Multi-agent control", "orchestration-menu", `data-id="${esc(c.id)}"`)}
+    ${menuItem("clock", "Control activity", "orchestration-activity", `data-id="${esc(c.id)}"`)}
     ${menuItem("git", "Team", "team-panel", `data-id="${esc(c.id)}"`)}
     ${menuItem("download", "Export JSON", "export-conv", `data-id="${esc(c.id)}"`)}
     ${menuItem("file", c.archived ? "Unarchive" : "Archive", "archive-conv", `data-id="${esc(c.id)}"`)}
     <div class="popover-sep"></div>
     ${menuItem("trash", "Delete conversation", "delete-conv", `data-id="${esc(c.id)}"`, true)}
   </div>`, { width: 230 });
-}
-
-function orchestrationPolicy(c) {
-  const meta = c && c.metadata && typeof c.metadata === "object" ? c.metadata : {};
-  return meta.orchestration || {};
-}
-
-export function openOrchestrationMenu(id) {
-  const c = S.conversations.find((x) => x.id === id) || S.current;
-  if (!c) return;
-  const anchor = document.querySelector('[data-action="more-menu"]') || document.querySelector(`[data-action="conv-menu"][data-id="${id}"]`);
-  if (!anchor) return;
-  const policy = orchestrationPolicy(c);
-  const global = !!(S.orchestrationSettings && S.orchestrationSettings.enabled);
-  const mode = policy.enabled ? (policy.readOnly ? "read" : "manage") : "off";
-  const item = (label, value, iconName) => `<button class="menu-item" data-action="orchestration-set" data-id="${esc(c.id)}" data-mode="${value}" ${global ? "" : "disabled"}>${icon(iconName, "sm")}<span>${esc(label)}</span>${mode === value ? ` ${icon("check", "sm")}` : ""}</button>`;
-  const flag = (label, desc, key) => `<div class="settings-row"><div><div class="label">${esc(label)}</div><div class="desc">${esc(desc)}</div></div><button role="switch" aria-checked="${!!policy[key]}" class="switch ${policy[key] ? "on" : ""}" data-action="orchestration-flag" data-id="${esc(c.id)}" data-key="${key}" ${global && policy.enabled ? "" : "disabled"}></button></div>`;
-  openPopover(anchor, `<div class="popover-title">Multi-agent control</div>
-    <div class="popover-note">${global ? "Read tools are always available when enabled. Manage adds send and stop; spawn and progress pings are separate opt-ins." : "Enable Agent control in Settings first."}</div>
-    <div class="popover-list">
-      ${item("Off", "off", "x")}
-      ${item("Read only", "read", "search")}
-      ${item("Manage", "manage", "zap")}
-    </div>
-    <div class="popover-sep"></div>
-    ${flag("Allow spawning", "Create delegated conversations and queue their first prompt.", "spawn")}
-    ${flag("Progress pings", "One short progress message per minute to this chat's channel.", "progressPings")}
-    <div class="popover-sep"></div>
-    <button class="menu-item" data-action="orchestration-activity" data-id="${esc(c.id)}">${icon("clock", "sm")}<span>Control activity</span></button>`, { width: 330 });
-}
-
-export async function setOrchestration(mode, id) {
-  const c = S.conversations.find((x) => x.id === id) || S.current;
-  if (!c) return;
-  const policy = orchestrationPolicy(c);
-  const scope = policy.scope || "all";
-  const body = mode === "off"
-    ? { enabled: false, readOnly: false, scope, spawn: false, progressPings: false }
-    : { enabled: true, readOnly: mode === "read", scope, spawn: !!policy.spawn, progressPings: !!policy.progressPings };
-  try {
-    const d = await api(`/conversations/${encodeURIComponent(c.id)}/orchestration`, { method: "PUT", body });
-    if (S.current && S.current.id === c.id) S.current = d.conversation;
-    upsertConversation(d.conversation);
-    closePopover();
-    renderTopbar();
-    renderSidebar();
-    toast(mode === "off" ? "Agent control disabled" : "Agent control enabled", mode === "off" ? "This conversation can no longer inspect or manage others." : "The agent can use the nusamation_conversation MCP tools.", "success");
-  } catch (e) {
-    toast("Could not update agent control", e.message, "error");
-  }
-}
-
-export async function toggleOrchestrationFlag(key, id) {
-  const c = S.conversations.find((x) => x.id === id) || S.current;
-  if (!c) return;
-  const policy = orchestrationPolicy(c);
-  const body = {
-    enabled: !!policy.enabled, readOnly: !!policy.readOnly, scope: policy.scope || "all",
-    spawn: !!policy.spawn, progressPings: !!policy.progressPings,
-  };
-  body[key] = !body[key];
-  try {
-    const d = await api(`/conversations/${encodeURIComponent(c.id)}/orchestration`, { method: "PUT", body });
-    if (S.current && S.current.id === c.id) S.current = d.conversation;
-    upsertConversation(d.conversation);
-    openOrchestrationMenu(c.id);
-    toast(body[key] ? "Permission enabled" : "Permission disabled", key === "spawn" ? "Spawning delegated chats." : "Progress pings to the origin channel.", "success");
-  } catch (e) {
-    toast("Could not update agent control", e.message, "error");
-  }
 }
 
 export function openTeamPanel(id) {
@@ -448,7 +378,7 @@ export function openConversationMenu(anchor, id) {
   openPopover(anchor, `<div class="popover-list">
     ${menuItem("pin", c.pinned ? "Unpin conversation" : "Pin conversation", "toggle-pin", `data-id="${esc(c.id)}"`)}
     ${menuItem("edit", "Rename", "rename-conv", `data-id="${esc(c.id)}"`)}
-    ${menuItem("zap", "Multi-agent control", "orchestration-menu", `data-id="${esc(c.id)}"`)}
+    ${menuItem("clock", "Control activity", "orchestration-activity", `data-id="${esc(c.id)}"`)}
     ${menuItem("git", "Team", "team-panel", `data-id="${esc(c.id)}"`)}
     ${menuItem("download", "Export JSON", "export-conv", `data-id="${esc(c.id)}"`)}
     ${menuItem("file", "Archive", "archive-conv", `data-id="${esc(c.id)}"`)}

@@ -43,7 +43,6 @@ POST /api/projects/{id}/restore
 GET  /api/fs/list?path=                 # child directories; empty path is the home directory
 GET|POST /api/conversations/{id}/messages
 POST /api/conversations/{id}/cancel|retry|config|agent|routing|prepare
-PUT  /api/conversations/{id}/orchestration
 POST /api/conversation-control             # loopback MCP bridge, bearer token
 GET  /api/conversation-control/activity    # in-memory control audit trail
 POST /api/conversations/{id}/turns/{turnId}/cancel   # queued turn only; {"dropMessage":true} also removes the queued message

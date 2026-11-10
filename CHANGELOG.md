@@ -4,6 +4,12 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-11-11
+
+### Removed
+
+- The conversation-control permission layer is gone: `nusamation_conversation` MCP tools (list/read/wait/send/stop/spawn/report) now work in every conversation without the global **Settings → Agent control** switch or the per-conversation orchestration opt-in (`PUT /conversations/{id}/orchestration`, its menu, and the `orchestration.enabled` setting are removed). Remaining limits are unchanged: the caller's bearer token is scoped to its conversation, a turn started through the bridge still has no control access, self/archived/pending-approval targets are refused, writes stay rate limited, and approvals always need a human. The in-memory control activity trail stays available from the conversation menu.
+
 ### Added
 
 - **Secret references for browser input**: the composer toolbar's shield button opens a "Browser secrets" popover listing the current agent's saved environment variables as opaque `[[env:NAME]]` tags that insert at the caret without exposing values. Agent environment rows in settings now show labeled fields, a Saved/New value state, a live reference preview, and a Copy reference action that only enables once the name matches a saved entry. On the backend, `type`/`fill` browser-use input resolves `[[env:NAME]]` against the conversation agent's env (fail-closed preflight, `\[[` literal escape, `invalid_secret_target` on non-text fields), secret values go into fields through real text input with best-effort visual masking, and every `/api/browser-use` JSON response masks resolved raw values back to their tag — exact-match only, never encoded/transformed values or screenshots.
@@ -32,6 +38,10 @@ All notable changes to the Go core will be documented in this file. The format i
 - Native `<select>` dropdowns now work inside the embedded browser pane: headless Chromium renders the popup outside the streamed page, so a small in-page listbox shim is injected into pane pages and commits selections through the usual `input`/`change` events.
 - The Defaults settings tab shows skeleton rows while an agent's options are loading instead of an empty area, and the agent add form no longer asks for a slug — one is derived from the name (the API still accepts an explicit slug). The Channels tab no longer lists the built-in Web channel, and MCP server cards label their enabled/disabled state in text.
 - The Agents settings header gained a reload icon that restarts every running agent process (`POST /api/agents/reload`) so an updated CLI or config takes effect; busy agents are skipped and reported, stopped agents are left alone, and rooms resume their sessions on the next turn.
+
+### Fixed
+
+- **Default ACP / config pickers sent bogus option ids.** SlimSelect rewrites the enhanced `<select>` element's `data-id` with its own generated `ss-*` id, so the Defaults picker, the composer config select, and the approval mode select all submitted `ss-…` as the config id — producing `option "ss-…" or its value is not available` (or an agent-side unknown-option error) and a stuck, non-retryable form. Config ids now ride on `data-tag`, each saved selection row has a re-pick button that truncates the sequence from that point, and the replay skips `set_config_option` calls for values that already hold (agents that reject no-op sets, e.g. "model not changed", no longer break the preview).
 
 ## [0.2.5] - 2026-11-10
 

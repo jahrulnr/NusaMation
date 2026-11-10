@@ -51,7 +51,6 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		"approvals":       approvals,
 		"routingDefaults": routing,
 		"agentDefaults":   agentDefaults,
-		"orchestration":   map[string]any{"enabled": s.orchestrationEnabled(ctx)},
 		"stats": map[string]any{
 			"conversations": total, "active": active, "pendingApprovals": pending,
 			"approvedApprovals": approved, "deniedApprovals": denied,
@@ -105,13 +104,6 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// orchestrationEnabled is the global kill switch for conversation control.
-// A missing or unreadable setting is false, never permissive.
-func (s *Server) orchestrationEnabled(ctx context.Context) bool {
-	v, err := s.store.GetSetting(ctx, "orchestration.enabled")
-	return err == nil && v == "true"
-}
-
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	routing := store.DefaultRouting()
 	_ = s.store.GetJSONSetting(r.Context(), "routing.defaults", &routing)
@@ -119,7 +111,6 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"routing": routing, "installedAt": installed, "publicUrl": s.cfg.PublicURL,
 		"version": config.Version, "notifications": s.notificationSettings(r.Context()),
-		"orchestration": map[string]any{"enabled": s.orchestrationEnabled(r.Context())},
 	}
 	if s.updater != nil {
 		resp["update"] = s.updater.Status()
@@ -133,9 +124,6 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		Notifications *struct {
 			Enabled *bool `json:"enabled"`
 		} `json:"notifications"`
-		Orchestration *struct {
-			Enabled *bool `json:"enabled"`
-		} `json:"orchestration"`
 	}
 	if err := readJSON(w, r, &in, 64<<10); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid settings payload.")
@@ -149,12 +137,6 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Notifications != nil && in.Notifications.Enabled != nil {
 		if err := s.store.SetSetting(r.Context(), "notify.enabled", strconv.FormatBool(*in.Notifications.Enabled)); err != nil {
-			writeError(w, http.StatusInternalServerError, "settings", err.Error())
-			return
-		}
-	}
-	if in.Orchestration != nil && in.Orchestration.Enabled != nil {
-		if err := s.store.SetSetting(r.Context(), "orchestration.enabled", strconv.FormatBool(*in.Orchestration.Enabled)); err != nil {
 			writeError(w, http.StatusInternalServerError, "settings", err.Error())
 			return
 		}

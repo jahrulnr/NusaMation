@@ -145,7 +145,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversations/{id}/config", s.protected(s.handleSetConfig))
 	mux.HandleFunc("POST /api/conversations/{id}/agent", s.protected(s.handleSwitchAgent))
 	mux.HandleFunc("POST /api/conversations/{id}/routing", s.protected(s.handleRouting))
-	mux.HandleFunc("PUT /api/conversations/{id}/orchestration", s.protected(s.handleOrchestration))
 	mux.HandleFunc("POST /api/conversations/{id}/approvals/{approvalId}", s.protected(s.handleResolveApproval))
 	mux.HandleFunc("GET /api/conversations/{id}/export", s.protected(s.handleExport))
 	mux.HandleFunc("DELETE /api/conversations", s.protected(s.handleDeleteAllConversations))

@@ -101,16 +101,15 @@ Pass `--data-dir` when the server uses a non-default data directory. Env and hea
 ## Conversation control MCP
 
 NusaMation injects a second stdio MCP server, `nusamation_conversation`
-(`nusamation mcp run --conversation`). It stays disabled until the user turns on
-**Settings → Agent control** and opts the calling conversation in from its
-conversation menu.
+(`nusamation mcp run --conversation`). Every conversation can use every tool;
+there is no per-conversation or global opt-in.
 
 Tools exposed:
 
-- `list` — conversations visible to the caller; `project` filters by id, name, or project-folder basename, and each row carries `lastTurn` status/prompt/answer previews.
+- `list` — all conversations; `project` filters by id, name, or project-folder basename, and each row carries `lastTurn` status/prompt/answer previews.
 - `projects_list` — project ids, names, root paths, pins, and active chat counts.
 - `search` — ranked snippets across message text; default kinds text/error, `kinds` can include tool/thought.
-- `export` — policy-scoped JSONL file for deep `rg`/`jq` analysis; expires in ten minutes.
+- `export` — JSONL file for deep `rg`/`jq` analysis; expires in ten minutes.
 - `read` — messages, active turn, queued turns and pending approvals.
 - `wait` — wait up to 30 seconds for a turn to finish or new messages.
 - `send` — queue, interrupt after tools, or request steer (mapped to after_tools/queue across conversations).

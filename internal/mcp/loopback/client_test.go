@@ -43,7 +43,7 @@ func TestPostSendsBearerAndDecodes(t *testing.T) {
 func TestPostReturnsEnvelopeError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": "nope", "code": "policy_denied"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "nope", "code": "orchestrated_turn"})
 	}))
 	defer srv.Close()
 
@@ -52,7 +52,7 @@ func TestPostReturnsEnvelopeError(t *testing.T) {
 	if !errors.As(err, &le) {
 		t.Fatalf("err = %T %v", err, err)
 	}
-	if le.Status != http.StatusForbidden || le.Code != "policy_denied" || le.Message != "nope" {
+	if le.Status != http.StatusForbidden || le.Code != "orchestrated_turn" || le.Message != "nope" {
 		t.Fatalf("error = %+v", le)
 	}
 }

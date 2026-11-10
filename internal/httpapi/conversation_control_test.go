@@ -129,18 +129,9 @@ func newLiveControlFixture(t *testing.T) *controlFixture {
 	}
 }
 
-func (f *controlFixture) enable(t *testing.T, origin string) {
+func (f *controlFixture) startCallerTurn(t *testing.T, origin string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := f.store.SetSetting(ctx, "orchestration.enabled", "true"); err != nil {
-		t.Fatal(err)
-	}
-	meta, _ := json.Marshal(map[string]any{
-		"orchestration": map[string]any{"enabled": true, "scope": "all"},
-	})
-	if err := f.store.UpdateConversationMetadata(ctx, f.caller.ID, meta); err != nil {
-		t.Fatal(err)
-	}
 	msg := store.Message{ConversationID: f.caller.ID, Role: "user", Kind: "text", Text: "go"}
 	if err := f.store.AppendMessage(ctx, &msg); err != nil {
 		t.Fatal(err)
@@ -186,28 +177,14 @@ func TestConversationControlAuthAndSwitch(t *testing.T) {
 	}
 
 	status, out := f.post(t, map[string]any{"tool": "list"})
-	if status != http.StatusForbidden || out["code"] != "orchestration_disabled" {
-		t.Fatalf("global off status=%d body=%v", status, out)
-	}
-
-	if err := f.store.SetSetting(context.Background(), "orchestration.enabled", "true"); err != nil {
-		t.Fatal(err)
-	}
-	status, out = f.post(t, map[string]any{"tool": "list"})
-	if status != http.StatusForbidden || out["code"] != "policy_denied" {
-		t.Fatalf("per-chat off status=%d body=%v", status, out)
-	}
-
-	f.enable(t, "web")
-	status, out = f.post(t, map[string]any{"tool": "list"})
 	if status != http.StatusOK {
-		t.Fatalf("enabled status=%d body=%v", status, out)
+		t.Fatalf("valid token status=%d body=%v", status, out)
 	}
 }
 
 func TestConversationControlOrchestratedCallerDenied(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "agent")
+	f.startCallerTurn(t, "agent")
 	status, out := f.post(t, map[string]any{"tool": "list"})
 	if status != http.StatusForbidden || out["code"] != "orchestrated_turn" {
 		t.Fatalf("status=%d body=%v", status, out)
@@ -216,7 +193,7 @@ func TestConversationControlOrchestratedCallerDenied(t *testing.T) {
 
 func TestConversationControlListAndRead(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	ctx := context.Background()
 
 	if err := f.store.SetConversationStatus(ctx, f.target.ID, "active"); err != nil {
@@ -282,7 +259,7 @@ func TestConversationControlListAndRead(t *testing.T) {
 
 func TestConversationControlReadTruncates(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	long := strings.Repeat("x", 7000)
 	msg := store.Message{ConversationID: f.target.ID, Role: "assistant", Kind: "text", Text: long}
 	if err := f.store.AppendMessage(context.Background(), &msg); err != nil {
@@ -302,80 +279,9 @@ func TestConversationControlReadTruncates(t *testing.T) {
 	}
 }
 
-func TestConversationControlProjectScope(t *testing.T) {
-	f := newControlFixture(t)
-	f.enable(t, "web")
-	ctx := context.Background()
-	project, err := f.store.InsertProject(ctx, "Project", []string{t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	member, err := f.store.CreateProjectConversation(ctx, f.agent.ID, "Member", "", "web", "", "", project.ID, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	outside, err := f.store.CreateConversation(ctx, f.agent.ID, "Outside", "", "web", "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	meta, _ := json.Marshal(map[string]any{
-		"orchestration": map[string]any{"enabled": true, "scope": "project"},
-	})
-	if err := f.store.UpdateConversationMetadata(ctx, f.caller.ID, meta); err != nil {
-		t.Fatal(err)
-	}
-
-	status, out := f.post(t, map[string]any{"tool": "read", "conversationId": member.ID})
-	if status != http.StatusForbidden || out["code"] != "policy_denied" {
-		t.Fatalf("empty project read status=%d body=%v", status, out)
-	}
-	status, out = f.post(t, map[string]any{"tool": "list"})
-	if status != http.StatusOK {
-		t.Fatalf("empty project list status=%d body=%v", status, out)
-	}
-	list, _ := out["conversations"].([]any)
-	if len(list) != 1 || list[0].(map[string]any)["id"] != f.caller.ID {
-		t.Fatalf("empty project list = %#v", out["conversations"])
-	}
-
-	// Put a second caller in the same project; it may read members but not outsiders.
-	projectCaller, err := f.store.CreateProjectConversation(ctx, f.agent.ID, "Supervisor P", "", "web", "", "", project.ID, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	projectMeta, _ := json.Marshal(map[string]any{
-		"orchestration": map[string]any{"enabled": true, "scope": "project"},
-	})
-	if err := f.store.UpdateConversationMetadata(ctx, projectCaller.ID, projectMeta); err != nil {
-		t.Fatal(err)
-	}
-	trigger := store.Message{ConversationID: projectCaller.ID, Role: "user", Kind: "text", Text: "go"}
-	if err := f.store.AppendMessage(ctx, &trigger); err != nil {
-		t.Fatal(err)
-	}
-	callerTurn, err := f.store.CreateTurn(ctx, projectCaller.ID, trigger.ID, "web", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if started, err := f.store.StartTurn(ctx, callerTurn.ID); err != nil || !started {
-		t.Fatalf("start = %v err=%v", started, err)
-	}
-	f.caller = projectCaller
-	f.token = f.grants.Token(projectCaller.ID)
-
-	status, _ = f.post(t, map[string]any{"tool": "read", "conversationId": member.ID})
-	if status != http.StatusOK {
-		t.Fatalf("member read status=%d", status)
-	}
-	status, out = f.post(t, map[string]any{"tool": "read", "conversationId": outside.ID})
-	if status != http.StatusForbidden {
-		t.Fatalf("outside read status=%d body=%v", status, out)
-	}
-}
-
 func TestConversationControlSendLifecycle(t *testing.T) {
 	f := newLiveControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	ctx := context.Background()
 	status, out := f.post(t, map[string]any{
 		"tool": "send", "conversationId": f.target.ID, "text": "do the work", "requestId": "req-1", "delivery": "steer",
@@ -433,19 +339,9 @@ func TestConversationControlSendLifecycle(t *testing.T) {
 
 func TestConversationControlSendRejects(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	ctx := context.Background()
-	if _, err := f.srv.chat.SetOrchestration(ctx, f.caller.ID, chat.OrchestrationPolicy{Enabled: true, ReadOnly: true, Scope: "all"}); err != nil {
-		t.Fatal(err)
-	}
-	status, out := f.post(t, map[string]any{"tool": "send", "conversationId": f.target.ID, "text": "x"})
-	if status != http.StatusForbidden || out["code"] != "policy_denied" {
-		t.Fatalf("read-only status=%d body=%v", status, out)
-	}
-	if _, err := f.srv.chat.SetOrchestration(ctx, f.caller.ID, chat.OrchestrationPolicy{Enabled: true, Scope: "all"}); err != nil {
-		t.Fatal(err)
-	}
-	status, out = f.post(t, map[string]any{"tool": "send", "conversationId": f.caller.ID, "text": "x"})
+	status, out := f.post(t, map[string]any{"tool": "send", "conversationId": f.caller.ID, "text": "x"})
 	if status != http.StatusForbidden || out["code"] != "target_self" {
 		t.Fatalf("self status=%d body=%v", status, out)
 	}
@@ -476,7 +372,7 @@ func TestConversationControlSendRejects(t *testing.T) {
 
 func TestConversationControlStopQueued(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	ctx := context.Background()
 	msg := store.Message{ConversationID: f.target.ID, Role: "user", Kind: "text", Text: "queued"}
 	if err := f.store.AppendMessage(ctx, &msg); err != nil {
@@ -513,11 +409,8 @@ func TestConversationControlStopQueued(t *testing.T) {
 
 func TestConversationControlSpawn(t *testing.T) {
 	f := newLiveControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	ctx := context.Background()
-	if _, err := f.srv.chat.SetOrchestration(ctx, f.caller.ID, chat.OrchestrationPolicy{Enabled: true, Scope: "all", Spawn: true}); err != nil {
-		t.Fatal(err)
-	}
 	status, out := f.post(t, map[string]any{
 		"tool": "spawn", "agent": "fake-control", "title": "Child", "prompt": "do the child work",
 	})
@@ -559,21 +452,13 @@ func TestConversationControlSpawn(t *testing.T) {
 	if storedTurn.OriginChannel != "agent" {
 		t.Fatalf("child turn origin = %q", storedTurn.OriginChannel)
 	}
-
-	if _, err := f.srv.chat.SetOrchestration(ctx, f.caller.ID, chat.OrchestrationPolicy{Enabled: true, Scope: "all"}); err != nil {
-		t.Fatal(err)
-	}
-	status, out = f.post(t, map[string]any{"tool": "spawn", "agent": "fake-control"})
-	if status != http.StatusForbidden || out["code"] != "spawn_not_allowed" {
-		t.Fatalf("spawn policy status=%d body=%v", status, out)
-	}
 }
 
 func boolPtr(v bool) *bool { return &v }
 
 func TestConversationControlActivity(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	if status, out := f.post(t, map[string]any{"tool": "list", "query": "Worker"}); status != http.StatusOK {
 		t.Fatalf("list status=%d body=%v", status, out)
 	}
@@ -611,22 +496,8 @@ func TestControlLimiter(t *testing.T) {
 
 func TestConversationControlSpawnLimits(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	ctx := context.Background()
-	outside, err := f.store.InsertProject(ctx, "Outside", []string{t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.srv.chat.SetOrchestration(ctx, f.caller.ID, chat.OrchestrationPolicy{Enabled: true, Scope: "project", Spawn: true}); err != nil {
-		t.Fatal(err)
-	}
-	status, out := f.post(t, map[string]any{"tool": "spawn", "agent": f.agent.Slug, "projectId": outside.ID})
-	if status != http.StatusForbidden || out["code"] != "policy_denied" {
-		t.Fatalf("spawn project status=%d body=%v", status, out)
-	}
-	if _, err := f.srv.chat.SetOrchestration(ctx, f.caller.ID, chat.OrchestrationPolicy{Enabled: true, Scope: "all", Spawn: true}); err != nil {
-		t.Fatal(err)
-	}
 	for range 10 {
 		child, err := f.store.CreateConversation(ctx, f.agent.ID, "child", "", "web", "", "")
 		if err != nil {
@@ -637,7 +508,7 @@ func TestConversationControlSpawnLimits(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	status, out = f.post(t, map[string]any{"tool": "spawn", "agent": f.agent.Slug})
+	status, out := f.post(t, map[string]any{"tool": "spawn", "agent": f.agent.Slug})
 	if status != http.StatusConflict || out["code"] != "spawn_limit" {
 		t.Fatalf("spawn limit status=%d body=%v", status, out)
 	}
@@ -645,17 +516,8 @@ func TestConversationControlSpawnLimits(t *testing.T) {
 
 func TestConversationControlReport(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	status, out := f.post(t, map[string]any{"tool": "report", "text": "progress"})
-	if status != http.StatusForbidden || out["code"] != "pings_not_allowed" {
-		t.Fatalf("ping policy status=%d body=%v", status, out)
-	}
-	if _, err := f.srv.chat.SetOrchestration(context.Background(), f.caller.ID, chat.OrchestrationPolicy{
-		Enabled: true, Scope: "all", ProgressPings: true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	status, out = f.post(t, map[string]any{"tool": "report", "text": "progress"})
 	if status != http.StatusConflict || out["code"] != "no_active_turn" {
 		t.Fatalf("ping no active status=%d body=%v", status, out)
 	}
@@ -667,7 +529,7 @@ func TestConversationControlReport(t *testing.T) {
 
 func TestConversationControlRevokedToken(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	f.grants.Revoke(f.caller.ID)
 	status, out := f.post(t, map[string]any{"tool": "list"})
 	if status != http.StatusUnauthorized {
@@ -677,7 +539,7 @@ func TestConversationControlRevokedToken(t *testing.T) {
 
 func TestConversationControlWaitDeletedTarget(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		_ = f.store.DeleteConversation(context.Background(), f.target.ID)
@@ -701,7 +563,7 @@ func TestConversationControlRejectsOversizedBody(t *testing.T) {
 
 func TestConversationControlWatchingCount(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -729,7 +591,7 @@ func TestConversationControlWatchingCount(t *testing.T) {
 
 func TestConversationControlProjects(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	ctx := context.Background()
 	projectA, err := f.store.InsertProject(ctx, "Project A", []string{t.TempDir()})
 	if err != nil {
@@ -802,11 +664,6 @@ func TestConversationControlProjects(t *testing.T) {
 		t.Fatalf("ambiguous project status=%d body=%v", status, out)
 	}
 
-	if _, err := f.srv.chat.SetOrchestration(ctx, f.caller.ID, chat.OrchestrationPolicy{
-		Enabled: true, Scope: "all", Spawn: true,
-	}); err != nil {
-		t.Fatal(err)
-	}
 	status, out = f.post(t, map[string]any{"tool": "spawn", "agent": f.agent.Slug, "project": "Project A"})
 	if status != http.StatusOK {
 		t.Fatalf("spawn project status=%d body=%v", status, out)
@@ -820,21 +677,11 @@ func TestConversationControlProjects(t *testing.T) {
 	if child.ProjectID != projectA.ID {
 		t.Fatalf("child project = %q want %q", child.ProjectID, projectA.ID)
 	}
-
-	if _, err := f.srv.chat.SetOrchestration(ctx, f.caller.ID, chat.OrchestrationPolicy{
-		Enabled: true, Scope: "project", Spawn: true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	status, out = f.post(t, map[string]any{"tool": "list", "project": "Project A"})
-	if status != http.StatusForbidden || out["code"] != "policy_denied" {
-		t.Fatalf("scope project status=%d body=%v", status, out)
-	}
 }
 
 func TestConversationControlLastTurnSummary(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	ctx := context.Background()
 	user := store.Message{ConversationID: f.target.ID, Role: "user", Kind: "text", Text: "last prompt"}
 	if err := f.store.AppendMessage(ctx, &user); err != nil {
@@ -877,7 +724,7 @@ func TestConversationControlLastTurnSummary(t *testing.T) {
 func TestConversationControlExport(t *testing.T) {
 	f := newControlFixture(t)
 	f.srv.cfg.DataDir = t.TempDir()
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	ctx := context.Background()
 	text := store.Message{ConversationID: f.target.ID, Role: "assistant", Kind: "text", Text: "export me"}
 	if err := f.store.AppendMessage(ctx, &text); err != nil {
@@ -950,7 +797,7 @@ func TestConversationControlExport(t *testing.T) {
 
 func TestConversationControlSearch(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	ctx := context.Background()
 	text := store.Message{ConversationID: f.target.ID, Role: "assistant", Kind: "text", Text: "deploy the backend"}
 	if err := f.store.AppendMessage(ctx, &text); err != nil {
@@ -1024,7 +871,7 @@ func TestConversationControlSearch(t *testing.T) {
 
 func TestConversationControlWaitNewMessage(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	go func() {
 		time.Sleep(150 * time.Millisecond)
 		msg := store.Message{ConversationID: f.target.ID, Role: "assistant", Kind: "text", Text: "progress"}
@@ -1049,7 +896,7 @@ func TestConversationControlWaitNewMessage(t *testing.T) {
 
 func TestConversationControlWaitTimeoutAndTurn(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	ctx := context.Background()
 	msg := store.Message{ConversationID: f.target.ID, Role: "user", Kind: "text", Text: "work"}
 	if err := f.store.AppendMessage(ctx, &msg); err != nil {
@@ -1083,7 +930,7 @@ func TestConversationControlWaitTimeoutAndTurn(t *testing.T) {
 
 func TestConversationControlWritesAndUnknown(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	status, out := f.post(t, map[string]any{"tool": "send", "conversationId": f.target.ID})
 	if status != http.StatusBadRequest || out["code"] != "invalid_request" {
 		t.Fatalf("empty send status=%d body=%v", status, out)
@@ -1116,7 +963,7 @@ func TestConversationControlWaitLimit(t *testing.T) {
 
 func TestControlReadAdvancesAcrossHiddenThoughts(t *testing.T) {
 	f := newControlFixture(t)
-	f.enable(t, "web")
+	f.startCallerTurn(t, "web")
 	for _, kind := range []string{"text", "thought", "thought", "text"} {
 		msg := store.Message{ConversationID: f.target.ID, Role: "assistant", Kind: kind, Text: "page"}
 		if err := f.store.AppendMessage(context.Background(), &msg); err != nil {

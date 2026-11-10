@@ -123,6 +123,45 @@ func TestPreviewWarmRuntimeReusesSession(t *testing.T) {
 	}
 }
 
+// A selection whose value already holds — typically the prepended default
+// model — must not be re-applied: agents that error on no-op sets (Claude's
+// "model not changed") would otherwise break every preview.
+func TestPreviewSkipsAlreadyCurrentValues(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	bin := testutil.BuildFakeACP(t)
+	st := previewTestStore(t, dir)
+	defer st.Close()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mgr := NewManager(st, logger)
+	defer mgr.StopAll()
+	tracePath := filepath.Join(dir, "trace.log")
+	enabled, autoStart := true, true
+	ag, err := st.CreateAgent(ctx, store.AgentInput{
+		Name: "Fake", Slug: "fake-noop", Command: bin, Cwd: dir, Enabled: &enabled, AutoStart: &autoStart,
+		DefaultModel: "fake-fast",
+		Env:          store.SecretList{{Name: "FAKE_ACP_TRACE", Value: tracePath}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := mgr.ensureRuntime(ag)
+	r.warm(ctx)
+	if mgr.runtimeFor(ag.ID).warmClient() == nil {
+		t.Fatal("expected a live client after warm")
+	}
+	if _, err := mgr.PreviewDefaults(ctx, ag.ID, []store.ConfigSelection{{ID: "mode", Value: "bypass"}}); err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	lines := traceLines(t, tracePath)
+	if countTrace(lines, "config model") != 0 {
+		t.Fatalf("already-current model must not be re-applied:\n%s", lines)
+	}
+	if countTrace(lines, "config mode bypass") != 1 {
+		t.Fatalf("mode choice was not applied exactly once:\n%s", lines)
+	}
+}
+
 // A replay error drops the preview session; the next preview rebuilds a clean
 // one on the same process.
 func TestPreviewDropsSessionAfterReplayError(t *testing.T) {
