@@ -18,6 +18,7 @@ import { renderTopbar } from "./topbar.js";
 import { closeWS, connectWS } from "./ws.js";
 import { openAuthTerminal } from "./terminal.js";
 import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadControlSettings, loadMCP, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, reloadActiveAgents, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications, toggleOrchestration } from "./settings.js";
+import { copyEnvRef, insertSecretRef, openSecretRefPopover, refreshAgentEnvRow } from "./browser-secrets.js";
 import { loadAutomations, saveAutomation, updateAutomationBuilder } from "./automations.js";
 import { refreshChannels, saveWaSettings, waAction } from "./whatsapp.js";
 import { openPalette, runPalette } from "./palette.js";
@@ -184,6 +185,7 @@ export function bindEvents() {
       filterSidebar();
     }
     if (e.target.matches("[data-input=project-name]")) noteProjectName(e.target.value);
+    if (e.target.matches("[data-input=agent-env-name], [data-input=agent-env-value]")) refreshAgentEnvRow(e.target.closest(".secret-row"));
   });
 
   document.addEventListener("change", (e) => {
@@ -487,6 +489,15 @@ export function bindEvents() {
         const pre = target.closest("pre");
         const code = pre?.querySelector("code")?.innerText || pre?.innerText || "";
         try { await navigator.clipboard.writeText(code.replace(/\nCopy$/, "")); toast("Copied", "", "success", 1500); } catch { toast("Copy failed", "", "error"); }
+        break;
+      }
+      case "copy-env-ref": await copyEnvRef(target); break;
+      case "secret-ref-menu": openSecretRefPopover(target); break;
+      case "secret-ref-insert": insertSecretRef(target.dataset.name); break;
+      case "manage-agent-env": {
+        openSettings("agents");
+        const a = agentById(id);
+        if (a) { S.agentForm = { id: a.id, agent: a }; renderSettings(); }
         break;
       }
       case "add-agent": S.agentForm = { agent: { enabled: true, approvalPolicy: "ask", icon: "sparkles", color: "amber" } }; S.mcpForm = null; S.settingsTab = "agents"; renderSettings(); break;

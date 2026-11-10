@@ -47,6 +47,12 @@ session options. The HTTP preview and save endpoints are listed in [api.md](api.
 
 - `--env KEY=val` merges (repeatable); `--env-rm KEY` deletes. Secrets stay
   encrypted via `secret.key` — they are masked in output unless `--show-secrets`.
+  Saved variables can also be typed into the browser pane as `[[env:NAME]]`
+  references in `browser_type`/`browser_fill_form` input — insert them from
+  the composer's shield button or **Copy reference** under **Control center →
+  Agents → Edit → Environment secrets**; `/api/browser-use`
+  masks resolved values back to the tag (exact raw text only — no encoded,
+  transformed, or screenshot masking).
 - `-arg` replaces the whole arg list; repeat it for multiple args.
 - `--policy`: `ask` = human approves every permission request (safe default);
   `auto_safe` = auto-approve safe requests; `auto_all` = auto-approve

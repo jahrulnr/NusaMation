@@ -31,6 +31,10 @@
 .composer-configs .composer-choice { flex: 0 1 auto; min-width: 0; max-width: none; }
 .composer-loading { display: inline-flex; align-items: center; gap: 6px; padding: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .composer-popover { max-height: min(440px, calc(100vh - 20px)); display: flex; flex-direction: column; }
+.composer-popover .menu-item[hidden] { display: none; }
+.secret-agent { margin-left: auto; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted-2); max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.secret-ref-item .popover-main b { white-space: normal; overflow-wrap: anywhere; }
+.secret-ref-tag { font-family: var(--mono); font-size: 10.5px; color: var(--muted-2); overflow-wrap: anywhere; }
 .composer-options { overflow-y: auto; overscroll-behavior: contain; }
 .composer-options .popover-main small { white-space: normal; line-height: 1.35; }
 .composer-options .menu-item[hidden] { display: none; }

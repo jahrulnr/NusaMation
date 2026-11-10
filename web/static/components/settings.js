@@ -7,6 +7,7 @@ import { closePopover } from "./popover.js";
 import { renderChat } from "./chat.js";
 import { renderComposer } from "./composer.js";
 import { renderTopbar } from "./topbar.js";
+import { envRefCopyEnabled, envRefTag } from "./browser-secrets.js";
 import { automationsSettings } from "./automations.js";
 import { startQRTimer, whatsappPanel } from "./whatsapp.js";
 
@@ -127,11 +128,26 @@ export function agentsSettings() {
 }
 
 export function envRowsHTML(list, prefix) {
-  return (list || []).map((e, i) => `<div class="secret-row" data-env-row="${prefix}">
+  return (list || []).map((e, i) => (prefix === "agent" ? agentEnvRowHTML(e) : `<div class="secret-row" data-env-row="${prefix}">
     <input class="input" name="env-name" value="${esc(e.name || "")}" placeholder="NAME">
     <input class="input" name="env-value" type="password" value="" placeholder="${e.hasValue ? "•••••••• (saved)" : "value"}" ${e.hasValue ? 'data-has-value="1"' : ""}>
     <button class="icon-btn sm" data-action="remove-env" data-prefix="${prefix}" title="Remove">${icon("x", "sm")}</button>
-  </div>`).join("");
+  </div>`)).join("");
+}
+
+// Agent env rows carry the opaque browser-input reference: labeled inputs, a
+// persisted-vs-new value state, a live [[env:NAME]] preview, and a copy that
+// stays disabled until the name matches a saved entry (renames are unsaved).
+function agentEnvRowHTML(e) {
+  const name = String(e.name || "").trim();
+  const saved = !!e.hasValue;
+  const canCopy = envRefCopyEnabled(name, S.agentForm?.agent?.env);
+  return `<div class="secret-row" data-env-row="agent">
+    <label class="env-field"><span class="env-label">Name</span><input class="input" name="env-name" data-input="agent-env-name" value="${esc(e.name || "")}" placeholder="NAME"></label>
+    <label class="env-field"><span class="env-label" data-env-value-label>${saved ? "Saved value" : "New value"}</span><input class="input" name="env-value" data-input="agent-env-value" type="password" value="" placeholder="${saved ? "•••••••• (saved)" : "value"}" ${e.hasValue ? 'data-has-value="1"' : ""}></label>
+    <button class="icon-btn sm" data-action="remove-env" data-prefix="agent" title="Remove">${icon("x", "sm")}</button>
+    <div class="env-ref-line"><code class="env-ref-tag" data-env-ref>${esc(name ? envRefTag(name) : "[[env:NAME]]")}</code><button class="btn btn-ghost btn-xs" type="button" data-action="copy-env-ref" ${canCopy ? "" : "disabled"}>Copy reference</button></div>
+  </div>`;
 }
 
 export function agentFormHTML() {
@@ -153,8 +169,10 @@ export function agentFormHTML() {
         <div class="field full"><small class="muted">Idle mode starts the agent with NusaMation and keeps a session warm, so model and option changes don't wait for a cold launch.</small></div>
       </div>
       <div class="settings-section"><div class="settings-title" style="display:flex;align-items:center;gap:8px">Environment secrets <span class="badge-soft gray">AES-GCM at rest</span><span class="grow"></span><button class="btn btn-ghost btn-xs" type="button" data-action="add-env" data-prefix="agent">+ Add variable</button></div>
+        <div class="env-ref-hint">Use a reference in browser input instead of writing the value.</div>
         <div id="agent-env-list">${envRowsHTML(a.env || [], "agent")}</div>
       </div>
+      <div class="form-error" data-agent-error role="alert" hidden></div>
       <div class="form-actions"><button class="btn btn-secondary" type="button" data-action="cancel-agent">Cancel</button><button class="btn btn-primary" type="submit">${f.id ? "Save agent" : "Add agent"}</button></div>
     </form>`;
 }
@@ -455,6 +473,15 @@ export async function probeAgent(id) {
 }
 
 export async function saveAgent(form) {
+  if (form.dataset.saving) return;
+  form.dataset.saving = "true";
+  const submit = form.querySelector('[type="submit"]');
+  const submitLabel = submit ? submit.textContent : "";
+  if (submit) { submit.disabled = true; submit.textContent = "Saving…"; }
+  // Late completion must not close a newer agent form or reopen a closed modal.
+  const agentForm = S.agentForm;
+  const errEl = form.querySelector("[data-agent-error]");
+  if (errEl) { errEl.hidden = true; errEl.textContent = ""; }
   const fd = new FormData(form);
   const id = form.dataset.id;
   const env = [];
@@ -483,14 +510,24 @@ export async function saveAgent(form) {
   };
   try {
     const d = await api(id ? `/agents/${encodeURIComponent(id)}` : "/agents", { method: id ? "PATCH" : "POST", body });
-    const list = await api("/agents");
-    S.agents = list.agents || S.agents;
-    S.agentForm = null;
-    renderSettings();
+    const saved = d.agent;
+    if (saved?.id) {
+      const idx = S.agents.findIndex((a) => a.id === saved.id);
+      if (idx >= 0) S.agents[idx] = saved;
+      else S.agents.push(saved);
+    }
+    if (S.agentForm === agentForm) {
+      S.agentForm = null;
+      if (S.modal?.type === "settings") renderSettings();
+    }
     renderTopbar();
     toast(id ? "Agent updated" : "Agent added", d.agent.name + " is ready.", "success");
   } catch (e) {
+    if (errEl) { errEl.hidden = false; errEl.textContent = e.message || "Could not save agent."; }
     toast("Could not save agent", e.message, "error", 8000);
+  } finally {
+    delete form.dataset.saving;
+    if (submit) { submit.disabled = false; submit.textContent = submitLabel; }
   }
 }
 

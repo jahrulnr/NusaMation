@@ -19,6 +19,13 @@ exceptions: the embedded MCP children call them with
 `Authorization: Bearer <token>` and no cookie. Errors are flat JSON
 `{"error":"…","code":"…"}` with a 4xx/5xx status.
 
+`POST /api/browser-use` resolves `[[env:NAME]]` references in `type`/`fill`
+text against the conversation agent's saved env (fail-closed preflight:
+`unknown_secret`, `invalid_secret_reference`, `invalid_secret_target`;
+`\[[` escapes the opener). Resolved raw values are masked back to their tag in
+that endpoint's JSON responses only — exact match, no encoded/transformed or
+screenshot masking.
+
 ## Endpoint map
 
 ```

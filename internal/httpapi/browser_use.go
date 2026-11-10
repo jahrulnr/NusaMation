@@ -43,6 +43,11 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 		s.browserError(w, err, false)
 		return
 	}
+	// Everything written past this point may carry registered secrets; buffer
+	// and mask the JSON before it reaches the agent.
+	mw := newSecretMaskWriter(w, sess)
+	w = mw
+	defer mw.flush()
 	var pointer *struct {
 		x, y float64
 		kind string
@@ -122,9 +127,16 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 		}
 		detail = out
 	case "fill":
-		out, err := sess.FillFields(r.Context(), in.Fields)
+		out, err := s.fillBrowserFields(r, convID, sess, in.Fields)
 		if err != nil {
-			s.browserToolError(w, err)
+			switch {
+			case errors.Is(err, errSecretTarget):
+				writeError(w, http.StatusBadRequest, "invalid_secret_target", "Secret references can only fill text fields.")
+			case errors.Is(err, errUnknownSecret), errors.Is(err, errInvalidSecret), errors.Is(err, errSecretUnavailable):
+				secretError(w, err)
+			default:
+				s.browserToolError(w, err)
+			}
 			return
 		}
 		detail = out
@@ -179,31 +191,44 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 			kind string
 		}{x, y, "click"}
 	case "type":
-		if in.Ref != "" {
-			focused, err := sess.FocusRef(r.Context(), in.Ref)
-			if err != nil {
+		resolved, bindings, rerr := s.resolveSecretInput(r, convID, in.Text)
+		sess.RegisterSecrets(bindings)
+		if rerr != nil {
+			secretError(w, rerr)
+			return
+		}
+		if len(bindings) > 0 {
+			if err := sess.InsertSecretText(r.Context(), in.Ref, resolved, false); err != nil {
 				s.browserToolError(w, err)
 				return
 			}
-			if !focused {
-				x, y, perr := sess.RefPoint(r.Context(), in.Ref)
-				if perr != nil {
-					s.browserToolError(w, perr)
+		} else {
+			if in.Ref != "" {
+				focused, err := sess.FocusRef(r.Context(), in.Ref)
+				if err != nil {
+					s.browserToolError(w, err)
 					return
 				}
-				if cerr := sess.Click(x, y, "left", 1); cerr != nil {
-					s.browserError(w, cerr, false)
-					return
+				if !focused {
+					x, y, perr := sess.RefPoint(r.Context(), in.Ref)
+					if perr != nil {
+						s.browserToolError(w, perr)
+						return
+					}
+					if cerr := sess.Click(x, y, "left", 1); cerr != nil {
+						s.browserError(w, cerr, false)
+						return
+					}
+					pointer = &struct {
+						x, y float64
+						kind string
+					}{x, y, "click"}
 				}
-				pointer = &struct {
-					x, y float64
-					kind string
-				}{x, y, "click"}
 			}
-		}
-		if err := sess.InsertText(in.Text); err != nil {
-			s.browserError(w, err, false)
-			return
+			if err := sess.InsertText(resolved); err != nil {
+				s.browserError(w, err, false)
+				return
+			}
 		}
 		if in.Submit {
 			if err := sess.Key("Enter", 0); err != nil {

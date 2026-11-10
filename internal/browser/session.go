@@ -184,6 +184,13 @@ type Session struct {
 
 	ackCh   chan int64
 	maintCh chan func()
+
+	// secretTags maps raw secret values typed through InsertSecretText back to
+	// their opaque [[env:NAME]] tag for response masking; session-scoped, never
+	// persisted.
+	secretsMu      sync.Mutex
+	secretTags     map[string]string
+	secretReplacer *strings.Replacer
 }
 
 func (s *Session) ID() string             { return s.id }

@@ -39,6 +39,7 @@ export function renderComposer() {
       <textarea id="prompt" rows="1" placeholder="Message ${esc(agentName(agent))}…" aria-label="Message">${esc(S.draft)}</textarea>
       <div class="composer-bar">
         <button class="icon-btn sm" data-action="attach" title="Attach files">${icon("paperclip", "sm")}</button>
+        <button class="icon-btn sm" data-action="secret-ref-menu" title="Insert secret reference" aria-label="Insert secret reference">${icon("shield", "sm")}</button>
         <button class="composer-choice agent-choice" data-action="agent-menu" title="Choose agent">${agentOrb(agent)}<span>${esc(agentName(agent))}</span>${icon("chevron-down", "sm")}</button>
         <div class="composer-configs">${composerConfigs()}</div>
         ${mobileSummary ? `<span class="composer-mobile-summary" title="${esc(mobileSummary)}">${esc(mobileSummary)}</span>` : ""}
