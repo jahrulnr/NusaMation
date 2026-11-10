@@ -71,3 +71,20 @@ func TestConversationFiles(t *testing.T) {
 		t.Fatalf("unauthenticated file = %d", rr.Code)
 	}
 }
+
+// A bare "#" in a file URL is a filename character, not a fragment marker —
+// the path must keep everything after it.
+func TestLocalFilePathBareHash(t *testing.T) {
+	dir := t.TempDir()
+	got, err := localFilePath("file://"+filepath.ToSlash(dir)+"/report #1.txt", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.Abs(filepath.Join(dir, "report #1.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

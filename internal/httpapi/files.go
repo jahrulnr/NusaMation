@@ -73,7 +73,10 @@ func localFilePath(raw, base string) (string, error) {
 		return "", errors.New("A file path is required.")
 	}
 	if strings.HasPrefix(strings.ToLower(raw), "file:") {
-		u, err := url.Parse(raw)
+		// Agents hand over file URLs verbatim — a bare "#" in the name is a
+		// valid filename character, not a fragment marker, so escape it before
+		// parsing or url.Parse silently truncates the path.
+		u, err := url.Parse(strings.ReplaceAll(raw, "#", "%23"))
 		if err != nil {
 			return "", errors.New("Invalid file URL.")
 		}
