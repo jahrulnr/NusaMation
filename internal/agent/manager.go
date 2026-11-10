@@ -199,7 +199,7 @@ func (m *Manager) ensureRuntime(agent store.Agent) *Runtime {
 	if r, ok := m.runtimes[agent.ID]; ok {
 		return r
 	}
-	r := &Runtime{mgr: m, agent: agent, sessions: map[string]*Session{}, byACP: map[string]*Session{}, pending: map[string][]pendingNotif{}, state: "unknown"}
+	r := &Runtime{mgr: m, agent: agent, log: m.log.With("agent", agent.Slug), sessions: map[string]*Session{}, byACP: map[string]*Session{}, pending: map[string][]pendingNotif{}, state: "unknown"}
 	m.runtimes[agent.ID] = r
 	return r
 }

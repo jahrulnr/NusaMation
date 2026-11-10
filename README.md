@@ -1,6 +1,20 @@
-# NusaMation
+<p align="center">
+  <img src="web/static/mark.png" alt="NusaMation" width="160">
+</p>
 
-**ACP-native personal agent mesh.** Your agent lives in the web control center with full thoughts, tools and approvals — and travels to WhatsApp as a concise, human-sized presence.
+<h1 align="center">NusaMation</h1>
+
+<p align="center"><strong>ACP-native personal agent mesh.</strong><br>
+Your agent lives in the web control center with full thoughts, tools and approvals — and travels to WhatsApp as a concise, human-sized presence.</p>
+
+<p align="center">
+  <a href="https://github.com/jahrulnr/NusaMation/actions/workflows/release.yml"><img src="https://github.com/jahrulnr/NusaMation/actions/workflows/release.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="go.mod"><img src="https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go&logoColor=white" alt="Go 1.27+"></a>
+  <a href=".github/pull_request_template.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome"></a>
+</p>
+
+---
 
 NusaMation is not another LLM wrapper. The brain is any **Agent Client Protocol (ACP)** CLI: Devin, Claude Code ACP, Codex ACP, Gemini ACP, or your own agent. NusaMation owns the conversation, the workspace, approvals, routing, sessions and the control center.
 
