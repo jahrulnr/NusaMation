@@ -199,6 +199,40 @@ const selectShimJS = `(function(){
   window.addEventListener('resize', close);
 })()`
 
+// loginTapJS reports submitted logins to the backend so the pane's password
+// manager can offer them back on later visits. Submissions are pushed to the
+// __nusaReportLogin CDP binding (survives navigation) and mirrored to a window
+// buffer for contexts where the binding is not installed yet (the first load
+// can race addBinding); the session drains both paths. Only the password's own
+// origin is recorded — data never leaves the app.
+const loginTapJS = `(function(){
+  if (window.__nusaLoginTap) return;
+  window.__nusaLoginTap = true;
+  window.__nusaLogins = window.__nusaLogins || [];
+  const report = () => {
+    try {
+      const pw = [...document.querySelectorAll('input[type=password]')].find(i => i.value && !i.disabled);
+      if (!pw) return;
+      const scope = pw.form || document;
+      const user = scope.querySelector('input[type=email],input[name*=user i],input[name*=email i],input[name*=login i],input[autocomplete*=username i]')
+        || [...scope.querySelectorAll('input[type=text],input:not([type])')].find(i => i.value && !i.disabled);
+      const payload = JSON.stringify({origin: location.origin, username: user ? user.value : '', password: pw.value});
+      window.__nusaLogins.push(payload);
+      if (window.__nusaLogins.length > 20) window.__nusaLogins.shift();
+      if (typeof window.__nusaReportLogin === 'function') window.__nusaReportLogin(payload);
+    } catch (e) {}
+  };
+  document.addEventListener('submit', report, true);
+  // SPAs often fake-submit with Enter or a plain button click.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT' && e.target.type === 'password') report();
+  }, true);
+  document.addEventListener('click', (e) => {
+    const t = e.target && e.target.closest ? e.target.closest('button,[type=submit],input[type=submit]') : null;
+    if (t && t.form && t.form.querySelector('input[type=password]')) report();
+  }, true);
+})()`
+
 // snapshotJS serializes the visible DOM into a compact tree. Interactive
 // elements get [ref=eN]; landmarks keep their role; leaf text becomes a text
 // line; generic wrappers are flattened so the output stays small.

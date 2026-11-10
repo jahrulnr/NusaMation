@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	urlpkg "net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,7 @@ import (
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
+	"github.com/jahrulnr/nusamation/internal/store"
 )
 
 const (
@@ -41,6 +43,7 @@ func (s *Session) ioCtx() (context.Context, context.CancelFunc) {
 type View struct {
 	ID             string `json:"id"`
 	ConversationID string `json:"conversationId"`
+	Profile        string `json:"profile"`
 	URL            string `json:"url"`
 	Title          string `json:"title"`
 	Status         string `json:"status"`
@@ -162,16 +165,22 @@ type Session struct {
 	lastMeta     Meta
 	lastNavCheck time.Time
 	pointer      pointerMark
-	stream       *Stream
-	castCtx      context.Context
-	castCancel   context.CancelFunc
+	// streams are the attached viewers — every one gets the same frames and
+	// meta (share-screen model). controller is the single viewer allowed to
+	// drive input; agentLock is the agent's input lease, which mutes every
+	// viewer until a human claims control back (human always preempts).
+	streams    []*Stream
+	controller *Stream
+	agentLock  bool
+	castCtx    context.Context
+	castCancel context.CancelFunc
 
 	busy atomic.Bool
 
-	tabCtx       context.Context
-	tabCancel    context.CancelFunc
-	browserCtx   context.Context
-	browserCtxID cdp.BrowserContextID
+	profile    string
+	tabCtx     context.Context
+	tabCancel  context.CancelFunc
+	browserCtx context.Context
 
 	ackCh   chan int64
 	maintCh chan func()
@@ -179,6 +188,13 @@ type Session struct {
 
 func (s *Session) ID() string             { return s.id }
 func (s *Session) ConversationID() string { return s.conversationID }
+
+// Profile returns the browser profile this session's storage belongs to.
+func (s *Session) Profile() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.profile
+}
 
 func (s *Session) touch() {
 	s.mu.Lock()
@@ -189,7 +205,7 @@ func (s *Session) touch() {
 func (s *Session) idleFor(ttl time.Duration) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.stream == nil && time.Since(s.lastActivity) > ttl
+	return len(s.streams) == 0 && time.Since(s.lastActivity) > ttl
 }
 
 // View returns the sessionView. When refresh is true and the tab is alive it
@@ -205,7 +221,7 @@ func (s *Session) View(refresh bool) View {
 
 func (s *Session) viewLocked() View {
 	return View{
-		ID: s.id, ConversationID: s.conversationID, URL: s.url, Title: s.title,
+		ID: s.id, ConversationID: s.conversationID, Profile: s.profile, URL: s.url, Title: s.title,
 		Status: s.status, Width: s.width, Height: s.height,
 		CanGoBack: s.canBack, CanGoForward: s.canFwd,
 		CreatedAt: s.createdAt, Error: s.errText,
@@ -248,8 +264,116 @@ func (s *Session) refreshNavState() {
 	s.title = e.Title
 	s.canBack = idx > 0
 	s.canFwd = idx < len(res.Entries)-1
+	url, title, profile := s.url, s.title, s.profile
 	s.mu.Unlock()
 	s.maybeMeta()
+	s.afterLoadHooks(url, title, profile)
+}
+
+// afterLoadHooks runs once per committed navigation: record the visit, drain
+// any buffered login reports the injected tap could not hand to the binding,
+// and offer the page the profile's saved credentials for this origin.
+func (s *Session) afterLoadHooks(url, title, profile string) {
+	if s.m.rec == nil || url == "" {
+		return
+	}
+	if err := s.m.rec.RecordBrowserVisit(context.Background(), profile, url, title); err != nil {
+		s.m.log.Warn("browser history record failed", "error", err)
+	}
+	if raw, err := s.evalQuiet(`JSON.stringify(window.__nusaLogins ? window.__nusaLogins.splice(0, 20) : [])`); err == nil {
+		var payloads []string
+		if json.Unmarshal(raw, &payloads) == nil {
+			for _, p := range payloads {
+				s.saveLoginPayload(p)
+			}
+		}
+	}
+	if u, err := urlpkg.Parse(url); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+		origin := u.Scheme + "://" + u.Host
+		creds, err := s.m.rec.BrowserCredentials(context.Background(), profile, origin)
+		if err == nil && len(creds) > 0 {
+			s.fillLogin(creds[0])
+		}
+	}
+}
+
+// saveLoginPayload persists one credential report from loginTapJS.
+func (s *Session) saveLoginPayload(payload string) {
+	if s.m.rec == nil {
+		return
+	}
+	var p struct {
+		Origin   string `json:"origin"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if json.Unmarshal([]byte(payload), &p) != nil || p.Password == "" {
+		return
+	}
+	u, err := urlpkg.Parse(p.Origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return
+	}
+	if err := s.m.rec.SaveBrowserCredential(context.Background(), s.Profile(), p.Origin, p.Username, p.Password); err != nil {
+		s.m.log.Warn("save browser credential failed", "error", err)
+	}
+}
+
+// fillLogin fills the page's first password field (and its username sibling)
+// with a saved credential, through the native setters frameworks listen to.
+func (s *Session) fillLogin(c store.BrowserCredential) {
+	user, _ := json.Marshal(c.Username)
+	pass, _ := json.Marshal(c.Password)
+	expr := `(() => {
+	  const pw = [...document.querySelectorAll('input[type=password]')].find(i => !i.disabled && !i.readOnly);
+	  if (!pw || pw.value) return 'no-field';
+	  const put = (el, v) => { const d = Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value'); d.set.call(el, v); el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true})); };
+	  const scope = pw.form || document;
+	  const user = scope.querySelector('input[type=email],input[name*=user i],input[name*=email i],input[name*=login i],input[autocomplete*=username i]')
+	    || [...scope.querySelectorAll('input[type=text],input:not([type])')].find(i => !i.disabled && !i.readOnly);
+	  if (user && !user.value) put(user, ` + string(user) + `);
+	  put(pw, ` + string(pass) + `);
+	  return 'filled';
+	})()`
+	if got, err := s.evalQuiet(expr); err != nil || string(got) != `"filled"` {
+		return
+	}
+}
+
+// Autofill manually fills the page's login form from the profile's saved
+// credential for the current origin; reports whether a field was filled.
+func (s *Session) Autofill(ctx context.Context) (bool, error) {
+	if s.m.rec == nil {
+		return false, nil
+	}
+	s.mu.Lock()
+	rawURL, profile := s.url, s.profile
+	s.mu.Unlock()
+	u, err := urlpkg.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false, nil
+	}
+	creds, err := s.m.rec.BrowserCredentials(ctx, profile, u.Scheme+"://"+u.Host)
+	if err != nil || len(creds) == 0 {
+		return false, err
+	}
+	s.fillLogin(creds[0])
+	raw, err := s.evalQuiet(`!![...document.querySelectorAll('input[type=password]')].find(i => i.value)`)
+	return string(raw) == "true", err
+}
+
+// evalQuiet evaluates an expression on the live tab without touching the busy
+// claim; callers tolerate failures (the page may be mid-navigation).
+func (s *Session) evalQuiet(expr string) (json.RawMessage, error) {
+	ctx, cancel := s.ioCtx()
+	res, err := chromedp.Call(ctx, runtime.Evaluate, runtime.EvaluateParams{
+		Expression: expr, ReturnByValue: new(bool),
+	})
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	return res.Result.Value, nil
 }
 
 func (s *Session) acquire() error {
@@ -720,19 +844,94 @@ func (s *Session) watchCrash() {
 // watchDialogs dismisses JavaScript dialogs. A dialog stalls the renderer, so
 // every later Runtime.evaluate, screenshot, or click waits until it is handled;
 // one alert() can wedge the whole tool surface. Chromium resumes only after
-// Page.handleJavaScriptDialog, and commands must be issued off the event
-// iterator (see maintLoop), so handling is queued on maintCh.
+// Page.handleJavaScriptDialog. The dismiss must never be queued or dropped —
+// an undismissed dialog leaves the page input-locked while the stream looks
+// alive — so each event runs on its own goroutine off the event iterator.
 func (s *Session) watchDialogs() {
 	for _, err := range cdp.Events[page.EventJavascriptDialogOpening](s.tabCtx, s.tab(), page.JavascriptDialogOpening) {
 		if err != nil {
 			return
 		}
-		s.enqueue(func() {
+		go func() {
 			ctx, cancel := context.WithTimeout(s.tabCtx, ioTimeout)
 			_, _ = chromedp.Call(ctx, page.HandleJavaScriptDialog,
 				page.HandleJavaScriptDialogParams{Accept: false})
 			cancel()
-		})
+		}()
+	}
+}
+
+// watchLoginBindings receives credential reports the injected loginTapJS sends
+// through the __nusaReportLogin binding; the binding is reinstalled on every
+// new execution context because CDP bindings do not follow navigations.
+func (s *Session) watchLoginBindings() {
+	for ev, err := range cdp.Events[runtime.EventBindingCalled](s.tabCtx, s.tab(), runtime.BindingCalled) {
+		if err != nil {
+			return
+		}
+		if ev.Name == "__nusaReportLogin" {
+			s.saveLoginPayload(ev.Payload)
+		}
+	}
+}
+
+func (s *Session) watchLoginContexts() {
+	for _, err := range cdp.Events[runtime.EventExecutionContextCreated](s.tabCtx, s.tab(), runtime.ExecutionContextCreated) {
+		if err != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(s.tabCtx, ioTimeout)
+		_, _ = chromedp.Call(ctx, runtime.AddBinding, runtime.AddBindingParams{Name: "__nusaReportLogin"})
+		cancel()
+	}
+}
+
+// swapTab replaces the session's live target — used by profile migration.
+// Old watchers die with the old context and are restarted against the new tab;
+// the session id, busy claim, attached viewers, and the input lease survive.
+func (s *Session) swapTab(tabCtx context.Context, tabCancel context.CancelFunc, browserCtx context.Context, profile string) {
+	s.mu.Lock()
+	oldCancel := s.tabCancel
+	oldBrowser := s.browserCtx
+	oldID := s.tab().TargetID
+	s.tabCtx = tabCtx
+	s.tabCancel = tabCancel
+	s.browserCtx = browserCtx
+	s.profile = profile
+	s.url = ""
+	s.title = ""
+	s.canBack = false
+	s.canFwd = false
+	s.lastFrame = nil
+	// The old castCtx dies with the old tab — attached viewers must get a
+	// fresh screencast epoch on the new target or they show one forced frame
+	// and then nothing, looking live while every input reports no change.
+	if s.castCancel != nil {
+		s.castCancel()
+	}
+	s.castCtx, s.castCancel = nil, nil
+	hasStream := len(s.streams) > 0
+	var castCtx context.Context
+	var castCancel context.CancelFunc
+	if hasStream {
+		s.castCtx, s.castCancel = context.WithCancel(tabCtx)
+		castCtx, castCancel = s.castCtx, s.castCancel
+	}
+	s.mu.Unlock()
+	oldCancel()
+	ctx, c := context.WithTimeout(oldBrowser, 5*time.Second)
+	_, _ = chromedp.CallBrowser(ctx, target.CloseTarget, target.CloseTargetParams{TargetID: oldID})
+	c()
+	go s.watchNav()
+	go s.watchCrash()
+	go s.watchDialogs()
+	go s.watchLoginBindings()
+	go s.watchLoginContexts()
+	go s.maintLoop()
+	s.refreshNavState()
+	if hasStream {
+		go s.castLoop(castCtx, castCancel)
+		go s.forceScreenshot()
 	}
 }
 
@@ -754,33 +953,51 @@ func (s *Session) markCrashedLocked(reason string) {
 		s.castCancel = nil
 		s.castCtx = nil
 	}
-	if s.stream != nil {
-		s.stream.closeWith("browser_crashed", "The browser process crashed.")
-		s.stream = nil
+	for _, sub := range s.streams {
+		sub.closeWith("browser_crashed", "The browser process crashed.")
 	}
+	s.streams = nil
+	s.controller = nil
+	s.agentLock = false
 }
 
 // maintLoop is the session's serialized CDP worker: screencast acks (issued
 // off the event iterator, which must not run commands) and throttled
 // nav-state checks.
 func (s *Session) maintLoop() {
+	// Bind the tab context once at start: swapTab replaces s.tabCtx, and a
+	// worker that re-reads the field would keep draining a new tab's ack
+	// queue alongside its successor — two workers, one stream of sessionIDs.
+	ctx := s.tabCtx
 	for {
 		select {
 		case id := <-s.ackCh:
-			_, _ = chromedp.Call(s.tabCtx, page.ScreencastFrameAck,
-				page.ScreencastFrameAckParams{SessionID: id})
+			// Bounded like every other call: an ack whose reply never comes
+			// (target detaching mid-call, wedged renderer) must not kill the
+			// worker — without it, ackCh fills, onFrame blocks, and the whole
+			// screencast freezes until the session is recreated.
+			actx, cancel := context.WithTimeout(ctx, ioTimeout)
+			if _, err := chromedp.Call(actx, page.ScreencastFrameAck,
+				page.ScreencastFrameAckParams{SessionID: id}); err != nil {
+				s.m.log.Debug("screencast ack failed", "session", s.id, "error", err)
+			}
+			cancel()
 		case task := <-s.maintCh:
 			task()
-		case <-s.tabCtx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
+// enqueue hands work to the maint worker without blocking the caller — the
+// frame path (onFrame → maybeNavCheck) must never stall on a busy worker.
+// Tasks are periodic or idempotent, so a full queue can safely drop.
 func (s *Session) enqueue(task func()) {
 	select {
 	case s.maintCh <- task:
 	case <-s.tabCtx.Done():
+	default:
 	}
 }
 
@@ -829,18 +1046,111 @@ func (s *Session) maybeMeta() {
 		return
 	}
 	s.lastMeta = meta
-	sub := s.stream
+	subs := s.streams
 	s.mu.Unlock()
-	if sub == nil {
-		return
-	}
 	b, _ := json.Marshal(meta)
-	sub.sendCtrl(b)
+	for _, sub := range subs {
+		sub.sendCtrl(b)
+	}
 }
 
-// Attach registers the one live stream: the previous stream gets
-// closed/stream_replaced (§8.7), meta goes out first, screencast starts, and a
-// screenshot is forced so a frame always precedes repaints (§5).
+// controlForLocked renders the per-viewer control state: the attached stream
+// sees its own lease, every other viewer sees who actually holds the floor.
+func (s *Session) controlForLocked(sub *Stream) []byte {
+	owner := "none"
+	switch {
+	case s.agentLock:
+		owner = "agent"
+	case s.controller == sub:
+		owner = "you"
+	case s.controller != nil:
+		owner = "other"
+	}
+	b, _ := json.Marshal(map[string]any{"type": "control", "owner": owner})
+	return b
+}
+
+// broadcastControl pushes the current lease state to every attached viewer —
+// sent on attach, takeover, agent lock/unlock, and controller handoff.
+func (s *Session) broadcastControl() {
+	s.mu.Lock()
+	subs := s.streams
+	payloads := make(map[*Stream][]byte, len(subs))
+	for _, sub := range subs {
+		payloads[sub] = s.controlForLocked(sub)
+	}
+	s.mu.Unlock()
+	for sub, b := range payloads {
+		sub.sendCtrl(b)
+	}
+}
+
+// InputAllowed reports whether this viewer's connection may drive the page.
+// Only the controller stream may input, and never while the agent holds the
+// input lease — a human reclaims with a takeover, which always preempts.
+func (s *Session) InputAllowed(sub *Stream) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.agentLock && s.controller != nil && s.controller == sub
+}
+
+// Takeover is a human claim on the input lease: the claiming viewer becomes
+// the controller and any agent lock ends — a human always preempts the agent.
+func (s *Session) Takeover(sub *Stream) {
+	s.mu.Lock()
+	if err := s.aliveLocked(); err != nil {
+		s.mu.Unlock()
+		return
+	}
+	attached := false
+	for _, v := range s.streams {
+		if v == sub {
+			attached = true
+			break
+		}
+	}
+	if !attached {
+		s.mu.Unlock()
+		return
+	}
+	changed := s.controller != sub || s.agentLock
+	s.controller = sub
+	s.agentLock = false
+	s.lastActivity = time.Now()
+	s.mu.Unlock()
+	if changed {
+		s.broadcastControl()
+	}
+}
+
+// SetAgentLock is the agent-side input lease (browser_lock): while held,
+// every pane viewer keeps watching but their input is muted so a stray click
+// cannot disturb the run. Releasing returns control to the current controller.
+func (s *Session) SetAgentLock(on bool) {
+	s.mu.Lock()
+	if err := s.aliveLocked(); err != nil || s.agentLock == on {
+		s.mu.Unlock()
+		return
+	}
+	s.agentLock = on
+	s.lastActivity = time.Now()
+	s.mu.Unlock()
+	s.broadcastControl()
+}
+
+// AgentLocked reports whether the agent currently holds the input lease.
+func (s *Session) AgentLocked() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.agentLock
+}
+
+// Attach registers one more live viewer. Every stream gets the same frames
+// and meta — attaching never displaces an existing viewer (§8.7). The first
+// attach becomes the controller; the screencast belongs to the session, so a
+// later attach only subscribes — no epoch restart, no frame gap. The attach
+// meta tells a joining viewer the viewport is already owned, and a forced
+// screenshot puts a frame on screen before the next repaint (§5).
 func (s *Session) Attach() (*Stream, error) {
 	s.mu.Lock()
 	if err := s.aliveLocked(); err != nil {
@@ -848,59 +1158,92 @@ func (s *Session) Attach() (*Stream, error) {
 		return nil, err
 	}
 	sub := newStream()
-	old := s.stream
-	s.stream = sub
+	held := len(s.streams) > 0
+	s.streams = append(s.streams, sub)
+	if s.controller == nil {
+		s.controller = sub
+	}
 	s.lastActivity = time.Now()
 	meta := s.metaLocked()
 	s.lastMeta = meta
-	// Every attach gets a fresh screencast epoch: the previous loop (if any)
-	// is cancelled so exactly one castLoop runs and forwards to this stream.
-	if s.castCancel != nil {
-		s.castCancel()
+	mark := s.pointer
+	ctrl := s.controlForLocked(sub)
+	startCast := s.castCancel == nil
+	if startCast {
+		s.castCtx, s.castCancel = context.WithCancel(s.tabCtx)
 	}
-	s.castCtx, s.castCancel = context.WithCancel(s.tabCtx)
 	castCtx, castCancel := s.castCtx, s.castCancel
 	s.mu.Unlock()
-	if old != nil {
-		old.closeWith("stream_replaced", "Another client attached to this browser session.")
-	}
-	// The attach meta tells a replacing viewer the viewport is already owned:
-	// re-emulating to its own pane size would thrash the shared surface and
-	// leak a transitional composite frame (old render beside the new one).
-	held := meta
-	held.ViewportHeld = old != nil
-	b, _ := json.Marshal(held)
+	meta.ViewportHeld = held
+	b, _ := json.Marshal(meta)
 	sub.sendCtrl(b)
-	s.mu.Lock()
-	mark := s.pointer
-	s.mu.Unlock()
+	sub.sendCtrl(ctrl)
 	if mark.on {
 		sub.Send(mark.json())
 	}
-	go s.castLoop(castCtx, castCancel)
+	if startCast {
+		go s.castLoop(castCtx, castCancel)
+	}
 	go s.forceScreenshot()
 	return sub, nil
 }
 
-// Detach drops the stream and stops the screencast; the session stays alive
-// for re-attach (§8.2).
+// Detach drops one viewer. The session and screencast stay alive for the
+// remaining viewers; only the last detach stops the screencast (§8.2). When
+// the controller leaves, the lease returns to the oldest attached viewer.
 func (s *Session) Detach(sub *Stream) {
 	s.mu.Lock()
-	if s.stream != sub {
+	idx := -1
+	for i, v := range s.streams {
+		if v == sub {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
 		s.mu.Unlock()
 		return
 	}
-	s.stream = nil
-	cancel := s.castCancel
-	s.castCancel = nil
-	s.castCtx = nil
+	// Publish a fresh slice rather than deleting in place: fan-out sites
+	// snapshot s.streams under the lock and iterate the same backing array
+	// after it — an in-place delete would write elements they still read.
+	next := make([]*Stream, 0, len(s.streams)-1)
+	next = append(next, s.streams[:idx]...)
+	next = append(next, s.streams[idx+1:]...)
+	s.streams = next
+	handoff := false
+	if s.controller == sub {
+		handoff = len(s.streams) > 0
+		if handoff {
+			s.controller = s.streams[0]
+		} else {
+			s.controller = nil
+		}
+	}
 	s.lastActivity = time.Now()
+	var cancel context.CancelFunc
+	if len(s.streams) == 0 {
+		cancel = s.castCancel
+		s.castCancel = nil
+		s.castCtx = nil
+	}
 	s.mu.Unlock()
+	if handoff {
+		s.broadcastControl()
+	}
 	if cancel != nil {
 		cancel()
-		ctx, c := context.WithTimeout(s.tabCtx, 5*time.Second)
-		_, _ = chromedp.Call(ctx, page.StopScreencast, cdp.Empty{})
-		c()
+		// A racing Attach may already have opened a fresh screencast epoch —
+		// a Stop issued now would freeze the new viewer's live view. Re-check
+		// under the lock and hold it across the call so an attach that slips
+		// in between orders itself after this stop instead of losing to it.
+		s.mu.Lock()
+		if len(s.streams) == 0 && s.castCtx == nil {
+			ctx, c := context.WithTimeout(s.tabCtx, 5*time.Second)
+			_, _ = chromedp.Call(ctx, page.StopScreencast, cdp.Empty{})
+			c()
+		}
+		s.mu.Unlock()
 	}
 }
 
@@ -942,16 +1285,20 @@ func (s *Session) onFrame(ev page.EventScreencastFrame) {
 	meta := s.metaLocked()
 	changed := meta != s.lastMeta
 	s.lastMeta = meta
-	sub := s.stream
+	subs := s.streams
 	s.mu.Unlock()
-	if sub == nil {
+	if len(subs) == 0 {
 		return
 	}
 	if changed {
 		b, _ := json.Marshal(meta)
-		sub.sendCtrl(b)
+		for _, sub := range subs {
+			sub.sendCtrl(b)
+		}
 	}
-	sub.sendFrame(ev.Data)
+	for _, sub := range subs {
+		sub.sendFrame(ev.Data)
+	}
 	s.maybeNavCheck()
 }
 
@@ -981,19 +1328,19 @@ func (p pointerMark) json() []byte {
 	return b
 }
 
-// ShowPointer tells the attached live view where the agent pointer is.
+// ShowPointer tells the attached live views where the agent pointer is.
 // kind is "move", "click", or "scroll". The mark is kept and replayed on the
 // next Attach, so a pane that opens after the action still sees it.
 func (s *Session) ShowPointer(x, y float64, kind string) {
 	mark := pointerMark{x: x, y: y, kind: kind, on: true}
+	b := mark.json()
 	s.mu.Lock()
 	s.pointer = mark
-	sub := s.stream
+	subs := s.streams
 	s.mu.Unlock()
-	if sub == nil {
-		return
+	for _, sub := range subs {
+		sub.Send(b)
 	}
-	sub.Send(mark.json())
 }
 
 // forceScreenshot pushes one JPEG frame; screencast only emits on repaint, so
@@ -1007,9 +1354,9 @@ func (s *Session) forceScreenshot() {
 		return
 	}
 	s.mu.Lock()
-	sub := s.stream
+	subs := s.streams
 	s.mu.Unlock()
-	if sub != nil {
+	for _, sub := range subs {
 		sub.sendFrame(res.Data)
 	}
 }
@@ -1254,23 +1601,27 @@ func (s *Session) closeWith(code, message string) {
 		s.mu.Unlock()
 		return
 	}
+	tabID := s.tab().TargetID
 	s.status = "closed"
 	cancel := s.castCancel
 	s.castCancel = nil
 	s.castCtx = nil
-	sub := s.stream
-	s.stream = nil
+	subs := s.streams
+	s.streams = nil
+	s.controller = nil
+	s.agentLock = false
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
-	if sub != nil {
+	for _, sub := range subs {
 		sub.closeWith(code, message)
 	}
 	s.tabCancel()
+	// The tab lives in the profile's default browser context; closing the
+	// target is all the cleanup it needs — profile data persists on disk.
 	ctx, c := context.WithTimeout(s.browserCtx, 5*time.Second)
-	_, _ = chromedp.CallBrowser(ctx, target.DisposeBrowserContext,
-		target.DisposeBrowserContextParams{BrowserContextID: s.browserCtxID})
+	_, _ = chromedp.CallBrowser(ctx, target.CloseTarget, target.CloseTargetParams{TargetID: tabID})
 	c()
 	s.m.removeSession(s)
 }

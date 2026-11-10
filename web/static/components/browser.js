@@ -7,7 +7,7 @@ import { closePopover, openPopover } from "./popover.js";
 import { focusComposer, renderPendingAttachments } from "./composer.js";
 
 /* ---------------- embedded browser pane ----------------
- * Wire protocol: tmp/browser-api-contract.md
+ * Wire protocol: docs/API.md (browser stream)
  * - REST: POST/GET/DELETE /api/browser/sessions, .../navigate, .../history,
  *   .../annotate, .../annotate/preview (hover marker probe), .../annotate/clear
  * - Stream: dedicated per-session WS at /api/browser/sessions/{id}/stream.
@@ -38,6 +38,8 @@ const B = {
   holdViewport: false,    // agent drive keeps the remote viewport that the JPEG used
   viewportGuest: false,   // attached over another live viewer: adopt its viewport, don't resize
   sawMeta: false,         // first stream meta arrived (gates the attach-time emulate)
+  inputOwner: false,      // this pane holds the input lease (control.owner === "you")
+  agentLock: false,       // the agent holds the input lease (control.owner === "agent")
   navigating: false,
   paneGen: 0,
   restoreURL: "",
@@ -54,7 +56,10 @@ const B = {
   lastResizeSent: 0,
   observer: null,
   width: 0,               // user-dragged pane width (0 = stylesheet default)
-  deviceBar: true,        // second toolbar row with device controls
+  deviceBar: localStorage.getItem("nusamation:browser-device-bar") === "1", // second toolbar row, hidden until toggled
+  devtools: false,        // developer tools drawer
+  suggest: [],            // address-bar history suggestions
+  suggestIdx: -1,         // keyboard highlight inside the suggestion list
   deviceChoice: "relative", // relative | desktop | mobile | tablet | "" (agent-set)
 };
 
@@ -97,6 +102,8 @@ export function resetBrowserPane() {
   B.picking = false;
   B.gotFrame = false;
   B.navigating = false;
+  B.inputOwner = false;
+  B.agentLock = false;
   B.paneGen += 1;
   B.restoreURL = "";
   B.savedURL = "";
@@ -176,6 +183,8 @@ export function closeBrowserPane(opts = {}) {
   B.nav = { url: "", title: "", canGoBack: false, canGoForward: false };
   B.meta = null;
   B.gotFrame = false;
+  B.inputOwner = false;
+  B.agentLock = false;
   B.status = "idle";
   if (persist && key) {
     bootSkip.add(key);
@@ -229,9 +238,11 @@ function buildPane(pane) {
       <button class="icon-btn sm" data-action="browser-back" title="Back" aria-label="Back">${icon("chevron-left", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-forward" title="Forward" aria-label="Forward">${icon("chevron-right", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-reload" title="Reload" aria-label="Reload">${icon("refresh", "sm")}</button>
-      <div class="browser-addr"><input class="input" id="browser-url" placeholder="Enter a URL" spellcheck="false" autocomplete="off" aria-label="Browser address"></div>
+      <div class="browser-addr"><input class="input" id="browser-url" placeholder="Enter a URL" spellcheck="false" autocomplete="off" aria-label="Browser address"><div class="browser-suggest" id="browser-suggest" hidden></div></div>
       <button class="icon-btn sm" data-action="browser-annotate" title="Annotate an element" aria-label="Annotate an element" aria-pressed="false">${icon("pin", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-device" title="Device emulation" aria-label="Device emulation" aria-pressed="true">${icon("smartphone", "sm")}</button>
+      <span class="browser-profile-wrap" title="Persistent browser profile"><button class="device-chip browser-profile" id="browser-profile" data-action="browser-profile-picker" aria-label="Browser profile">default</button></span>
+      <button class="icon-btn sm" data-action="browser-devtools" title="Developer tools" aria-label="Developer tools" aria-pressed="false">${icon("terminal", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-close" title="Close pane" aria-label="Close pane">${icon("x", "sm")}</button>
     </div>
     <div class="browser-device-bar" id="browser-device-bar">
@@ -241,9 +252,17 @@ function buildPane(pane) {
       <button class="device-chip" data-action="browser-device-mode" data-device="tablet" title="Fixed 768×1024 tablet profile with a touch UA">Tablet</button>
       <span class="browser-device-readout" id="browser-device-readout"></span>
     </div>
+    <div class="browser-devtools" id="browser-devtools" hidden>
+      <div class="browser-devtools-log" id="browser-devtools-log" aria-label="Console output"></div>
+      <div class="browser-devtools-repl">
+        <input class="input" id="browser-devtools-input" placeholder="Evaluate JavaScript" spellcheck="false" autocomplete="off" aria-label="Evaluate JavaScript">
+        <button class="btn btn-sm" data-action="browser-devtools-run">Run</button>
+      </div>
+    </div>
     <div class="browser-view" id="browser-view" tabindex="0" aria-label="Remote browser view">
       <img class="browser-frame" id="browser-frame" alt="Remote page" draggable="false">
       <div class="browser-state" id="browser-state"></div>
+      <div class="browser-watch" id="browser-watch"></div>
     </div>`;
   bindPane(pane);
 }
@@ -253,10 +272,33 @@ function bindPane(pane) {
   const url = $("#browser-url", pane);
   url.addEventListener("keydown", (e) => {
     e.stopPropagation();
-    if (e.key === "Enter") { e.preventDefault(); browserNavigate(url.value); }
-    else if (e.key === "Escape") { url.value = B.nav.url || ""; url.blur(); }
+    const rows = $$(".browser-suggest-row", $("#browser-suggest") || document.createElement("div"));
+    const pick = () => { const i = B.suggestIdx >= 0 ? B.suggestIdx : 0; if (rows[i]) { browserNavigate(B.suggest[i].url); return true; } return false; };
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (B.suggest.length) {
+        e.preventDefault();
+        const step = e.key === "ArrowDown" ? 1 : -1;
+        B.suggestIdx = (B.suggestIdx + step + B.suggest.length + 1) % (B.suggest.length + 1) - 1;
+        renderSuggest();
+      }
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (!pick()) browserNavigate(url.value);
+      hideSuggest();
+    } else if (e.key === "Escape") {
+      if (!hideSuggest()) { url.value = B.nav.url || ""; url.blur(); }
+    }
   });
-  url.addEventListener("focus", () => url.select());
+  url.addEventListener("focus", () => { url.select(); querySuggest(""); });
+  url.addEventListener("input", () => querySuggest(url.value));
+  url.addEventListener("blur", () => setTimeout(hideSuggest, 150));
+  const devInput = $("#browser-devtools-input", pane);
+  devInput.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); runDevEval(devInput.value); devInput.value = ""; }
+  });
   view.addEventListener("pointerdown", () => view.focus());
   view.addEventListener("pointermove", onViewMove);
   view.addEventListener("click", onViewClick);
@@ -265,6 +307,8 @@ function bindPane(pane) {
   view.addEventListener("wheel", onViewWheel, { passive: false });
   view.addEventListener("keydown", onViewKey);
   view.addEventListener("pointerleave", () => { if (B.annotate && !B.pendingPick) hideHover(); });
+  const profileBtn = $("#browser-profile", pane);
+  if (profileBtn) profileBtn.addEventListener("keydown", (e) => e.stopPropagation());
   const grip = $("#browser-resize", pane);
   grip.addEventListener("pointerdown", (e) => {
     e.preventDefault();
@@ -362,8 +406,11 @@ function attach(session) {
   B.gotFrame = false;
   B.viewportGuest = false;
   B.sawMeta = false;
+  B.inputOwner = false;
+  B.agentLock = false;
   applyNavState(session);
   connectStream();
+  refreshProfiles();
 }
 
 // Exported for the "Reconnect" affordances — re-runs attach-or-create.
@@ -483,6 +530,23 @@ function handleStreamMessage(msg) {
       }
       applyMeta();
       break;
+    case "control": {
+      const wasOwner = B.inputOwner;
+      B.inputOwner = msg.owner === "you";
+      B.agentLock = msg.owner === "agent";
+      if (!B.inputOwner) {
+        // An ex-controller stops resizing the shared viewport; its pane
+        // resizes would otherwise spam the socket and stretch the frame.
+        stopResizeWatch();
+      } else if (!wasOwner && !B.viewportGuest && !B.holdViewport) {
+        // The lease grant is the sizing push: control arrives after the
+        // attach meta, so a first-time owner emulates here, not on open.
+        applyDeviceChoice();
+      }
+      renderWatch();
+      updateToolbar();
+      break;
+    }
     case "closed":
       setStatus("closed", msg.message || "", msg.code || "");
       break;
@@ -514,6 +578,7 @@ function renderFrame(data) {
     B.gotFrame = true;
     renderState();
   }
+  renderWatch();
 }
 
 function placeAgentPointer() {
@@ -614,10 +679,146 @@ function browserApiError(e, what) {
   toast(what, e.message, "error");
 }
 
+/* ---------------- address bar suggestions ---------------- */
+
+let suggestTimer = null;
+let suggestSeq = 0;
+
+function browserProfile() { return B.session?.profile || "default"; }
+
+async function querySuggest(q) {
+  const box = $("#browser-suggest");
+  if (!box || !B.session?.id) return;
+  const seq = ++suggestSeq;
+  clearTimeout(suggestTimer);
+  suggestTimer = setTimeout(async () => {
+    try {
+      const d = await api(`/browser/history?profile=${encodeURIComponent(browserProfile())}&q=${encodeURIComponent(q.trim())}`);
+      if (seq !== suggestSeq || !B.open) return;
+      B.suggest = (d.entries || []).slice(0, 8);
+      B.suggestIdx = -1;
+      renderSuggest();
+    } catch { /* history is advisory */ }
+  }, q.trim() ? 120 : 0);
+}
+
+function renderSuggest() {
+  const box = $("#browser-suggest");
+  if (!box) return;
+  if (!B.suggest.length) { box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  box.innerHTML = B.suggest.map((e, i) => `
+    <div class="browser-suggest-row${i === B.suggestIdx ? " active" : ""}" data-action="browser-suggest" data-url="${esc(e.url || "")}">
+      <span class="browser-suggest-title">${esc(e.title || e.url || "")}</span>
+      <span class="browser-suggest-url">${esc(e.url || "")}</span>
+    </div>`).join("");
+  for (const row of $$(".browser-suggest-row", box)) {
+    row.addEventListener("mousedown", (e) => e.preventDefault()); // keep the input focused until click
+  }
+}
+
+function hideSuggest() {
+  const box = $("#browser-suggest");
+  const was = box && !box.hidden;
+  if (box) box.hidden = true;
+  B.suggest = [];
+  B.suggestIdx = -1;
+  return was;
+}
+
+/* ---------------- developer tools drawer ---------------- */
+
+export function toggleDevtools() {
+  B.devtools = !B.devtools;
+  const drawer = $("#browser-devtools");
+  if (drawer) drawer.hidden = !B.devtools;
+  $(`[data-action="browser-devtools"]`)?.setAttribute("aria-pressed", String(B.devtools));
+  if (B.devtools) {
+    $("#browser-devtools-input")?.focus();
+    drainDevConsole();
+  }
+}
+
+function devLog(html, cls = "") {
+  const log = $("#browser-devtools-log");
+  if (!log) return;
+  const row = document.createElement("div");
+  row.className = `browser-devtools-line ${cls}`.trim();
+  row.innerHTML = html;
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function drainDevConsole() {
+  const log = $("#browser-devtools-log");
+  // The eval REPL shares this log — a late console drain must not wipe lines
+  // the user already saw, so draining only fills an untouched log.
+  if (!B.devtools || !B.session?.id || !log || log.querySelector(".is-in")) return;
+  try {
+    const d = await api(`/browser/sessions/${encodeURIComponent(B.session.id)}/console`);
+    if (!B.devtools || log.querySelector(".is-in")) return;
+    log.innerHTML = "";
+    for (const e of d.entries || []) {
+      devLog(`<span class="browser-devtools-type">${esc(e.type || e.level || "log")}</span> ${esc(String(e.text ?? e.value ?? ""))}`, `is-${e.type || e.level || "log"}`);
+    }
+    if (!d.entries?.length) devLog('<span class="muted">No console output captured for this page.</span>', "muted");
+  } catch { devLog('<span class="muted">Console unavailable.</span>', "muted"); }
+}
+
+export async function runDevEval(expr) {
+  const input = $("#browser-devtools-input");
+  const expression = expr ?? input?.value ?? "";
+  if (!expression.trim() || !B.session?.id) return;
+  if (expr === undefined && input) input.value = "";
+  devLog(`<span class="browser-devtools-type">&gt;</span> ${esc(expression)}`, "is-in");
+  try {
+    const d = await api(`/browser/sessions/${encodeURIComponent(B.session.id)}/eval`, { method: "POST", body: { expression } });
+    if (!d.ok) { devLog(esc(d.error || "Evaluation failed"), "is-error"); return; }
+    devLog(esc(typeof d.result === "string" ? d.result : JSON.stringify(d.result)), "is-out");
+  } catch (e) { devLog(esc(e.message || "Evaluation failed"), "is-error"); }
+  drainDevConsole();
+}
+
+/* ---------------- profile picker ---------------- */
+
+let knownProfiles = ["default"];
+
+async function refreshProfiles() {
+  const btn = $("#browser-profile");
+  if (!btn) return;
+  try {
+    const d = await api("/browser/profiles");
+    const names = (d.profiles || []).map((p) => p.name || p);
+    knownProfiles = [...new Set(["default", browserProfile(), ...names])];
+  } catch { /* keep the last known list */ }
+  btn.textContent = browserProfile();
+}
+
+export function openProfilePicker() {
+  const anchor = $("#browser-profile");
+  if (!anchor) return;
+  const cur = browserProfile();
+  openPopover(anchor, `<div class="browser-profile-pop">${knownProfiles.map((n) =>
+    `<button class="browser-profile-row${n === cur ? " active" : ""}" data-profile="${esc(n)}">${esc(n)}${n === cur ? ` ${icon("check", "sm")}` : ""}</button>`).join("")}</div>`, { width: 180 });
+  for (const row of $$(".browser-profile-row")) {
+    row.addEventListener("click", () => { closePopover(); switchProfile(row.dataset.profile); });
+  }
+}
+
+async function switchProfile(name) {
+  if (!B.session?.id || !name || !knownProfiles.includes(name) || name === browserProfile()) return;
+  try {
+    const d = await api(`/browser/sessions/${encodeURIComponent(B.session.id)}/profile`, { method: "POST", body: { profile: name } });
+    B.session = d.session || B.session;
+    refreshProfiles();
+    toast("Profile switched", `Now browsing as "${name}".`, "info");
+  } catch (e) { toast("Profile switch failed", e.message, "error"); refreshProfiles(); }
+}
+
 /* ---------------- input forwarding ---------------- */
 
 function canInput() {
-  return B.open && !B.annotate && B.status === "live" && B.socket && B.socket.readyState === WebSocket.OPEN;
+  return B.open && !B.annotate && B.inputOwner && B.status === "live" && B.socket && B.socket.readyState === WebSocket.OPEN;
 }
 
 function sendCtl(obj) {
@@ -719,6 +920,7 @@ function viewBox() {
 // presets emulate a concrete device with UA and touch.
 export function toggleDeviceBar() {
   B.deviceBar = !B.deviceBar;
+  localStorage.setItem("nusamation:browser-device-bar", B.deviceBar ? "1" : "0");
   updateDeviceBar();
 }
 
@@ -735,6 +937,9 @@ export function browserDeviceMode(mode) {
 // yet open. Relative clears the whole profile (plain desktop at pane size,
 // not a mobile UA stretched to fit); presets pin a fixed device.
 function applyDeviceChoice() {
+  // A watching pane owns neither input nor sizing — keep letterboxing the
+  // held viewport even if something (meta, a stale chip click) calls this.
+  if (!B.inputOwner) return;
   // Any explicit call — device chip, preset, agent-drive release — is the
   // user taking viewport control back from a guest attach.
   B.viewportGuest = false;
@@ -759,6 +964,8 @@ function updateDeviceBar() {
   if (toggle) toggle.setAttribute("aria-pressed", String(B.deviceBar));
   for (const chip of $$(".device-chip", bar)) {
     chip.classList.toggle("active", chip.dataset.device === B.deviceChoice);
+    // Chips emulate the shared viewport — a watcher keeps them read-only.
+    chip.disabled = !B.inputOwner;
   }
   const w = B.meta?.deviceWidth || B.session?.width || 0;
   const h = B.meta?.deviceHeight || B.session?.height || 0;
@@ -1065,7 +1272,32 @@ function setStatus(status, text = "", code = "") {
   B.closedCode = code || "";
   if (status !== "live" && B.annotate) setAnnotate(false);
   renderState();
+  renderWatch();
   updateToolbar();
+}
+
+// The share-screen affordance: while this pane watches a stream it does not
+// control, a small floating bar offers Take over instead of swallowing the
+// whole view behind an overlay. Hidden while input is owned, the stream is
+// not live, or the first frame has not arrived.
+function renderWatch() {
+  const el = $("#browser-watch");
+  if (!el) return;
+  const show = B.open && B.status === "live" && B.gotFrame && !B.inputOwner;
+  el.classList.toggle("show", show);
+  if (!show) { el.innerHTML = ""; return; }
+  const text = B.agentLock
+    ? "The agent is holding control — your input is paused"
+    : "Shared view — another pane is in control";
+  el.innerHTML = `<span>${esc(text)}</span>
+    <button class="btn btn-secondary btn-sm" data-action="browser-takeover">${icon("refresh", "sm")} Take over</button>`;
+}
+
+// The Take over affordance claims the input lease on the live socket — a
+// human claim always wins, including over an agent lock.
+export function browserTakeover() {
+  if (!B.socket || B.socket.readyState !== WebSocket.OPEN) return;
+  sendCtl({ type: "takeover" });
 }
 
 function closedLabel(code) {
@@ -1107,17 +1339,29 @@ function updateToolbar() {
   if (url && document.activeElement !== url) url.value = B.nav.url || "";
   const live = B.status === "live";
   const active = B.session && B.status !== "closed" && B.status !== "error";
+  // A watching pane observes the shared session — every drive affordance
+  // (navigation, annotation picks, emulation, profile swap, devtools REPL)
+  // is reserved for the controller until Take over grants the lease.
+  const drive = B.inputOwner;
   const back = $(`[data-action="browser-back"]`);
   const fwd = $(`[data-action="browser-forward"]`);
   const reload = $(`[data-action="browser-reload"]`);
-  if (back) back.disabled = !live || !B.nav.canGoBack || B.navigating;
-  if (fwd) fwd.disabled = !live || !B.nav.canGoForward || B.navigating;
-  if (reload) reload.disabled = !active || B.navigating;
-  if (url) url.disabled = !active;
+  if (back) back.disabled = !live || !drive || !B.nav.canGoBack || B.navigating;
+  if (fwd) fwd.disabled = !live || !drive || !B.nav.canGoForward || B.navigating;
+  if (reload) reload.disabled = !active || !drive || B.navigating;
+  if (url) url.disabled = !active || !drive;
   const annotate = $(`[data-action="browser-annotate"]`);
-  if (annotate) annotate.disabled = !live;
+  if (annotate) annotate.disabled = !live || !drive;
   const device = $(`[data-action="browser-device"]`);
-  if (device) device.disabled = !active;
+  if (device) device.disabled = !active || !drive;
+  const profile = $("#browser-profile");
+  if (profile) profile.disabled = !active || !drive;
+  const devtools = $(`[data-action="browser-devtools"]`);
+  if (devtools) devtools.disabled = !active || !drive;
+  const repl = $("#browser-devtools-input");
+  if (repl) repl.disabled = !drive;
+  const run = $(`[data-action="browser-devtools-run"]`);
+  if (run) run.disabled = !drive;
   updateAnnotateUI();
   updateDeviceBar();
 }

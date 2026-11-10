@@ -51,8 +51,8 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 	var snapshotText, detail string
 	switch tool {
 	case "navigate":
-		target, _ := normalizeBrowserURL(in.URL)
-		if _, err := sess.Navigate(r.Context(), target); err != nil {
+		target, implicit, _ := normalizeBrowserURL(in.URL)
+		if _, err := s.navigateWithSchemeFallback(r.Context(), sess, target, implicit); err != nil {
 			s.browserError(w, err, false)
 			return
 		}
@@ -92,6 +92,18 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 		if err := browserWait(r, sess, in); err != nil {
 			writeError(w, http.StatusRequestTimeout, "wait_timeout", err.Error())
 			return
+		}
+	case "profile":
+		if err := s.browser.MigrateProfile(r.Context(), sess, in.Profile); err != nil {
+			s.browserError(w, err, false)
+			return
+		}
+	case "lock":
+		sess.SetAgentLock(*in.Mode)
+		if *in.Mode {
+			detail = "input locked — pane viewers are muted until a human takes over"
+		} else {
+			detail = "input unlocked"
 		}
 	case "emulate":
 		if _, err := sess.ApplyDevicePatch(in.Preset, in.devicePatch()); err != nil {
@@ -276,6 +288,7 @@ type browserUseRequest struct {
 	DeltaX      float64              `json:"deltaX"`
 	DeltaY      float64              `json:"deltaY"`
 	Preset      string               `json:"preset"`
+	Profile     string               `json:"profile"`
 	Expression  string               `json:"expression"`
 	Function    string               `json:"function"`
 	Ref         string               `json:"ref"`
@@ -285,6 +298,7 @@ type browserUseRequest struct {
 	Time        float64              `json:"time"`
 	TextGone    string               `json:"textGone"`
 	Submit      bool                 `json:"submit"`
+	Mode        *bool                `json:"mode"`
 	Width       *int64               `json:"width"`
 	Height      *int64               `json:"height"`
 	DPR         *float64             `json:"dpr"`
@@ -321,6 +335,8 @@ func normalizeBrowserUseTool(name string) string {
 		return "press"
 	case "browser_wait_for":
 		return "wait"
+	case "browser_profile":
+		return "profile"
 	case "browser_evaluate":
 		return "eval"
 	case "browser_console_messages":
@@ -335,6 +351,8 @@ func normalizeBrowserUseTool(name string) string {
 		return "scroll"
 	case "browser_emulate":
 		return "emulate"
+	case "browser_lock":
+		return "lock"
 	default:
 		return name
 	}
@@ -344,7 +362,7 @@ func knownBrowserUseTool(name string) bool {
 	switch name {
 	case "navigate", "navigate_back", "navigate_forward", "snapshot", "tree",
 		"console", "wait", "move", "hover", "click", "type", "press", "scroll",
-		"emulate", "eval", "select", "fill":
+		"emulate", "eval", "select", "fill", "lock", "profile":
 		return true
 	default:
 		return false
@@ -374,7 +392,7 @@ func (in browserUseRequest) invalid(tool string) string {
 		if strings.TrimSpace(in.URL) == "" {
 			return "A URL is required."
 		}
-		if _, ok := normalizeBrowserURL(in.URL); !ok {
+		if _, _, ok := normalizeBrowserURL(in.URL); !ok {
 			return "Invalid URL."
 		}
 	case "emulate":
@@ -427,6 +445,10 @@ func (in browserUseRequest) invalid(tool string) string {
 	case "eval":
 		if strings.TrimSpace(in.Expression) == "" && strings.TrimSpace(in.Function) == "" {
 			return "expression or function is required."
+		}
+	case "lock":
+		if in.Mode == nil {
+			return "mode is required."
 		}
 	}
 	return ""

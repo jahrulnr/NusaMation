@@ -124,6 +124,8 @@ func New(cfg config.Config) (*App, error) {
 		ExecPath: cfg.BrowserExec, Log: logger,
 		SaveAttachment: chatSvc.SaveInboundAttachment,
 		DataDir:        filepath.Join(cfg.DataDir, "browser-picks"),
+		ProfileDir:     filepath.Join(cfg.DataDir, "browser-profiles"),
+		Store:          st,
 	})
 	if !cfg.DisableWhatsApp {
 		if err := registerWhatsApp(chanMgr, chatSvc, st, cfg, logger); err != nil {

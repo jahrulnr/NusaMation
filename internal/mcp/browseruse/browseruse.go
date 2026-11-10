@@ -77,6 +77,8 @@ func toolList() []stdio.Tool {
 		{Name: "browser_console_messages", Description: "Return console messages (log/warn/error) plus page errors captured since the page loaded, newest last, up to 200.", InputSchema: obj(map[string]any{})},
 		{Name: "browser_resize", Description: "Resize the browser viewport to width x height CSS pixels.", InputSchema: obj(map[string]any{"width": num, "height": num}, "width", "height")},
 		{Name: "browser_emulate", Description: "Set device emulation: a preset (desktop, mobile, tablet) or explicit fields — width, height, dpr, mobile, ua, touch. Mobile/tablet presets enable touch and a mobile user agent; clicks become taps.", InputSchema: obj(map[string]any{"preset": str, "width": num, "height": num, "dpr": num, "mobile": boolean, "ua": str, "touch": boolean})},
+		{Name: "browser_profile", Description: "Switch the pane to a different persistent browser profile (name). Each profile keeps its own cookies, storage, history, and saved logins across restarts; the pane's current page reloads in the new profile. Omit profile or use 'default' for the default profile.", InputSchema: obj(map[string]any{"profile": str})},
+		{Name: "browser_lock", Description: "Take or release the pane's input lease: mode=true mutes input from every human pane viewer so a stray click cannot disturb the run (they keep watching the live view); mode=false hands control back to the current viewer. A human can always preempt with Take over, which ends the lock.", InputSchema: obj(map[string]any{"mode": boolean}, "mode")},
 	}
 }
 

@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/jahrulnr/nusamation/internal/browser"
@@ -47,25 +50,84 @@ func (s *Server) browserSession(w http.ResponseWriter, r *http.Request) *browser
 	return sess
 }
 
-func normalizeBrowserURL(raw string) (string, bool) {
+// normalizeBrowserURL resolves an address-bar string into a navigable URL.
+// implicit=true means the scheme was assumed (https) and an http retry is
+// allowed when the connection fails; anything that does not look like a URL
+// becomes a Google search, matching how browser omniboxes behave.
+func normalizeBrowserURL(raw string) (target string, implicit bool, ok bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "about:blank", true
+		return "about:blank", false, true
 	}
 	if !hasScheme(raw) {
+		if looksLikeSearch(raw) {
+			return "https://www.google.com/search?q=" + url.QueryEscape(raw), false, true
+		}
 		raw = "https://" + raw
+		implicit = true
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", false
+		return "", false, false
 	}
 	switch u.Scheme {
 	case "http", "https":
-		return raw, u.Host != ""
+		return raw, implicit, u.Host != ""
 	case "about", "data":
-		return raw, u.Opaque != ""
+		return raw, false, u.Opaque != ""
+	case "file":
+		return raw, false, u.Path != ""
 	}
-	return "", false
+	return "https://www.google.com/search?q=" + url.QueryEscape(raw), false, true
+}
+
+// looksLikeSearch reports whether scheme-less input is a search term rather
+// than a host: localhost/IPs/hosts-with-a-dot navigate, the rest searches.
+func looksLikeSearch(raw string) bool {
+	if strings.ContainsAny(raw, " \t") {
+		return true
+	}
+	host := raw
+	if i := strings.IndexAny(host, "/?#"); i >= 0 {
+		host = host[:i]
+	}
+	hasPort := false
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		hasPort = host[i+1:] != "" && strings.TrimLeft(host[i+1:], "0123456789") == ""
+		host = host[:i] // port suffix
+	}
+	if hasPort || strings.EqualFold(host, "localhost") || net.ParseIP(host) != nil {
+		return false
+	}
+	return !strings.Contains(host, ".")
+}
+
+var fallbackNavReasons = []string{
+	"ERR_CONNECTION_REFUSED", "ERR_SSL_", "ERR_CONNECTION_RESET",
+	"ERR_CONNECTION_ABORTED", "ERR_CONNECTION_CLOSED", "ERR_EMPTY_RESPONSE",
+	"ERR_ADDRESS_UNREACHABLE", "ERR_TIMED_OUT",
+}
+
+// navigateWithSchemeFallback retries an implicit https:// target over http://
+// when the first attempt dies on a transport error — the classic "site only
+// serves plain http" case a typed scheme would have avoided.
+func (s *Server) navigateWithSchemeFallback(ctx context.Context, sess *browser.Session, target string, implicit bool) (*browser.NavResult, error) {
+	res, err := sess.Navigate(ctx, target)
+	var navErr *browser.NavigateError
+	if !implicit || !strings.HasPrefix(target, "https://") || !errors.As(err, &navErr) {
+		return res, err
+	}
+	retryable := false
+	for _, p := range fallbackNavReasons {
+		if strings.Contains(navErr.Reason, p) {
+			retryable = true
+			break
+		}
+	}
+	if !retryable {
+		return res, err
+	}
+	return sess.Navigate(ctx, "http://"+strings.TrimPrefix(target, "https://"))
 }
 
 // hasScheme reports whether s starts with a URI scheme (ALPHA *(ALPHA/DIGIT/
@@ -83,7 +145,21 @@ func hasScheme(s string) bool {
 			return false
 		}
 	}
-	return true
+	// "host:port" looks scheme-shaped to a parser (localhost:8787, nas:5000)
+	// but is really a scheme-less address — a real scheme's rest is never a
+	// bare port, so a digits-only tail un-declares the scheme.
+	digits := false
+	for k := i + 1; k < len(s); k++ {
+		c := s[k]
+		if c == '/' || c == '?' || c == '#' {
+			break
+		}
+		if c < '0' || c > '9' {
+			return true
+		}
+		digits = true
+	}
+	return !digits
 }
 
 func (s *Server) handleBrowserSessionCreate(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +170,7 @@ func (s *Server) handleBrowserSessionCreate(w http.ResponseWriter, r *http.Reque
 	var in struct {
 		URL            string `json:"url"`
 		ConversationID string `json:"conversationId"`
+		Profile        string `json:"profile"`
 		Width          int    `json:"width"`
 		Height         int    `json:"height"`
 	}
@@ -108,7 +185,7 @@ func (s *Server) handleBrowserSessionCreate(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	target, ok := normalizeBrowserURL(in.URL)
+	target, _, ok := normalizeBrowserURL(in.URL)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid URL.")
 		return
@@ -125,8 +202,8 @@ func (s *Server) handleBrowserSessionCreate(w http.ResponseWriter, r *http.Reque
 		}
 		return v
 	}
-	sess, err := s.browser.CreateSession(r.Context(), in.ConversationID, target,
-		clamp(in.Width, 1280), clamp(in.Height, 800))
+	sess, err := s.browser.CreateSessionProfile(r.Context(), in.ConversationID, target,
+		clamp(in.Width, 1280), clamp(in.Height, 800), in.Profile)
 	if err != nil {
 		s.browserError(w, err, false)
 		return
@@ -180,12 +257,12 @@ func (s *Server) handleBrowserNavigate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "A URL is required.")
 		return
 	}
-	target, ok := normalizeBrowserURL(in.URL)
+	target, implicit, ok := normalizeBrowserURL(in.URL)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid URL.")
 		return
 	}
-	res, err := sess.Navigate(r.Context(), target)
+	res, err := s.navigateWithSchemeFallback(r.Context(), sess, target, implicit)
 	if err != nil {
 		s.browserError(w, err, false)
 		return
@@ -279,5 +356,148 @@ func (s *Server) handleBrowserAnnotateClear(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	sess.ClearAnnotate()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleBrowserHistoryQuery serves address-bar suggestions for a profile:
+// ?q= filters by url/title, empty q returns the most recent visits.
+func (s *Server) handleBrowserHistoryQuery(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"entries": []any{}})
+		return
+	}
+	profile := browser.NormalizeProfile(r.URL.Query().Get("profile"))
+	limit := 8
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 50 {
+			limit = n
+		}
+	}
+	entries, err := s.store.SearchBrowserHistory(r.Context(), profile, r.URL.Query().Get("q"), limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "history_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+}
+
+func (s *Server) handleBrowserProfiles(w http.ResponseWriter, r *http.Request) {
+	if s.browser == nil {
+		writeError(w, http.StatusServiceUnavailable, "browser_unavailable", "The embedded browser is not enabled.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"profiles": s.browser.Profiles()})
+}
+
+// handleBrowserProfile migrates a session to another browser profile. The tab
+// is recreated in that profile's Chromium and reloads the current URL.
+func (s *Server) handleBrowserProfile(w http.ResponseWriter, r *http.Request) {
+	sess := s.browserSession(w, r)
+	if sess == nil {
+		return
+	}
+	var in struct {
+		Profile string `json:"profile"`
+	}
+	if err := readJSON(w, r, &in, 64<<10); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid profile payload.")
+		return
+	}
+	if strings.TrimSpace(in.Profile) == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "A profile name is required.")
+		return
+	}
+	if err := s.browser.MigrateProfile(r.Context(), sess, in.Profile); err != nil {
+		s.browserError(w, err, false)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"session": sess.View(true)})
+}
+
+// handleBrowserConsole drains the page's console-tap buffer for the pane's
+// developer tools drawer.
+func (s *Server) handleBrowserConsole(w http.ResponseWriter, r *http.Request) {
+	sess := s.browserSession(w, r)
+	if sess == nil {
+		return
+	}
+	raw, err := sess.Eval(r.Context(), `window.__nusaConsole || []`)
+	if err != nil {
+		s.browserError(w, err, false)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"entries":` + string(raw) + `}`))
+}
+
+// handleBrowserEval runs an expression on the pane page for the developer
+// tools drawer's console prompt. Same surface the browser_evaluate MCP tool
+// exposes to agents.
+func (s *Server) handleBrowserEval(w http.ResponseWriter, r *http.Request) {
+	sess := s.browserSession(w, r)
+	if sess == nil {
+		return
+	}
+	var in struct {
+		Expression string `json:"expression"`
+	}
+	if err := readJSON(w, r, &in, 1<<20); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid eval payload.")
+		return
+	}
+	if strings.TrimSpace(in.Expression) == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "An expression is required.")
+		return
+	}
+	val, err := sess.Eval(r.Context(), in.Expression)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"ok":true,"result":` + string(val) + `}`))
+}
+
+// handleBrowserAutofill manually retriggers the password-manager fill for
+// pages where the on-load fill missed (late-rendered forms, SPA timing).
+func (s *Server) handleBrowserAutofill(w http.ResponseWriter, r *http.Request) {
+	sess := s.browserSession(w, r)
+	if sess == nil {
+		return
+	}
+	filled, err := sess.Autofill(r.Context())
+	if err != nil {
+		s.browserError(w, err, false)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"filled": filled})
+}
+
+// handleBrowserCredentials lists a profile's saved logins, passwords masked.
+func (s *Server) handleBrowserCredentials(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"credentials": []any{}})
+		return
+	}
+	profile := browser.NormalizeProfile(r.URL.Query().Get("profile"))
+	list, err := s.store.ListBrowserCredentials(r.Context(), profile)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "credentials_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"credentials": list})
+}
+
+func (s *Server) handleBrowserCredentialDelete(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Credential not found.")
+		return
+	}
+	if err := s.store.DeleteBrowserCredential(r.Context(), r.PathValue("credId")); err != nil {
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

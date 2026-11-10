@@ -26,6 +26,7 @@ export function orderMessages(messages, turns) {
 }
 
 export function renderChat(skeleton = false) {
+  renderPlanDock();
   const chat = $("#chat");
   if (!chat) return;
   closeDetachedPopovers();
@@ -74,11 +75,6 @@ export function renderChat(skeleton = false) {
     }
   }
   const pending = currentApprovals();
-  // The plan describes current work, so it stays at the tail with approvals and
-  // the typing indicator — not at the top where prepending history would push
-  // it above the first message and out of the restored scroll anchor.
-  const plan = planEntries(S.current.plan);
-  if (plan.length) rows.push({ key: "plan", html: planCard(plan) });
   pending.forEach((a) => rows.push({ key: "approval:" + a.id, html: approvalCard(a) }));
   if (S.active && S.active.running && !pending.length) rows.push({ key: "typing", html: typingHTML() });
 
@@ -90,6 +86,8 @@ export function renderChat(skeleton = false) {
   for (const [key, element] of existing) {
     if (desired.get(key) === element._renderHTML) continue;
     $$(".tool-pre", element).forEach((el) => savedScroll.set(el.dataset.scrollKey, [el.scrollTop, el.scrollLeft]));
+    const activityItems = $(".activity-items", element);
+    if (activityItems) savedScroll.set("items:" + key, [activityItems.scrollTop, activityItems.scrollHeight - activityItems.clientHeight]);
     const messageNodes = element.matches("[data-msg-id]") ? [element, ...$$("[data-msg-id]", element)] : $$("[data-msg-id]", element);
     messageNodes.forEach((el) => {
       $$("pre > code.language-mermaid, .mermaid-diagram", el).forEach((node, index) => {
@@ -138,6 +136,14 @@ export function renderChat(skeleton = false) {
       const pos = savedScroll.get(el.dataset.scrollKey);
       if (pos) [el.scrollTop, el.scrollLeft] = pos;
     });
+    // An expanded activity list keeps its inner scroll across rebuilds —
+    // pinned to the tail (new tool calls stay visible like ChatGPT's working
+    // list) unless the user scrolled up inside it.
+    const activityItems = $(".activity-items", root);
+    if (activityItems) {
+      const prev = savedScroll.get("items:" + root.dataset.renderKey);
+      activityItems.scrollTop = prev && prev[1] - prev[0] >= 40 ? prev[0] : activityItems.scrollHeight;
+    }
   }
   if (focusedAction) {
     const next = $$("[data-action][data-id]", chat).find((el) => el.dataset.action === focusedAction[0] && el.dataset.id === focusedAction[1]);
@@ -382,13 +388,24 @@ export function planEntries(plan) {
   return [];
 }
 
-export function planCard(entries) {
-  return `<div class="plan-card">
-    <div class="plan-head">${icon("zap")} Plan <span class="grow"></span><span class="muted" style="font-weight:400">${entries.filter((e) => e.status === "completed").length}/${entries.length}</span></div>
-    <div class="plan-list">${entries.map((e) => {
+export function renderPlanDock() {
+  const dock = $("#plan-dock");
+  if (!dock) return;
+  const entries = planEntries(S.current?.plan);
+  dock.innerHTML = entries.length ? planCard(entries, S.planExpanded) : "";
+}
+
+// The dock card floats above the composer: collapsed it is a one-line status
+// strip, expanded it shows the full checklist. Keeping it out of the scroll
+// list also means a lazy history prepend can never push it out of view.
+export function planCard(entries, expanded) {
+  const done = entries.filter((e) => e.status === "completed").length;
+  return `<div class="plan-card ${expanded ? "expanded" : ""}">
+    <button type="button" class="plan-head" data-action="toggle-plan" aria-expanded="${expanded ? "true" : "false"}">${icon("zap")} Plan <span class="grow"></span><span class="muted" style="font-weight:400">${done}/${entries.length}</span>${icon(expanded ? "chevron-up" : "chevron-down", "sm")}</button>
+    ${expanded ? `<div class="plan-list">${entries.map((e) => {
       const st = String(e.status || "pending").toLowerCase();
       return `<div class="plan-step ${esc(st)}"><span class="box">${st === "completed" ? icon("check") : ""}</span><span>${esc(e.title || e.content || e.text || "")}</span></div>`;
-    }).join("")}</div>
+    }).join("")}</div>` : ""}
   </div>`;
 }
 
@@ -547,7 +564,16 @@ export function renderStreamMessage(message) {
   const chat = $("#chat"), sc = $("#chat-scroll");
   if (!chat || !sc || message.role !== "assistant") return false;
   const node = chat.querySelector(`[data-msg-id="${CSS.escape(message.id)}"]`);
-  if (!node) return false;
+  if (!node) {
+    // A new tool/thought at an activity group's tail appends in place — the
+    // row-diff path would re-serialize and re-parse every sibling item, an
+    // O(n²) over a long turn that shows up as scroll lag.
+    if (["tool", "thought"].includes(message.kind) && appendActivityItem(chat, message)) {
+      if (S.scrollPinned) sc.scrollTop = sc.scrollHeight;
+      return true;
+    }
+    return false;
+  }
   if (message.kind === "tool") {
     const positions = new Map($$(".tool-pre", node).map((pre) => [pre.dataset.scrollKey, [pre.scrollTop, pre.scrollLeft]]));
     const focus = document.activeElement;
@@ -594,6 +620,34 @@ export function renderStreamMessage(message) {
   restoreMedia(node, media);
   enhanceMarkdown(body);
   if (S.scrollPinned) sc.scrollTop = sc.scrollHeight;
+  return true;
+}
+
+// appendActivityItem grows an activity group by one node without touching
+// its siblings: the message must follow the group's current tail item in the
+// ordered stream, which also guarantees it lands in the right group when one
+// turn has several. Anything else falls back to the full row diff.
+function appendActivityItem(chat, message) {
+  if (!message.turnId) return false;
+  const ordered = orderMessages(S.messages, S.turns);
+  const prev = ordered[ordered.indexOf(message) - 1];
+  if (!prev || prev.turnId !== message.turnId || !["tool", "thought"].includes(prev.kind)) return false;
+  const items = $$(`.activity[data-render-key^="activity:${CSS.escape(message.turnId)}:"]`, chat)
+    .map((a) => $(".activity-items", a))
+    .find((list) => list?.lastElementChild?.dataset.msgId === prev.id);
+  if (!items) return false;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = messageHTML(message);
+  const node = wrapper.firstElementChild;
+  if (!node) return false;
+  items.appendChild(node);
+  enhanceMarkdown(node);
+  const count = $(".activity-count", items.closest(".activity") || chat);
+  if (count) {
+    const tools = S.messages.filter((m) => m.turnId === message.turnId && m.kind === "tool");
+    const failed = tools.some((m) => ["failed", "error"].includes(String(parseJSON(m.content, {})?.status || m.status)));
+    count.textContent = `${tools.length} tool calls${failed ? " · failed" : ""}`;
+  }
   return true;
 }
 

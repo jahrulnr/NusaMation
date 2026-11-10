@@ -26,16 +26,23 @@ function world() {
   const B = {
     meta: null, sawMeta: false, viewportGuest: false, holdViewport: false,
     deviceChoice: 'relative', pendingPointer: null, observer: null,
-    socket: { readyState: 1 /* OPEN */ }, session: null,
+    inputOwner: false, agentLock: false, nav: {}, navigating: false,
+    status: 'live', gotFrame: true, open: true, annotate: false, session: null,
+    socket: { readyState: 1 /* OPEN */ },
   };
   const ctx = {
     B,
     WebSocket: { OPEN: 1 },
+    document: { activeElement: null },
+    $: () => null,
+    $$: () => [],
     viewBox: () => ({ w: 400, h: 300 }),
     applyMeta() {},
     setStatus() {},
     placeAgentPointer() {},
     updateDeviceBar() {},
+    updateAnnotateUI() {},
+    renderWatch() {},
     sendCtl(msg) { if (msg.type === 'emulate') calls.emulate++; if (msg.type === 'resize') calls.resize++; },
     startResizeWatch() {},
     stopResizeWatch() {},
@@ -43,14 +50,18 @@ function world() {
   };
   ctx.handleStreamMessage = vm.runInNewContext(`(${handleSrc})`, ctx);
   ctx.applyDeviceChoice = vm.runInNewContext(`(${choiceSrc})`, ctx);
+  ctx.updateToolbar = () => {};
   return { B, calls, ctx };
 }
 
 const meta = (extra = {}) => ({ type: 'meta', deviceWidth: 800, deviceHeight: 600, ...extra });
+const grant = { type: 'control', owner: 'you' };
 
-test('a first-meta without viewportHeld emulates the pane size', () => {
+test('the controller emulates the pane size once the lease lands', () => {
   const { B, calls, ctx } = world();
   ctx.handleStreamMessage(meta());
+  assert.equal(calls.emulate, 0, 'meta alone does not size — the lease does');
+  ctx.handleStreamMessage(grant);
   assert.equal(B.viewportGuest, false);
   assert.equal(calls.emulate, 1);
 });
@@ -58,6 +69,7 @@ test('a first-meta without viewportHeld emulates the pane size', () => {
 test('viewportHeld makes the attach a guest: no emulate is sent', () => {
   const { B, calls, ctx } = world();
   ctx.handleStreamMessage(meta({ viewportHeld: true }));
+  ctx.handleStreamMessage(grant);
   assert.equal(B.viewportGuest, true);
   assert.equal(calls.emulate, 0);
 });
@@ -65,6 +77,7 @@ test('viewportHeld makes the attach a guest: no emulate is sent', () => {
 test('only the first meta decides — later metas never emulate', () => {
   const { calls, ctx } = world();
   ctx.handleStreamMessage(meta({ viewportHeld: true }));
+  ctx.handleStreamMessage(grant);
   ctx.handleStreamMessage(meta());
   assert.equal(calls.emulate, 0);
 });
@@ -72,15 +85,17 @@ test('only the first meta decides — later metas never emulate', () => {
 test('an explicit applyDeviceChoice retakes viewport control', () => {
   const { B, calls, ctx } = world();
   ctx.handleStreamMessage(meta({ viewportHeld: true }));
+  ctx.handleStreamMessage(grant);
   ctx.applyDeviceChoice();
   assert.equal(B.viewportGuest, false);
   assert.equal(calls.emulate, 1);
 });
 
-test('an agent drive (holdViewport) blocks the attach emulate', () => {
+test('an agent drive (holdViewport) blocks the grant emulate', () => {
   const { B, calls, ctx } = world();
   B.holdViewport = true;
   ctx.handleStreamMessage(meta());
+  ctx.handleStreamMessage(grant);
   assert.equal(B.viewportGuest, false);
   assert.equal(calls.emulate, 0);
 });

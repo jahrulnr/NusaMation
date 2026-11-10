@@ -28,8 +28,9 @@ func (s *Server) handleBrowserStream(w http.ResponseWriter, r *http.Request) {
 		s.browserError(w, err, false)
 		return
 	}
-	// Attach replaces the incumbent stream, so it must only run after the
-	// upgrade succeeds — a failed handshake must not kill a healthy client.
+	// Attach only subscribes a viewer — incumbent panes keep their stream.
+	// It still runs after the upgrade succeeds so a failed handshake never
+	// registers a dead viewer against the session.
 	switch sess.View(false).Status {
 	case "crashed":
 		writeError(w, http.StatusServiceUnavailable, "browser_unavailable", "The browser process crashed.")
@@ -110,6 +111,22 @@ type browserInput struct {
 }
 
 func (s *Server) browserInput(sess *browser.Session, sub *browser.Stream, msg browserInput) {
+	// Control messages work on any attached stream: a viewer's takeover is
+	// how it claims the input lease, and ping is a per-connection keepalive.
+	switch msg.Type {
+	case "takeover":
+		sess.Takeover(sub)
+		return
+	case "ping":
+		b, _ := json.Marshal(map[string]any{"type": "pong", "at": time.Now().UnixMilli()})
+		sub.Send(b)
+		return
+	}
+	// Everything else is input: only the controller's stream may drive, and
+	// never while the agent holds the input lease.
+	if !sess.InputAllowed(sub) {
+		return
+	}
 	var err error
 	switch msg.Type {
 	case "mousemove":
@@ -139,9 +156,6 @@ func (s *Server) browserInput(sess *browser.Session, sub *browser.Stream, msg br
 		_, err = sess.ApplyDevicePatch(msg.Preset, browser.DevicePatch{
 			Width: w, Height: h, DPR: dpr, Mobile: msg.Mobile, UserAgent: msg.UA, Touch: msg.Touch,
 		})
-	case "ping":
-		b, _ := json.Marshal(map[string]any{"type": "pong", "at": time.Now().UnixMilli()})
-		sub.Send(b)
 	default:
 		return
 	}

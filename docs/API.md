@@ -187,22 +187,34 @@ Local artifact paths resolve on the server. Relative paths use the conversation 
 
 ## Embedded browser
 
-Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser context per session). Requires a Chrome/Chromium binary (`-browser-exec` / `NUSAMATION_BROWSER_EXEC`, otherwise PATH discovery; on Windows the standard install locations under `Program Files` and `LOCALAPPDATA` are also searched for Chrome, Chromium, and Edge).
+Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser context per session, under a per-profile Chromium process — every named profile gets its own persistent user-data dir under `<data>/browser-profiles/<name>`, so cookies, storage, history, and saved logins survive restarts and stay isolated between profiles). Requires a Chrome/Chromium binary (`-browser-exec` / `NUSAMATION_BROWSER_EXEC`, otherwise PATH discovery; on Windows the standard install locations under `Program Files` and `LOCALAPPDATA` are also searched for Chrome, Chromium, and Edge).
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/browser/sessions` | `{url?, conversationId?, width?, height?}` → `{session}` (201) |
+| `POST` | `/browser/sessions` | `{url?, conversationId?, profile?, width?, height?}` → `{session}` (201); `profile` selects the persistent browser profile (default `"default"`) |
 | `GET` | `/browser/sessions` | `{sessions}` incl. `status:"crashed"` tombstones |
 | `GET` | `/browser/sessions/{id}` | `{session}` with live nav state |
 | `DELETE` | `/browser/sessions/{id}` | closes the session and its browser context |
-| `POST` | `/browser/sessions/{id}/navigate` | `{url}` → `{url,title,canGoBack,canGoForward}`; bare domains get `https://`; 409 `busy` during in-flight nav/pick |
+| `POST` | `/browser/sessions/{id}/navigate` | `{url}` → `{url,title,canGoBack,canGoForward}`; scheme-less hosts get implicit `https://` with an `http://` retry on transport failure, scheme-less non-hosts become a Google search, `file:`/`about:`/`data:` pass through; 409 `busy` during in-flight nav/pick |
+| `POST` | `/browser/sessions/{id}/profile` | `{profile}` → `{session}`; migrates the tab into that profile's Chromium and reloads the current URL |
+| `GET` | `/browser/sessions/{id}/console` | `{entries}` drained from the page's console-tap buffer (devtools drawer) |
+| `POST` | `/browser/sessions/{id}/eval` | `{expression}` → `{ok, result}` or `{ok:false, error}`; same surface as `browser_evaluate` |
+| `POST` | `/browser/sessions/{id}/autofill` | `{filled}`; fills the first login form with the profile's saved credential for the page origin |
+| `GET` | `/browser/history` | `?profile=&q=&limit=` → `{entries}`; per-profile visit history for address-bar suggestions |
+| `GET` | `/browser/profiles` | `{profiles}` profile names seen (default plus every profile a session/credential was created under) |
+| `GET` | `/browser/credentials` | `?profile=` → `{credentials}` with passwords masked |
+| `DELETE` | `/browser/credentials/{id}` | deletes one saved login |
 | `POST` | `/browser/sessions/{id}/history` | `{action:"back"\|"forward"\|"reload"}`; missing entry is a 200 no-op |
 | `POST` | `/browser/sessions/{id}/annotate` | `{x,y,marker?}` viewport CSS px → `{pickId, marker, descriptor, upload}` (full-viewport PNG with the pin ring + numbered badge); 422 `pick_missed` |
 | `POST` | `/browser/sessions/{id}/annotate/preview` | `{x,y}` → `{missed, skipped, rect, tagName, name, selector}` hover probe; no paint/upload/pick; `skipped` while busy instead of 409 |
 | `POST` | `/browser/sessions/{id}/annotate/clear` | clears the painted highlight; picks/uploads persist |
-| WebSocket | `/browser/sessions/{id}/stream` | one live stream per session; a new attach sends the old one `closed/stream_replaced` |
+| WebSocket | `/browser/sessions/{id}/stream` | shared live view: every attached client receives the same frames; input is leased to one controller |
 
-Stream protocol: server→client binary messages are JPEG screencast frames; text messages are `{type:"meta"|"closed"|"pong"}`. `meta` carries `deviceWidth/deviceHeight/mobile/touch/dpr/pageScaleFactor/scrollOffsetX/scrollOffsetY/url/title/canGoBack/canGoForward` on change. The attach-time meta adds `viewportHeld` when the stream replaced another live viewer; clients should adopt the reported viewport instead of emulating their own pane size, which avoids thrash and the transitional "mirrored" frame a mid-stream resize can leave on static pages. Client→server text messages: `{type:"mousemove"|"click"|"wheel"|"text"|"key"|"resize"|"emulate"|"ping"}` with coordinates in viewport CSS px (the client scales the displayed frame using the latest `meta`). `resize` keeps the current device profile; `emulate` takes `{preset?:"desktop"|"mobile"|"tablet", width?, height?, dpr?, mobile?, ua?, touch?}` and applies full CDP device emulation — the pane's device bar sends these.
+Stream protocol: server→client binary messages are JPEG screencast frames; text messages are `{type:"meta"|"control"|"closed"|"pong"}`. `meta` carries `deviceWidth/deviceHeight/mobile/touch/dpr/pageScaleFactor/scrollOffsetX/scrollOffsetY/url/title/canGoBack/canGoForward` on change. The attach-time meta adds `viewportHeld` when other viewers already own the viewport; clients should adopt the reported viewport instead of emulating their own pane size, which avoids thrash and the transitional "mirrored" frame a mid-stream resize can leave on static pages.
+
+`control` carries the input lease: `{type:"control", owner:"you"|"other"|"agent"|"none"}` — sent on attach and whenever the lease changes. `you` = this connection controls; `other` = another human viewer does; `agent` = the agent holds the lock; `none` = no controller. Only `you` may send input.
+
+Client→server text messages: `{type:"mousemove"|"click"|"wheel"|"text"|"key"|"resize"|"emulate"|"takeover"|"ping"}` with coordinates in viewport CSS px (the client scales the displayed frame using the latest `meta`). `takeover` claims the lease — a human claim always wins, including over an agent lock; when the controller disconnects the lease returns to the oldest attached viewer. `resize` keeps the current device profile; `emulate` takes `{preset?:"desktop"|"mobile"|"tablet", width?, height?, dpr?, mobile?, ua?, touch?}` and applies full CDP device emulation — the pane's device bar sends these.
 
 `annotations` on `POST /messages` reference `{pickId, comment, screenshot?}` values; `screenshot:false` keeps the pin's image out of the agent prompt (history thumbnails still work). Picks persist as JSON files under `<data>/browser-picks/` so chips survive a server restart; they are deleted when the browser session closes and swept after a week. The server resolves each pick to its descriptor + marked screenshot (400 `annotation_invalid` for unknown/stale picks), stores them in `message.metadata.annotations` (incl. `marker` — the badge number drawn on the image — and `omitScreenshot`), and adds an annotation context block with selector, nearby text, layout (rect · viewport · scroll) and computed style lines plus the marked image blocks to the agent prompt. The descriptor also carries `viewport{w,h,dpr}`, `computed` style fields, the element's opening `html` tag, `framePath`, scroll offsets and page dimensions.
 

@@ -104,6 +104,8 @@ func TestNormalizeBrowserUseTool(t *testing.T) {
 		"browser_resize":           "emulate",
 		"browser_scroll":           "scroll",
 		"browser_emulate":          "emulate",
+		"browser_profile":          "profile",
+		"browser_lock":             "lock",
 		"navigate":                 "navigate",
 		"snapshot":                 "snapshot",
 		"eval":                     "eval",
@@ -115,7 +117,7 @@ func TestNormalizeBrowserUseTool(t *testing.T) {
 		}
 	}
 	for _, op := range []string{"navigate", "navigate_back", "navigate_forward", "snapshot", "tree",
-		"console", "wait", "move", "hover", "click", "type", "press", "scroll", "emulate", "eval", "select", "fill"} {
+		"console", "wait", "move", "hover", "click", "type", "press", "scroll", "emulate", "eval", "select", "fill", "lock", "profile"} {
 		if !knownBrowserUseTool(op) {
 			t.Errorf("knownBrowserUseTool(%q) = false", op)
 		}
@@ -147,6 +149,8 @@ func TestBrowserUseInvalid(t *testing.T) {
 		{"eval needs one", browserUseRequest{}, "eval", "expression or function"},
 		{"type ok no ref", browserUseRequest{Text: "hi"}, "type", ""},
 		{"type ok ref", browserUseRequest{Text: "hi", Ref: "e2"}, "type", ""},
+		{"lock needs mode", browserUseRequest{}, "lock", "mode is required"},
+		{"lock mode ok", browserUseRequest{Mode: new(true)}, "lock", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

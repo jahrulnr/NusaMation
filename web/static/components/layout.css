@@ -43,6 +43,7 @@
   .agent-pill { max-width: 40px; }
   .chat-inner { padding: 18px 14px 12px; }
   .composer-wrap { padding: 0 10px calc(10px + env(safe-area-inset-bottom)); }
+  .plan-dock { padding: 0 10px 5px; }
   .composer-configs { display: none; }
   .composer-mobile-summary { display: block; flex: 0 1 auto; min-width: 0; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted-2); }
   .composer-mobile-settings { display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 7px; color: var(--muted); font-size: 18px; }

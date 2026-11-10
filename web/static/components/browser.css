@@ -25,6 +25,8 @@
 .browser-state { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; gap: 10px; background: rgba(8,9,11,.78); color: var(--muted); font-size: 12px; padding: 22px; text-align: center; }
 .browser-state.show { display: flex; }
 .browser-msg { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.browser-watch { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: none; align-items: center; gap: 10px; padding: 6px 12px; border-radius: 999px; background: rgba(16,18,22,.92); border: 1px solid var(--border-strong); color: var(--muted); font-size: 12px; white-space: nowrap; box-shadow: 0 8px 24px rgba(0,0,0,.35); z-index: 5; }
+.browser-watch.show { display: flex; }
 .browser-msg .icon { color: var(--accent); width: 20px; height: 20px; margin-bottom: 2px; }
 .browser-msg b { font-size: 13px; color: var(--text-soft); font-weight: 650; }
 .browser-msg p { color: var(--muted-2); font-size: 11.5px; margin: 2px 0 12px; max-width: 300px; line-height: 1.55; overflow-wrap: anywhere; }
@@ -164,3 +166,58 @@ button.annot-chip { text-align: left; cursor: zoom-in; }
    transform-origin keeps the click-scale pinned to the same tip. */
 .browser-agent-pointer { position: absolute; width: 36px; height: auto; transform: translate(-3.57%, -3.45%); transform-origin: 3.57% 3.45%; pointer-events: none; z-index: 6; }
 .browser-agent-pointer.click { transform: translate(-3.57%, -3.45%) scale(.82); filter: drop-shadow(0 0 5px rgba(59,130,246,.85)); }
+
+/* Address-bar history suggestions */
+.browser-addr { position: relative; flex: 1; min-width: 0; }
+.browser-addr .input { width: 100%; }
+.browser-suggest {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+  background: var(--surface-2, #1b1d22); border: 1px solid var(--border, #33363d);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.45);
+  max-height: 260px; overflow-y: auto; padding: 4px;
+}
+.browser-suggest-row {
+  display: flex; flex-direction: column; gap: 1px; padding: 6px 8px;
+  border-radius: 6px; cursor: pointer; min-width: 0;
+}
+.browser-suggest-row:hover, .browser-suggest-row.active { background: var(--accent-soft, rgba(245,181,68,.12)); }
+.browser-suggest-title { font-size: 12.5px; color: var(--fg, #eae8e2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.browser-suggest-url { font-size: 11px; color: var(--fg-dim, #918f88); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Profile picker inside the device bar */
+.browser-profile-wrap { display: inline-flex; }
+.browser-profile {
+  appearance: none; border: 1px solid var(--border, #33363d); background: var(--surface-2, #1b1d22);
+  color: var(--fg-dim, #918f88); font: inherit; font-size: 11.5px; padding: 3px 8px; border-radius: 999px;
+  max-width: 140px; cursor: pointer;
+}
+.browser-profile:focus-visible { outline: 2px solid var(--accent, #f5b544); outline-offset: 1px; }
+
+/* Developer tools drawer */
+.browser-devtools {
+  display: flex; flex-direction: column; border-top: 1px solid var(--border, #33363d);
+  background: var(--surface, #14161a); max-height: 40%;
+}
+.browser-devtools[hidden] { display: none; }
+.browser-devtools-log {
+  flex: 1; min-height: 90px; max-height: 220px; overflow-y: auto; padding: 6px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1.5;
+}
+.browser-devtools-line { white-space: pre-wrap; word-break: break-word; color: var(--fg, #eae8e2); }
+.browser-devtools-type { color: var(--fg-dim, #918f88); margin-right: 4px; }
+.browser-devtools-line.is-error, .browser-devtools-line.is-assert { color: #e0785f; }
+.browser-devtools-line.is-warn, .browser-devtools-line.is-warning { color: #d9a94a; }
+.browser-devtools-line.is-out { color: #9ecb8e; }
+.browser-devtools-line.muted { color: var(--fg-dim, #918f88); }
+.browser-devtools-repl { display: flex; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--border, #33363d); }
+.browser-devtools-repl .input { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+
+/* Profile picker popover */
+.browser-profile-pop { display: flex; flex-direction: column; padding: 4px; }
+.browser-profile-row {
+  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  padding: 7px 10px; border: 0; border-radius: 6px; background: none;
+  color: var(--fg, #eae8e2); font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.browser-profile-row:hover { background: var(--accent-soft, rgba(245,181,68,.12)); }
+.browser-profile-row.active { color: var(--accent, #f5b544); }

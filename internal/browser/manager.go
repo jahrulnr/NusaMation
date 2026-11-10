@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -61,9 +63,16 @@ type Options struct {
 	// DataDir is where pick JSON files persist so composer chips survive a
 	// server restart; empty falls back to in-memory only (tests).
 	DataDir string
+	// ProfileDir roots one persistent Chromium user-data-dir per profile name
+	// (<dir>/<name>). Empty keeps the old temp-profile behavior: cookies and
+	// storage vanish with each Chromium restart.
+	ProfileDir string
+	// Store records visit history and saved logins per profile; nil disables
+	// persistence (tests).
+	Store *store.Store
 	// IdleTTL closes sessions with no stream and no commands after this long.
 	IdleTTL time.Duration
-	// BrowserIdleTTL stops the shared Chromium once it has had no sessions
+	// BrowserIdleTTL stops a profile's Chromium once it has had no sessions
 	// for this long; the next session relaunches it lazily.
 	BrowserIdleTTL time.Duration
 }
@@ -78,24 +87,34 @@ type Pick struct {
 	CreatedAt      int64
 }
 
+// browserProc is one running Chromium bound to a profile's user-data-dir.
+// Launching is async like the old single-browser path: waiters share
+// proc.launching until the process answers or fails.
+type browserProc struct {
+	name      string
+	ctx       context.Context
+	stop      context.CancelFunc
+	alloc     context.CancelFunc
+	idle      time.Time
+	launching chan struct{}
+	err       error
+}
+
 type Manager struct {
 	execPath       string
 	log            *slog.Logger
 	save           SaveAttachmentFunc
 	picksDir       string
+	profileDir     string
+	rec            *store.Store
 	idleTTL        time.Duration
 	browserIdleTTL time.Duration
 
 	mu           sync.Mutex
 	sessions     map[string]*Session
 	picks        map[string]*Pick
-	allocCancel  context.CancelFunc
-	browserCtx   context.Context
-	browserStop  context.CancelFunc
-	browserIdle  time.Time
+	browsers     map[string]*browserProc
 	closed       bool
-	launching    chan struct{}
-	launchErr    error
 	sweepStop    chan struct{}
 	sweepStopped chan struct{}
 }
@@ -110,10 +129,13 @@ func NewManager(opts Options) *Manager {
 		log:            log.With("component", "browser"),
 		save:           opts.SaveAttachment,
 		picksDir:       opts.DataDir,
+		profileDir:     opts.ProfileDir,
+		rec:            opts.Store,
 		idleTTL:        opts.IdleTTL,
 		browserIdleTTL: opts.BrowserIdleTTL,
 		sessions:       map[string]*Session{},
 		picks:          map[string]*Pick{},
+		browsers:       map[string]*browserProc{},
 		sweepStop:      make(chan struct{}),
 		sweepStopped:   make(chan struct{}),
 	}
@@ -143,35 +165,106 @@ func (m *Manager) Close() {
 	for _, s := range m.sessions {
 		sessions = append(sessions, s)
 	}
+	procs := make([]*browserProc, 0, len(m.browsers))
+	for _, p := range m.browsers {
+		procs = append(procs, p)
+	}
 	m.closed = true
 	m.mu.Unlock()
 	for _, s := range sessions {
 		s.Close()
 	}
-	m.killBrowser()
+	for _, p := range procs {
+		m.killBrowser(p)
+	}
+}
+
+// DefaultProfile is the profile pane sessions land in when none is requested.
+const DefaultProfile = "default"
+
+// NormalizeProfile reduces a user/agent-supplied profile name to a safe
+// directory key: lowercase letters, digits, dash, 1–40 chars.
+func NormalizeProfile(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		}
+	}
+	out := strings.Trim(b.String(), "-_")
+	if len(out) > 40 {
+		out = strings.TrimRight(out[:40], "-_")
+	}
+	if out == "" {
+		return DefaultProfile
+	}
+	return out
 }
 
 // CreateSession opens one isolated BrowserContext with a single tab and starts
 // loading url. The shared Chromium is launched lazily on first use.
 func (m *Manager) CreateSession(ctx context.Context, conversationID, url string, width, height int) (*Session, error) {
+	return m.CreateSessionProfile(ctx, conversationID, url, width, height, DefaultProfile)
+}
+
+// CreateSessionProfile opens a session bound to a named browser profile.
+// Sessions of one profile share that profile's default browser context, so
+// cookies, storage and saved logins persist across sessions and restarts.
+func (m *Manager) CreateSessionProfile(ctx context.Context, conversationID, url string, width, height int, profile string) (*Session, error) {
+	profile = NormalizeProfile(profile)
 	if url == "" {
 		url = "about:blank"
 	}
-	browserCtx, err := m.ensureBrowser(ctx)
+	browserCtx, err := m.ensureBrowser(ctx, profile)
 	if err != nil {
 		return nil, err
 	}
-	bcRes, err := chromedp.CallBrowser(browserCtx, target.CreateBrowserContext,
-		target.CreateBrowserContextParams{DisposeOnDetach: new(true)})
+	tabCtx, tabCancel, err := m.openTab(browserCtx, url, width, height)
 	if err != nil {
-		return nil, fmt.Errorf("%w: create browser context: %v", ErrUnavailable, err)
+		return nil, err
 	}
+	s := &Session{
+		m:              m,
+		id:             ids.New("bs"),
+		conversationID: conversationID,
+		profile:        profile,
+		url:            url,
+		status:         "active",
+		width:          width,
+		height:         height,
+		device:         DeviceOpts{Width: int64(width), Height: int64(height), DPR: 1},
+		createdAt:      time.Now().UnixMilli(),
+		tabCtx:         tabCtx,
+		tabCancel:      tabCancel,
+		browserCtx:     browserCtx,
+		ackCh:          make(chan int64, 32),
+		maintCh:        make(chan func(), 8),
+	}
+	s.touch()
+	s.refreshNavState()
+	m.mu.Lock()
+	m.sessions[s.id] = s
+	if p := m.browsers[profile]; p != nil {
+		p.idle = time.Time{}
+	}
+	m.mu.Unlock()
+	go s.watchNav()
+	go s.watchCrash()
+	go s.watchDialogs()
+	go s.watchLoginBindings()
+	go s.watchLoginContexts()
+	go s.maintLoop()
+	return s, nil
+}
+
+// openTab creates a target in the profile's default browser context (shared,
+// persistent storage) and installs the session's page hooks.
+func (m *Manager) openTab(browserCtx context.Context, url string, width, height int) (context.Context, context.CancelFunc, error) {
 	tRes, err := chromedp.CallBrowser(browserCtx, target.CreateTarget,
-		target.CreateTargetParams{URL: url, BrowserContextID: bcRes.BrowserContextID, NewWindow: new(true)})
+		target.CreateTargetParams{URL: url, NewWindow: new(true)})
 	if err != nil {
-		_, _ = chromedp.CallBrowser(browserCtx, target.DisposeBrowserContext,
-			target.DisposeBrowserContextParams{BrowserContextID: bcRes.BrowserContextID})
-		return nil, fmt.Errorf("%w: create target: %v", ErrUnavailable, err)
+		return nil, nil, fmt.Errorf("%w: create target: %v", ErrUnavailable, err)
 	}
 	tabCtx, tabCancel := chromedp.NewContext(browserCtx, chromedp.WithTargetID(tRes.TargetID))
 	setup := func() error {
@@ -182,11 +275,15 @@ func (m *Manager) CreateSession(ctx context.Context, conversationID, url string,
 			return err
 		}
 		if _, err := chromedp.Call(tabCtx, page.AddScriptToEvaluateOnNewDocument,
-			page.AddScriptToEvaluateOnNewDocumentParams{Source: consoleTapJS + ";\n" + selectShimJS}); err != nil {
+			page.AddScriptToEvaluateOnNewDocumentParams{Source: consoleTapJS + ";\n" + selectShimJS + ";\n" + loginTapJS}); err != nil {
 			return err
 		}
 		// The hook only fires on later navigations; run it once for this load.
-		if _, err := chromedp.Call(tabCtx, runtime.Evaluate, runtime.EvaluateParams{Expression: consoleTapJS + ";\n" + selectShimJS}); err != nil {
+		if _, err := chromedp.Call(tabCtx, runtime.Evaluate, runtime.EvaluateParams{Expression: consoleTapJS + ";\n" + selectShimJS + ";\n" + loginTapJS}); err != nil {
+			return err
+		}
+		if _, err := chromedp.Call(tabCtx, runtime.AddBinding,
+			runtime.AddBindingParams{Name: "__nusaReportLogin"}); err != nil {
 			return err
 		}
 		_, err := chromedp.Call(tabCtx, emulation.SetDeviceMetricsOverride,
@@ -195,38 +292,62 @@ func (m *Manager) CreateSession(ctx context.Context, conversationID, url string,
 	}
 	if err := setup(); err != nil {
 		tabCancel()
-		_, _ = chromedp.CallBrowser(browserCtx, target.DisposeBrowserContext,
-			target.DisposeBrowserContextParams{BrowserContextID: bcRes.BrowserContextID})
-		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return nil, nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	s := &Session{
-		m:              m,
-		id:             ids.New("bs"),
-		conversationID: conversationID,
-		url:            url,
-		status:         "active",
-		width:          width,
-		height:         height,
-		device:         DeviceOpts{Width: int64(width), Height: int64(height), DPR: 1},
-		createdAt:      time.Now().UnixMilli(),
-		tabCtx:         tabCtx,
-		tabCancel:      tabCancel,
-		browserCtx:     browserCtx,
-		browserCtxID:   bcRes.BrowserContextID,
-		ackCh:          make(chan int64, 32),
-		maintCh:        make(chan func(), 8),
+	return tabCtx, tabCancel, nil
+}
+
+// MigrateProfile moves a live session onto another browser profile: the old
+// target closes, a new one opens in the target profile and reloads the
+// session's current URL. The session id and its screencast clients survive.
+func (m *Manager) MigrateProfile(ctx context.Context, s *Session, profile string) error {
+	profile = NormalizeProfile(profile)
+	if profile == s.Profile() {
+		return nil
 	}
-	s.touch()
-	s.refreshNavState()
+	browserCtx, err := m.ensureBrowser(ctx, profile)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	url := s.url
+	width, height := s.width, s.height
+	s.mu.Unlock()
+	tabCtx, tabCancel, err := m.openTab(browserCtx, url, width, height)
+	if err != nil {
+		return err
+	}
+	s.swapTab(tabCtx, tabCancel, browserCtx, profile)
+	return nil
+}
+
+// Profiles lists the profiles that currently hold session-visible data: any
+// profile dir on disk plus every live session's profile.
+func (m *Manager) Profiles() []string {
+	set := map[string]bool{DefaultProfile: true}
 	m.mu.Lock()
-	m.sessions[s.id] = s
-	m.browserIdle = time.Time{}
+	for _, s := range m.sessions {
+		set[s.profile] = true
+	}
+	for name := range m.browsers {
+		set[name] = true
+	}
 	m.mu.Unlock()
-	go s.watchNav()
-	go s.watchCrash()
-	go s.watchDialogs()
-	go s.maintLoop()
-	return s, nil
+	if m.profileDir != "" {
+		if ents, err := os.ReadDir(m.profileDir); err == nil {
+			for _, e := range ents {
+				if e.IsDir() {
+					set[e.Name()] = true
+				}
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ConversationSession returns the live session owned by conversationID, or nil.
@@ -324,28 +445,33 @@ func (m *Manager) dropSessionPicks(sessionID string) {
 	}
 }
 
-// ensureBrowser lazily launches the shared headless Chromium and returns its
-// context. The context dies with the process, which is the crash signal.
+// ensureBrowser lazily launches the profile's headless Chromium and returns
+// its context. The context dies with the process, which is the crash signal.
 // The launch runs off m.mu so concurrent Get/List/Pick callers are not
 // stalled behind a cold (up to ~20s) start.
-func (m *Manager) ensureBrowser(ctx context.Context) (context.Context, error) {
+func (m *Manager) ensureBrowser(ctx context.Context, profile string) (context.Context, error) {
 	for {
 		m.mu.Lock()
 		if m.closed {
 			m.mu.Unlock()
 			return nil, ErrClosed
 		}
-		if m.browserCtx != nil && m.browserCtx.Err() == nil {
-			b := m.browserCtx
+		p := m.browsers[profile]
+		if p == nil {
+			p = &browserProc{name: profile}
+			m.browsers[profile] = p
+		}
+		if p.ctx != nil && p.ctx.Err() == nil {
+			b := p.ctx
 			m.mu.Unlock()
 			return b, nil
 		}
-		if m.launching == nil {
-			m.launching = make(chan struct{})
-			m.launchErr = nil
-			go m.launch(m.launching)
+		if p.launching == nil {
+			p.launching = make(chan struct{})
+			p.err = nil
+			go m.launch(p, p.launching)
 		}
-		ch := m.launching
+		ch := p.launching
 		m.mu.Unlock()
 		select {
 		case <-ch:
@@ -353,11 +479,18 @@ func (m *Manager) ensureBrowser(ctx context.Context) (context.Context, error) {
 			return nil, ctx.Err()
 		}
 		m.mu.Lock()
-		b, err, retry := m.browserCtx, m.launchErr, m.launching != nil
-		m.mu.Unlock()
-		if b != nil {
+		p = m.browsers[profile]
+		if p != nil && p.ctx != nil {
+			b := p.ctx
+			m.mu.Unlock()
 			return b, nil
 		}
+		err := error(nil)
+		retry := false
+		if p != nil {
+			err, retry = p.err, p.launching != nil
+		}
+		m.mu.Unlock()
 		if err != nil {
 			return nil, err
 		}
@@ -369,42 +502,53 @@ func (m *Manager) ensureBrowser(ctx context.Context) (context.Context, error) {
 
 // launch performs the actual process start and publishes the result (or the
 // failure) under m.mu before closing done to wake the waiters.
-func (m *Manager) launch(done chan struct{}) {
+func (m *Manager) launch(p *browserProc, done chan struct{}) {
 	defer close(done)
 	path, err := m.resolveExecPath()
 	var browserCtx context.Context
 	var browserCancel, allocCancel context.CancelFunc
 	if err == nil {
-		var allocCtx context.Context
-		allocCtx, allocCancel = chromedp.NewExecAllocator(context.Background(),
+		args := []chromedp.ExecAllocatorOption{
 			chromedp.ExecPath(path),
 			chromedp.Headless,
 			chromedp.WindowSize(1280, 800),
 			chromedp.NoFirstRun,
 			chromedp.NoDefaultBrowserCheck,
 			chromedp.DisableGPU,
-		)
-		browserCtx, browserCancel = chromedp.NewContext(allocCtx)
-		// The allocating call binds the process lifetime to its context, so
-		// the launch check runs on browserCtx itself and the timeout only
-		// abandons the wait — canceling it would kill the browser.
-		errCh := make(chan error, 1)
-		go func() {
-			_, err := chromedp.CallBrowser(browserCtx, browser.GetVersion, cdp.Empty{})
-			errCh <- err
-		}()
-		select {
-		case err = <-errCh:
-		case <-time.After(20 * time.Second):
-			err = errors.New("launch timed out")
 		}
-		if err != nil {
-			err = fmt.Errorf("%w: launching %s: %v", ErrUnavailable, path, err)
+		if m.profileDir != "" {
+			dir := filepath.Join(m.profileDir, p.name)
+			if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
+				err = fmt.Errorf("%w: profile dir: %v", ErrUnavailable, mkErr)
+			} else {
+				args = append(args, chromedp.UserDataDir(dir))
+			}
+		}
+		if err == nil {
+			var allocCtx context.Context
+			allocCtx, allocCancel = chromedp.NewExecAllocator(context.Background(), args...)
+			browserCtx, browserCancel = chromedp.NewContext(allocCtx)
+			// The allocating call binds the process lifetime to its context, so
+			// the launch check runs on browserCtx itself and the timeout only
+			// abandons the wait — canceling it would kill the browser.
+			errCh := make(chan error, 1)
+			go func() {
+				_, err := chromedp.CallBrowser(browserCtx, browser.GetVersion, cdp.Empty{})
+				errCh <- err
+			}()
+			select {
+			case err = <-errCh:
+			case <-time.After(20 * time.Second):
+				err = errors.New("launch timed out")
+			}
+			if err != nil {
+				err = fmt.Errorf("%w: launching %s: %v", ErrUnavailable, path, err)
+			}
 		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.launching = nil
+	p.launching = nil
 	if err != nil {
 		if browserCancel != nil {
 			browserCancel()
@@ -412,48 +556,55 @@ func (m *Manager) launch(done chan struct{}) {
 		if allocCancel != nil {
 			allocCancel()
 		}
-		m.launchErr = err
+		p.err = err
 		return
 	}
-	m.allocCancel = allocCancel
-	m.browserCtx = browserCtx
-	m.browserStop = browserCancel
-	m.browserIdle = time.Now()
-	go m.watchBrowser(browserCtx)
-	m.log.Info("chromium started", "exec", path)
+	p.alloc = allocCancel
+	p.ctx = browserCtx
+	p.stop = browserCancel
+	p.idle = time.Now()
+	go m.watchBrowser(p)
+	m.log.Info("chromium started", "exec", path, "profile", p.name)
 }
 
-// watchBrowser marks every live session crashed when the Chromium process
-// dies; the context Done fires because the allocator cancels it on loss.
-func (m *Manager) watchBrowser(browserCtx context.Context) {
-	<-browserCtx.Done()
+// watchBrowser marks a profile's live sessions crashed when its Chromium
+// process dies; the context Done fires because the allocator cancels on loss.
+func (m *Manager) watchBrowser(p *browserProc) {
+	m.mu.Lock()
+	ctx := p.ctx
+	m.mu.Unlock()
+	if ctx == nil {
+		return
+	}
+	<-ctx.Done()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.browserCtx != browserCtx {
+	if m.browsers[p.name] != p || p.ctx == nil {
 		return
 	}
-	m.browserCtx = nil
-	m.browserStop = nil
-	m.allocCancel = nil
+	p.ctx = nil
+	p.stop = nil
+	p.alloc = nil
 	for _, s := range m.sessions {
-		s.markCrashed("chromium process exited")
+		if s.profile == p.name {
+			s.markCrashed("chromium process exited")
+		}
 	}
-	m.log.Warn("chromium process exited; sessions marked crashed")
+	m.log.Warn("chromium process exited; sessions marked crashed", "profile", p.name)
 }
 
-func (m *Manager) killBrowser() {
+func (m *Manager) killBrowser(p *browserProc) {
 	m.mu.Lock()
-	browserCancel := m.browserStop
-	allocCancel := m.allocCancel
-	m.browserCtx = nil
-	m.browserStop = nil
-	m.allocCancel = nil
+	stop, alloc := p.stop, p.alloc
+	p.ctx = nil
+	p.stop = nil
+	p.alloc = nil
 	m.mu.Unlock()
-	if browserCancel != nil {
-		browserCancel()
+	if stop != nil {
+		stop()
 	}
-	if allocCancel != nil {
-		allocCancel()
+	if alloc != nil {
+		alloc()
 	}
 }
 
@@ -484,16 +635,24 @@ func (m *Manager) removeSession(s *Session) {
 	if m.sessions[s.id] == s {
 		delete(m.sessions, s.id)
 	}
-	empty := len(m.sessions) == 0
-	if empty && m.browserCtx != nil {
-		m.browserIdle = time.Now()
+	if p := m.browsers[s.profile]; p != nil && p.ctx != nil {
+		inUse := false
+		for _, other := range m.sessions {
+			if other.profile == s.profile {
+				inUse = true
+				break
+			}
+		}
+		if !inUse {
+			p.idle = time.Now()
+		}
 	}
 	m.mu.Unlock()
 	m.dropSessionPicks(s.id)
 }
 
 // sweepLoop implements the idle GC: sessions with no open stream and no
-// commands for idleTTL are closed; the shared browser stops when it has been
+// commands for idleTTL are closed; a profile's browser stops when it has been
 // session-free for browserIdleTTL.
 func (m *Manager) sweepLoop() {
 	defer close(m.sweepStopped)
@@ -506,20 +665,28 @@ func (m *Manager) sweepLoop() {
 		case <-ticker.C:
 		}
 		var dead []*Session
+		var idleProcs []*browserProc
 		m.mu.Lock()
 		for _, s := range m.sessions {
 			if s.idleFor(m.idleTTL) {
 				dead = append(dead, s)
 			}
 		}
-		idleBrowser := m.browserCtx != nil && len(m.sessions) == 0 &&
-			!m.browserIdle.IsZero() && time.Since(m.browserIdle) > m.browserIdleTTL
+		inUse := map[string]bool{}
+		for _, s := range m.sessions {
+			inUse[s.profile] = true
+		}
+		for _, p := range m.browsers {
+			if p.ctx != nil && !inUse[p.name] && !p.idle.IsZero() && time.Since(p.idle) > m.browserIdleTTL {
+				idleProcs = append(idleProcs, p)
+			}
+		}
 		m.mu.Unlock()
 		for _, s := range dead {
 			s.Close()
 		}
-		if idleBrowser {
-			m.killBrowser()
+		for _, p := range idleProcs {
+			m.killBrowser(p)
 		}
 	}
 }

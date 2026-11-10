@@ -68,6 +68,7 @@ export const S = {
   sending: false,
   sendDelivery: "steer",
   scrollPinned: true,
+  planExpanded: false,
   draftSelections: [],
   draftPreviewSeq: 0,
   booted: false,

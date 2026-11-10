@@ -5,10 +5,10 @@ import { api } from "./api.js";
 import { toast } from "./toast.js";
 import { closeModal, confirmModal, promptModal } from "./modal.js";
 import { closePopover } from "./popover.js";
-import { openToolMenu, previewAnnotation, previewFile, renderChat, toolPreFor } from "./chat.js";
+import { openToolMenu, previewAnnotation, previewFile, renderChat, renderPlanDock, toolPreFor } from "./chat.js";
 import { changeElicitationPage, renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js";
 import { autoGrow, editAnnotationComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js";
-import { browserDeviceMode, browserEscape, browserHistory, browserReconnect, cancelAnnotation, closeBrowserPane, submitAnnotation, toggleAnnotate, toggleBrowserPane, toggleDeviceBar } from "./browser.js";
+import { browserDeviceMode, browserEscape, browserHistory, browserReconnect, browserTakeover, cancelAnnotation, closeBrowserPane, openProfilePicker, runDevEval, submitAnnotation, toggleAnnotate, toggleBrowserPane, toggleDeviceBar, toggleDevtools } from "./browser.js";
 import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, newProjectChat, openControlActivity, openConversationMenu, openMoreMenu, openOrchestrationMenu, openRoutingMenu, openTeamPanel, renameConversation, selectConversation, setOrchestration, setRoute, toggleOrchestrationFlag, togglePin, toggleRouting } from "./conversations.js";
 import { renderOffline } from "./shell.js";
 import { scheduleDraftSave } from "./convmeta.js";
@@ -357,6 +357,7 @@ export function bindEvents() {
       case "team-panel": openTeamPanel(id); break;
       case "team-open": closeModal(); await selectConversation(id); break;
       case "toggle-pin": await togglePin(id); closePopover(); break;
+      case "toggle-plan": S.planExpanded = !S.planExpanded; renderPlanDock(); break;
       case "rename-conv": renameConversation(id); break;
       case "archive-conv": await archiveConversation(id); break;
       case "delete-conv": await deleteConversation(id); break;
@@ -574,7 +575,13 @@ export function bindEvents() {
       case "browser-device": toggleDeviceBar(); break;
       case "browser-device-mode": browserDeviceMode(target.dataset.device); break;
       case "browser-close": closeBrowserPane(); break;
+      case "browser-devtools": toggleDevtools(); break;
+      case "browser-profile-picker": openProfilePicker(); break;
+      case "browser-devtools-run": runDevEval(); break;
+      case "browser-profile-change": break; // handled by its own listener
+      case "browser-suggest": await browserNavigate(target.dataset.url || target.textContent); break;
       case "browser-reconnect": browserReconnect(); break;
+      case "browser-takeover": browserTakeover(); break;
       case "annotation-submit": submitAnnotation(); break;
       case "annotation-cancel": cancelAnnotation(); break;
       case "annotation-edit": editAnnotationComment(id); break;
