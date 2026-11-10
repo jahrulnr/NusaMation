@@ -13,6 +13,7 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ### Fixed
 
+- Make fake-agent prompt dispatch traces follow stdin order so immediate cancellation tests are deterministic on Windows, and check export permission bits only on platforms that expose Unix modes.
 - Preserve read-only control permissions when toggling spawn or progress pings, normalize nonpositive message page limits, retain MCP read cursors across hidden thoughts, and report additional wait pages. Serialize send deduplication before checking completed requests and treat punctuation as search term boundaries.
 - The **MCP servers** and **Agent control** settings tabs now refetch from the server when opened, so changes made outside this browser (API calls, another tab, direct DB edits) no longer render a stale list.
 - Keep steered messages in the running turn's timeline and show the history control only when earlier messages exist. Image and text attachments open in a preview, with a download option for files. The web send mode can be selected in Defaults; channel messages continue to steer.

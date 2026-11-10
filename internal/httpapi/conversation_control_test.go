@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -915,8 +916,13 @@ func TestConversationControlExport(t *testing.T) {
 	if !strings.Contains(string(raw), "export me") || !strings.Contains(string(raw), "run command") {
 		t.Fatalf("export content = %s", raw)
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode = %v err=%v", info.Mode().Perm(), err)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows does not expose Unix permission bits through os.FileMode.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v", info.Mode().Perm())
 	}
 
 	status, out = f.post(t, map[string]any{"tool": "export", "conversationId": f.target.ID, "includeThoughts": true, "includeToolOutput": true, "limit": 3})

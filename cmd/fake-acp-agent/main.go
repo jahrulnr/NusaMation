@@ -86,10 +86,7 @@ func main() {
 			}
 			s.setBusy(true)
 			cancel := s.newPromptCancel()
-			go func() {
-				defer s.setBusy(false)
-				s.handlePrompt(msg, cancel)
-			}()
+			s.startPrompt(msg, cancel)
 		case "session/cancel":
 			s.closeCancel()
 		default:
@@ -314,7 +311,9 @@ func (s *server) configOptions() []any {
 	return append([]any{mode}, options...)
 }
 
-func (s *server) handlePrompt(msg message, cancel chan struct{}) {
+// startPrompt records dispatch in stdin order before the worker can race with
+// the next session/cancel notification.
+func (s *server) startPrompt(msg message, cancel chan struct{}) {
 	var p struct {
 		SessionID string `json:"sessionId"`
 		Prompt    []struct {
@@ -324,7 +323,10 @@ func (s *server) handlePrompt(msg message, cancel chan struct{}) {
 	}
 	_ = json.Unmarshal(msg.Params, &p)
 	trace(fmt.Sprintf("prompt_start %s %s", msg.ID, promptText(p.Prompt)))
-	s.prompt(msg.ID, p.SessionID, p.Prompt, cancel)
+	go func() {
+		defer s.setBusy(false)
+		s.prompt(msg.ID, p.SessionID, p.Prompt, cancel)
+	}()
 }
 
 func (s *server) prompt(id json.RawMessage, sessionID string, prompt []struct {
