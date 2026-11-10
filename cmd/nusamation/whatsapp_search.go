@@ -25,11 +25,11 @@ import (
 const searchUsage = `usage: nusamation whatsapp search [flags] [text]
 Search captured WhatsApp messages; text is a case-insensitive substring.
   -n N          Results per page, 1-500 (default 50)
-  -cursor C     Continue from nextCursor in the previous result
-  -chat JID     Restrict to a chat JID
-  -sender JID   Restrict to a sender JID
-  -raw          Include the stored WhatsApp message payload
-  -data-dir DIR NusaMation data directory
+  --cursor C     Continue from nextCursor in the previous result
+  --chat JID     Restrict to a chat JID
+  --sender JID   Restrict to a sender JID
+  --raw          Include the stored WhatsApp message payload
+  --data-dir DIR NusaMation data directory
 `
 
 func whatsappSearch(args []string) error {
@@ -64,7 +64,7 @@ func whatsappSearch(args []string) error {
 }
 
 func whatsappUser(args []string) error {
-	fs, dir := subFlagSet("whatsapp user", "usage: nusamation whatsapp user [-data-dir DIR] [-addr HOST:PORT] JID\n")
+	fs, dir := subFlagSet("whatsapp user", "usage: nusamation whatsapp user [--data-dir DIR] [--addr HOST:PORT] JID\n")
 	defaultAddr := os.Getenv("NUSAMATION_ADDR")
 	if defaultAddr == "" {
 		defaultAddr = config.DefaultAddr
@@ -124,8 +124,8 @@ func whatsappUser(args []string) error {
 const contactsUsage = `usage: nusamation whatsapp contacts [flags] [text]
 Search locally synced contact names and JIDs without connecting another WhatsApp client.
   -n N          Results per page, 1-500 (default 50)
-  -page N       Page number starting at 1 (default 1)
-  -data-dir DIR NusaMation data directory
+  --page N       Page number starting at 1 (default 1)
+  --data-dir DIR NusaMation data directory
 `
 
 type waContact struct {

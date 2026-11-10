@@ -181,6 +181,37 @@ func TestAuthCSRFAndConversationAPI(t *testing.T) {
 	if len(page.Messages) != 2 || page.Messages[0].ID != userMsg.ID || page.Turns[turn.ID].UserMessageID != userMsg.ID {
 		t.Fatalf("history page did not include messages and their turn: %#v", page)
 	}
+	for _, limit := range []string{"0", "-2"} {
+		res, err = client.Get(ts.URL + "/api/conversations/" + created.Conversation.ID + "/messages?after=1&limit=" + limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var bounded struct {
+			Messages []messageView `json:"messages"`
+		}
+		err = json.NewDecoder(res.Body).Decode(&bounded)
+		_ = res.Body.Close()
+		if err != nil || res.StatusCode != http.StatusOK || len(bounded.Messages) != 1 {
+			t.Fatalf("limit %s: status=%d page=%+v err=%v", limit, res.StatusCode, bounded, err)
+		}
+	}
+	if err := st.DeleteMessage(context.Background(), userMsg.ID); err != nil {
+		t.Fatal(err)
+	}
+	res, err = client.Get(ts.URL + "/api/conversations/" + created.Conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var history struct {
+		HistoryHasMore bool `json:"historyHasMore"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&history); err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if history.HistoryHasMore {
+		t.Fatal("deleted earlier message must not create phantom history")
+	}
 
 	for _, tc := range []struct {
 		password string

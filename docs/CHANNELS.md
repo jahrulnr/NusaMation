@@ -78,7 +78,7 @@ Channel settings live under the `channel.whatsapp.settings` key and can also be 
 
 ```bash
 nusamation whatsapp show
-nusamation whatsapp set -enabled -group-policy mention -allow-add +628123456789
+nusamation whatsapp set --enabled --group-policy mention --allow-add +628123456789
 ```
 
 ### Allowlist

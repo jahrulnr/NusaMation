@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/jahrulnr/nusamation/internal/ids"
 )
@@ -181,6 +182,46 @@ func (s *Store) queuedTurns(ctx context.Context, query string, args ...any) ([]T
 func (s *Store) LastUserMessage(ctx context.Context, conversationID string) (Message, error) {
 	row := s.db.QueryRowContext(ctx, messageSelect+` WHERE m.conversation_id=? AND m.role='user' ORDER BY m.seq DESC LIMIT 1`, conversationID)
 	return scanMessage(row)
+}
+
+// ListLastTurnSummaries returns the newest turn per conversation, including
+// the user prompt and latest assistant text. One query for the whole list.
+func (s *Store) ListLastTurnSummaries(ctx context.Context, conversationIDs []string) (map[string]TurnSummary, error) {
+	out := map[string]TurnSummary{}
+	if len(conversationIDs) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(conversationIDs))
+	args := make([]any, len(conversationIDs))
+	for i, id := range conversationIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := `WITH ranked AS (
+		SELECT t.id,t.conversation_id,t.user_message_id,t.status,t.stop_reason,t.error,t.created_at,t.started_at,t.ended_at,t.rowid AS turn_rowid,
+		       ROW_NUMBER() OVER (PARTITION BY t.conversation_id ORDER BY t.created_at DESC, t.rowid DESC) AS rn
+		FROM turns t WHERE t.conversation_id IN (` + strings.Join(placeholders, ",") + `)
+	)
+	SELECT r.conversation_id,r.id,r.status,r.stop_reason,r.error,r.created_at,r.started_at,r.ended_at,
+	       COALESCE((SELECT m.text FROM messages m WHERE m.id=r.user_message_id LIMIT 1),''),
+	       COALESCE((SELECT m.text FROM messages m WHERE m.turn_id=r.id AND m.role='assistant' AND m.kind='text'
+	                 ORDER BY m.seq DESC LIMIT 1),'')
+	FROM ranked r WHERE r.rn=1`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var summary TurnSummary
+		var conversationID string
+		if err := rows.Scan(&conversationID, &summary.ID, &summary.Status, &summary.StopReason, &summary.Error,
+			&summary.CreatedAt, &summary.StartedAt, &summary.EndedAt, &summary.Prompt, &summary.Answer); err != nil {
+			return nil, err
+		}
+		out[conversationID] = summary
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) LastCompletedTurn(ctx context.Context, conversationID string) (Turn, error) {

@@ -173,8 +173,6 @@ func (s *Server) handleCreateMCP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "mcp_failed", err.Error())
 		return
 	}
-	s.agents.InvalidateAllAgents()
-	s.agents.WarmAutoStart()
 	writeJSON(w, http.StatusCreated, map[string]any{"server": m.Public()})
 }
 
@@ -195,8 +193,6 @@ func (s *Server) handleUpdateMCP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "mcp_failed", err.Error())
 		return
 	}
-	s.agents.InvalidateAllAgents()
-	s.agents.WarmAutoStart()
 	writeJSON(w, http.StatusOK, map[string]any{"server": m.Public()})
 }
 
@@ -209,7 +205,5 @@ func (s *Server) handleDeleteMCP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, "mcp_failed", err.Error())
 		return
 	}
-	s.agents.InvalidateAllAgents()
-	s.agents.WarmAutoStart()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

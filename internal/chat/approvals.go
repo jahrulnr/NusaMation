@@ -10,6 +10,7 @@ import (
 
 	"github.com/jahrulnr/nusamation/internal/acp"
 	"github.com/jahrulnr/nusamation/internal/agent"
+	"github.com/jahrulnr/nusamation/internal/channels"
 	"github.com/jahrulnr/nusamation/internal/store"
 	"github.com/jahrulnr/nusamation/internal/textfmt"
 )
@@ -205,6 +206,30 @@ func (s *Service) createApproval(ctx context.Context, a *activeTurn, title, kind
 	return s.store.GetApproval(ctx, ap.ID)
 }
 
+// approvalChannel prefers the turn's origin. An orchestrated turn has origin
+// "agent", which has no channel; notifications then go to the target's first
+// linked chat so the human can still answer the approval.
+func (s *Service) approvalChannel(a *activeTurn) (channels.Channel, channels.Target, bool) {
+	if ch, target, ok := s.originChannel(a); ok {
+		return ch, target, true
+	}
+	if s.channels == nil {
+		return nil, channels.Target{}, false
+	}
+	a.mu.Lock()
+	links := append([]store.ChannelLink(nil), a.conv.Links...)
+	a.mu.Unlock()
+	for _, link := range links {
+		if link.Channel == "" || link.Channel == "web" {
+			continue
+		}
+		if ch, ok := s.channels.Get(link.Channel); ok {
+			return ch, targetFromLink(link), true
+		}
+	}
+	return nil, channels.Target{}, false
+}
+
 func (s *Service) notifyApproval(a *activeTurn, ap store.Approval) {
 	a.mu.Lock()
 	routing := a.conv.Routing
@@ -212,7 +237,7 @@ func (s *Service) notifyApproval(a *activeTurn, ap store.Approval) {
 	if !routing.NotifyApprovals {
 		return
 	}
-	ch, target, ok := s.originChannel(a)
+	ch, target, ok := s.approvalChannel(a)
 	if !ok {
 		return
 	}

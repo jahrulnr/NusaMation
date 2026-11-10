@@ -25,9 +25,7 @@ func (s *Service) watchTurn(a *activeTurn) {
 	for {
 		select {
 		case <-a.wake:
-			if a.afterToolsBoundaryReached() {
-				s.requestGracefulCancel(a)
-			}
+			s.requestAfterToolsCancel(a)
 		case <-a.finishedCh:
 			return
 		}
@@ -67,12 +65,20 @@ func (s *Service) armAfterTools(ctx context.Context, conversationID string, msg 
 // stays open until the agent answers that prompt. It reports whether this call
 // started the cancel.
 func (s *Service) requestGracefulCancel(a *activeTurn) bool {
+	return s.requestCancel(a, false)
+}
+
+func (s *Service) requestAfterToolsCancel(a *activeTurn) bool {
+	return s.requestCancel(a, true)
+}
+
+func (s *Service) requestCancel(a *activeTurn, afterTools bool) bool {
 	// promptMu is held through the cancelling status write so endPrompt cannot
 	// complete the turn before that status is emitted.
 	a.promptMu.Lock()
 	defer a.promptMu.Unlock()
 	a.mu.Lock()
-	if a.finished || a.cancelRequested || isClosed(a.promptDone) {
+	if a.finished || a.cancelRequested || isClosed(a.promptDone) || (afterTools && !a.afterToolsBoundaryReachedLocked()) {
 		a.mu.Unlock()
 		return false
 	}

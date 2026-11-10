@@ -58,6 +58,17 @@ func (s *Store) GetProject(ctx context.Context, id string) (Project, error) {
 	return scanProject(s.db.QueryRowContext(ctx, projectSelect+` WHERE id=?`, id))
 }
 
+// CountProjectConversations returns active conversations attached to a project.
+func (s *Store) CountProjectConversations(ctx context.Context, projectID string) (int, error) {
+	if projectID == "" {
+		return 0, nil
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM conversations WHERE project_id=? AND archived=0`, projectID).Scan(&n)
+	return n, err
+}
+
 func (s *Store) InsertProject(ctx context.Context, name string, roots []string) (Project, error) {
 	raw, err := json.Marshal(roots)
 	if err != nil {

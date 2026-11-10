@@ -17,26 +17,26 @@ Manage WhatsApp channel settings (stored under channel.whatsapp.settings).
 Subcommands:
   show                        Print current settings (JSON, merged over defaults)
   set [flags]                 Update settings; only given flags are changed
-  send [-addr HOST:PORT]       Send a JSON request read from stdin via the running server
+  send [--addr HOST:PORT]       Send a JSON request read from stdin via the running server
   search [flags] [text]       Search indexed messages (newest first, JSON)
   contacts [flags] [text]     Search locally synced WhatsApp contacts (JSON)
   user [flags] JID            Get user information via the running server
 
 Set flags:
-  -enabled=B          Enable the WhatsApp channel
-  -auto-start=B       Connect automatically when paired
-  -group-policy P     disabled | mention | all
-  -allow "n1,n2"      Replace the allowlist (comma-separated; empty clears)
-  -allow-add N        Add a number to the allowlist (repeatable)
-  -allow-remove N     Remove a number from the allowlist (repeatable)
-  -read-receipts=B    Send read receipts
-  -send-typing=B      Send typing indicators
+  --enabled=B          Enable the WhatsApp channel
+  --auto-start=B       Connect automatically when paired
+  --group-policy P     disabled | mention | all
+  --allow "n1,n2"      Replace the allowlist (comma-separated; empty clears)
+  --allow-add N        Add a number to the allowlist (repeatable)
+  --allow-remove N     Remove a number from the allowlist (repeatable)
+  --read-receipts=B    Send read receipts
+  --send-typing=B      Send typing indicators
 
 Numbers may include +, spaces or JID suffixes; they are normalized to digits.
 An empty allowlist allows anyone who can message the linked account.
 
 Flags:
-  -data-dir DIR       NusaMation data directory (default ~/.nusamation)
+  --data-dir DIR       NusaMation data directory (default ~/.nusamation)
   -h                  This help
 `
 
@@ -78,7 +78,7 @@ func loadWASettings(ctx context.Context, st *store.Store) (whatsapp.Settings, er
 }
 
 func whatsappShow(args []string) error {
-	fs, dataDir := subFlagSet("whatsapp show", "usage: nusamation whatsapp show [-data-dir DIR]\n")
+	fs, dataDir := subFlagSet("whatsapp show", "usage: nusamation whatsapp show [--data-dir DIR]\n")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

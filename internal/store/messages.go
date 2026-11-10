@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/jahrulnr/nusamation/internal/ids"
 )
@@ -77,6 +78,161 @@ func scanMessage(row rowScanner) (Message, error) {
 	m.Content = raw(content, "{}")
 	m.Metadata = raw(meta, "{}")
 	return m, nil
+}
+
+// MessageSearchFilter scopes a full-text message search.
+type MessageSearchFilter struct {
+	Query          string
+	ConversationID string
+	ProjectID      string
+	AgentID        string
+	Channel        string
+	Kinds          []string
+	After          int64
+	Before         int64
+	Archived       bool
+	Limit          int
+	Offset         int
+}
+
+// MessageSearchHit is one ranked message match. Snippet uses [brackets] around
+// the matched terms.
+type MessageSearchHit struct {
+	MessageID         string
+	ConversationID    string
+	ConversationTitle string
+	ProjectID         string
+	Seq               int64
+	Role              string
+	Kind              string
+	Snippet           string
+	Score             float64
+	At                int64
+}
+
+// SearchMessages runs an FTS5 query over message text. Query terms are quoted
+// and prefix-matched so user/agent punctuation cannot break MATCH syntax.
+func (s *Store) SearchMessages(ctx context.Context, f MessageSearchFilter) ([]MessageSearchHit, error) {
+	match := ftsQuery(f.Query)
+	if match == "" {
+		return []MessageSearchHit{}, nil
+	}
+	if f.Limit <= 0 || f.Limit > 100 {
+		f.Limit = 20
+	}
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	where := []string{"messages_fts MATCH ?"}
+	args := []any{match}
+	if f.ConversationID != "" {
+		where = append(where, "m.conversation_id=?")
+		args = append(args, f.ConversationID)
+	}
+	if f.ProjectID != "" {
+		where = append(where, "c.project_id=?")
+		args = append(args, f.ProjectID)
+	}
+	if f.AgentID != "" {
+		where = append(where, "c.agent_id=?")
+		args = append(args, f.AgentID)
+	}
+	if f.Channel != "" {
+		where = append(where, "(c.origin_channel=? OR EXISTS(SELECT 1 FROM channel_links l WHERE l.conversation_id=c.id AND l.channel=?))")
+		args = append(args, f.Channel, f.Channel)
+	}
+	if len(f.Kinds) > 0 {
+		placeholders := make([]string, len(f.Kinds))
+		for i, kind := range f.Kinds {
+			placeholders[i] = "?"
+			args = append(args, kind)
+		}
+		where = append(where, "m.kind IN ("+strings.Join(placeholders, ",")+")")
+	}
+	if f.After > 0 {
+		where = append(where, "m.created_at>=?")
+		args = append(args, f.After)
+	}
+	if f.Before > 0 {
+		where = append(where, "m.created_at<=?")
+		args = append(args, f.Before)
+	}
+	where = append(where, "c.archived=?")
+	args = append(args, boolInt(f.Archived))
+	args = append(args, f.Limit, f.Offset)
+	query := `SELECT m.id,m.conversation_id,c.title,COALESCE(c.project_id,''),m.seq,m.role,m.kind,m.created_at,
+		snippet(messages_fts,0,'[',']','…',12) AS snippet,
+		bm25(messages_fts) AS score
+		FROM messages_fts
+		JOIN messages m ON m.rowid=messages_fts.rowid
+		JOIN conversations c ON c.id=m.conversation_id
+		WHERE ` + strings.Join(where, " AND ") + `
+		ORDER BY score ASC,m.created_at DESC LIMIT ? OFFSET ?`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []MessageSearchHit{}
+	for rows.Next() {
+		var hit MessageSearchHit
+		var projectID sql.NullString
+		if err := rows.Scan(&hit.MessageID, &hit.ConversationID, &hit.ConversationTitle, &projectID,
+			&hit.Seq, &hit.Role, &hit.Kind, &hit.At, &hit.Snippet, &hit.Score); err != nil {
+			return nil, err
+		}
+		hit.ProjectID = projectID.String
+		out = append(out, hit)
+	}
+	return out, rows.Err()
+}
+
+// ftsQuery turns free text into quoted prefix terms; punctuation cannot break
+// the MATCH expression.
+func ftsQuery(q string) string {
+	fields := strings.FieldsFunc(q, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_'
+	})
+	parts := make([]string, 0, len(fields))
+	for _, field := range fields {
+		var b strings.Builder
+		for _, r := range field {
+			if unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_' {
+				b.WriteRune(r)
+			}
+		}
+		token := strings.TrimSpace(b.String())
+		if token == "" {
+			continue
+		}
+		parts = append(parts, `"`+strings.ReplaceAll(token, `"`, `""`)+`"*`)
+	}
+	return strings.Join(parts, " ")
+}
+
+// ListMessagesAscending pages forward from afterSeq even when afterSeq is 0.
+// ListMessages intentionally returns the latest window for the UI; exports
+// need the oldest first.
+func (s *Store) ListMessagesAscending(ctx context.Context, conversationID string, afterSeq int64, limit int) ([]Message, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.db.QueryContext(ctx, messageSelect+`
+		WHERE m.conversation_id=? AND m.seq>? ORDER BY m.seq ASC LIMIT ?`,
+		conversationID, afterSeq, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Message{}
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) ListMessages(ctx context.Context, conversationID string, afterSeq, beforeSeq int64, limit int) ([]Message, error) {

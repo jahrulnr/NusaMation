@@ -4,6 +4,25 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-10
+
+### Changed
+
+- MCP changes are detected automatically and refresh each room after its active turn or session preparation finishes, without stopping other rooms.
+- Group internal MCP servers under `nusamation mcp run --browser-use` and `--conversation`, and show long CLI options with double dashes.
+
+### Fixed
+
+- Preserve read-only control permissions when toggling spawn or progress pings, normalize nonpositive message page limits, retain MCP read cursors across hidden thoughts, and report additional wait pages. Serialize send deduplication before checking completed requests and treat punctuation as search term boundaries.
+- The **MCP servers** and **Agent control** settings tabs now refetch from the server when opened, so changes made outside this browser (API calls, another tab, direct DB edits) no longer render a stale list.
+- Keep steered messages in the running turn's timeline and show the history control only when earlier messages exist. Image and text attachments open in a preview, with a download option for files. The web send mode can be selected in Defaults; channel messages continue to steer.
+- Recheck the after-tools boundary when requesting cancellation and wait for active ACP terminals to exit.
+
+### Added
+
+- **MCP management CLI.** `nusamation mcp` lists, inspects, adds, updates and removes shared MCP servers without an external SQLite installation, using the existing sealed environment and header storage.
+- **Conversation control MCP.** A new `nusamation_conversation` stdio server (`nusamation mcp run --conversation`) lets an authorized conversation list, read, wait on, send to, stop, and spawn other conversations. `projects_list` and the `project` filter resolve a project by id, name, or folder basename so an agent can act on “project A”; `spawn(project)` creates the delegated chat inside it. `search` uses a new SQLite FTS5 index and returns ranked message snippets, while list rows carry a compact last-turn summary. `export` writes a policy-scoped JSONL file for deep `rg`/`jq` analysis. It is off by default: enable **Settings → Agent control**, then opt the calling conversation in from its conversation menu. The loopback bridge uses a per-conversation hashed token, a turn started by orchestration has no control access, and the tools never answer another conversation's approval. Cross-conversation `steer` is delivered as `after_tools` (running target) or `queue` (idle target); target finals are not delivered to the target's own channel; target approvals notify its first linked chat. `spawn` and `report` have separate per-chat opt-ins; writes are rate limited and an in-memory activity trail is available from the conversation menu. `nusamation conversations ...` is the same bridge for scripts. The MCP packaging moved under `internal/mcp` (`stdio`, `loopback`, `grants`, `browseruse`, `conversation`); the `browser_use` server name and tool names are unchanged.
+
 ## [0.2.4] - 2026-11-09
 
 ### Fixed

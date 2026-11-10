@@ -19,6 +19,7 @@ Per-agent process supervision and per-conversation ACP sessions.
 
 - `Manager` lazily starts one ACP process per agent and multiplexes sessions over it.
 - `Runtime` owns the process, session map, ACP-session-to-session map and pending notification buffer.
+- `Manager.EnableInjectedMCP` registers stdio servers added to every `session/new`, `session/load`, and `session/resume` (`browser_use` and `nusamation_conversation`). Each spec receives the conversation id and returns its own environment, so a server can issue a per-conversation token.
 - Session establishment order:
   1. reuse a loaded session;
   2. `session/load` if supported (replay suppressed);
@@ -28,13 +29,17 @@ Per-agent process supervision and per-conversation ACP sessions.
 - Agent processes get a sanitized environment and a working directory. The ACP terminal manager accepts a cwd inside any session root and truncates output safely.
 - `Probe` launches a temporary process, creates a session, captures capabilities/models/config/auth methods and persists them without disturbing a live conversation.
 
+### `internal/mcp`
+
+The embedded MCP servers an agent spawns. `mcp/stdio` owns JSON-RPC framing and the initialize/ping/tools methods; `mcp/loopback` posts tool calls back to the desktop with the per-conversation bearer token; `mcp/grants` maps tokens to conversations (raw for the legacy `browser_use` file, hashed for `nusamation_conversation`). `mcp/browseruse` exposes the `browser_*` tools and `mcp/conversation` exposes `list`, `projects_list`, `search`, `export`, `read`, `wait`, `send`, `stop`, `spawn`, and `report`. The HTTP bridge handlers stay in `internal/httpapi` because they need the chat service and store; the MCP packages only know the loopback URL and token.
+
 ### `internal/store`
 
 SQLite via `modernc.org/sqlite` (pure Go, CGO-free). One connection, WAL, foreign keys, busy timeout.
 
 Tables: `settings`, `sessions`, `agents`, `mcp_servers`, `conversations`, `projects`, `channel_links`, `messages`, `turns`, `approvals`, `approval_rules`, `inbound_messages`, `uploads`.
 
-Messages have monotonic per-conversation `seq`. Turns represent queued/running/waiting/completed prompts. Channel links map external chat IDs to conversations and are unique per `(channel, external_id, thread_id)`.
+Messages have monotonic per-conversation `seq`. Turns represent queued/running/waiting/completed prompts. Channel links map external chat IDs to conversations and are unique per `(channel, external_id, thread_id)`. `conversations.metadata_json` carries UI and orchestration policy such as `orchestration: {enabled, readOnly, scope, spawn, progressPings}`. `messages_fts` is an external-content FTS5 index maintained by triggers (migration 0010) for ranked message search. Conversation-control exports are written as JSONL under `<data>/exports/` with a ten-minute expiry.
 
 ### `internal/chat`
 
@@ -97,7 +102,7 @@ Authenticated WebSocket hub. Every event has a monotonic ID, type, conversation 
 
 ### `internal/httpapi`
 
-`net/http` API and embedded SPA. Single-admin auth, CSRF, rate limiting, security headers, upload serving and channel/agent/MCP management. The WebSocket route bypasses the response-status wrapper so HTTP hijacking works.
+`net/http` API and embedded SPA. Single-admin auth, CSRF, rate limiting, security headers, upload serving and channel/agent/MCP management. The WebSocket route bypasses the response-status wrapper so HTTP hijacking works. Two loopback bridges accept a bearer token instead of the admin cookie: `/api/browser-use` drives the embedded browser and `/api/conversation-control` serves the `nusamation_conversation` MCP tools.
 
 ### `internal/notify`
 
@@ -192,6 +197,7 @@ Side-effecting prompts are never blindly replayed by the supervisor; a failed tu
 | `agent.status/session` | process and ACP session state |
 | `channel.status` | channel connection/QR state |
 | `config.updated` | live session configuration |
+| `conversation.control` | a conversation-control MCP write (caller, tool, outcome) |
 | `plan.updated`, `usage.updated` | plan/usage |
 | `notice` | transient warning/error/info |
 | `update.status` | update check/apply state (stage, progress, error) |

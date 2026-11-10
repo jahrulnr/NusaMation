@@ -473,6 +473,7 @@ func (s *Service) applyTerminalUpdate(a *activeTurn, update agent.TerminalUpdate
 		return
 	}
 	a.terminals[update.ID] = update
+	a.signal()
 	var changed []*toolState
 	for _, t := range a.tools {
 		if _, ok := t.Terminals[update.ID]; ok {

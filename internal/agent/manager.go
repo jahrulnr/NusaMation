@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/jahrulnr/nusamation/internal/acp"
-	"github.com/jahrulnr/nusamation/internal/browseruse"
 	"github.com/jahrulnr/nusamation/internal/config"
 	"github.com/jahrulnr/nusamation/internal/store"
 )
@@ -114,42 +113,45 @@ type Manager struct {
 	runtimes map[string]*Runtime
 	byConv   map[string]*Session
 
-	useGrants  *browseruse.Grants
-	useCommand string
-	useBaseURL string
+	injected []InjectedMCP
 }
 
-// EnableBrowserUse injects the browser_use MCP server into ACP sessions.
-// command is this process's executable; baseURL is the loopback origin the
-// child posts back to. An empty command or URL leaves the tool unregistered.
-func (m *Manager) EnableBrowserUse(g *browseruse.Grants, command, baseURL string) {
+// InjectedMCP is one stdio MCP server NusaMation adds to every ACP session.
+// Env is evaluated per conversation; returning false skips this server (for
+// example when no token could be issued).
+type InjectedMCP struct {
+	Name    string
+	Command string
+	Args    []string
+	Env     func(conversationID string) ([]acp.EnvVar, bool)
+}
+
+// EnableInjectedMCP replaces the injected server list. app.New wires this
+// after the loopback listener exists.
+func (m *Manager) EnableInjectedMCP(specs ...InjectedMCP) {
 	m.mu.Lock()
-	m.useGrants = g
-	m.useCommand = command
-	m.useBaseURL = strings.TrimRight(baseURL, "/")
+	m.injected = append([]InjectedMCP(nil), specs...)
 	m.mu.Unlock()
 }
 
-func (m *Manager) browserUseServer(conversationID string) (acp.MCPServerConfig, bool) {
+func (m *Manager) injectedServers(conversationID string) []acp.MCPServerConfig {
 	m.mu.Lock()
-	g, command, base := m.useGrants, m.useCommand, m.useBaseURL
+	specs := append([]InjectedMCP(nil), m.injected...)
 	m.mu.Unlock()
-	if g == nil || command == "" || base == "" || conversationID == "" {
-		return acp.MCPServerConfig{}, false
+	var out []acp.MCPServerConfig
+	for _, spec := range specs {
+		if spec.Name == "" || spec.Command == "" || spec.Env == nil {
+			continue
+		}
+		env, ok := spec.Env(conversationID)
+		if !ok {
+			continue
+		}
+		out = append(out, acp.MCPServerConfig{
+			Name: spec.Name, Command: spec.Command, Args: spec.Args, Env: env,
+		})
 	}
-	token := g.Token(conversationID)
-	if token == "" {
-		return acp.MCPServerConfig{}, false
-	}
-	return acp.MCPServerConfig{
-		Name:    "browser_use",
-		Command: command,
-		Args:    []string{"browser-use"},
-		Env: []acp.EnvVar{
-			{Name: browseruse.EnvURL, Value: base},
-			{Name: browseruse.EnvToken, Value: token},
-		},
-	}, true
+	return out
 }
 
 func replaceMCP(list []acp.MCPServerConfig, extra acp.MCPServerConfig) []acp.MCPServerConfig {
@@ -318,6 +320,17 @@ func (m *Manager) Session(conversationID string) *Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.byConv[conversationID]
+}
+
+// LoadedConversations returns the rooms whose sessions may need refreshing.
+func (m *Manager) LoadedConversations() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := make([]string, 0, len(m.byConv))
+	for id := range m.byConv {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // PromptCapabilities reports the active agent's prompt capabilities. It is

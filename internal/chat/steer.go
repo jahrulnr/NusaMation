@@ -32,6 +32,7 @@ func (s *Service) trySteer(ctx context.Context, conv store.Conversation, text, c
 
 	msg := store.Message{
 		ConversationID: conv.ID,
+		TurnID:         turn.ID,
 		Role:           "user",
 		Kind:           "text",
 		Text:           text,

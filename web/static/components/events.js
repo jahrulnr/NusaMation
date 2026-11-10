@@ -4,11 +4,11 @@ import { api } from "./api.js";
 import { toast } from "./toast.js";
 import { closeModal, confirmModal, promptModal } from "./modal.js";
 import { closePopover } from "./popover.js";
-import { openToolMenu, previewAnnotation, renderChat, toolPreFor } from "./chat.js";
+import { openToolMenu, previewAnnotation, previewFile, renderChat, toolPreFor } from "./chat.js";
 import { renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js";
 import { autoGrow, editAnnotationComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js";
 import { browserDeviceMode, browserEscape, browserHistory, browserReconnect, cancelAnnotation, closeBrowserPane, submitAnnotation, toggleAnnotate, toggleBrowserPane, toggleDeviceBar } from "./browser.js";
-import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, newProjectChat, openConversationMenu, openMoreMenu, openRoutingMenu, renameConversation, selectConversation, setRoute, togglePin, toggleRouting } from "./conversations.js";
+import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, newProjectChat, openControlActivity, openConversationMenu, openMoreMenu, openOrchestrationMenu, openRoutingMenu, openTeamPanel, renameConversation, selectConversation, setOrchestration, setRoute, toggleOrchestrationFlag, togglePin, toggleRouting } from "./conversations.js";
 import { renderOffline } from "./shell.js";
 import { scheduleDraftSave } from "./convmeta.js";
 import { closeMobileSidebar, filterSidebar, openMobileSidebar, renderSidebar, toggleProjectRow, toggleSidebarCollapsed } from "./sidebar.js";
@@ -16,7 +16,7 @@ import { addDraftSource, confirmAddedFolders, deleteProject, loadFolderBrowser, 
 import { renderTopbar } from "./topbar.js";
 import { closeWS, connectWS } from "./ws.js";
 import { openAuthTerminal } from "./terminal.js";
-import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications } from "./settings.js";
+import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadControlSettings, loadMCP, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications, toggleOrchestration } from "./settings.js";
 import { loadAutomations, saveAutomation, updateAutomationBuilder } from "./automations.js";
 import { refreshChannels, saveWaSettings, waAction } from "./whatsapp.js";
 import { openPalette, runPalette } from "./palette.js";
@@ -189,6 +189,11 @@ export function bindEvents() {
     const sel = e.target.closest("[data-change]");
     if (!sel) return;
     if (sel.dataset.change === "set-config") setConfig(sel.dataset.id, sel.value);
+    if (sel.dataset.change === "default-send-delivery") {
+      try { localStorage.setItem("nusamation:sendDelivery", sel.value); } catch {}
+      S.sendDelivery = sel.value;
+      renderComposer();
+    }
     if (sel.dataset.change === "wa-group") saveWaSettings({ groupPolicy: sel.value });
     if (sel.dataset.change === "automation-schedule") {
       const form = sel.closest("form");
@@ -266,6 +271,8 @@ export function bindEvents() {
           previewAgentDefaults();
         } else {
           if (S.settingsTab === "account") loadUpdateInfo();
+          if (S.settingsTab === "control") loadControlSettings();
+          if (S.settingsTab === "mcp") loadMCP();
           renderSettings();
         }
         break;
@@ -335,6 +342,12 @@ export function bindEvents() {
       }
       case "routing-menu": openRoutingMenu(target); break;
       case "more-menu": openMoreMenu(target); break;
+      case "orchestration-menu": openOrchestrationMenu(id); break;
+      case "orchestration-set": await setOrchestration(target.dataset.mode, id); break;
+      case "orchestration-flag": await toggleOrchestrationFlag(target.dataset.key, id); break;
+      case "orchestration-activity": openControlActivity(id); break;
+      case "team-panel": openTeamPanel(id); break;
+      case "team-open": closeModal(); await selectConversation(id); break;
       case "toggle-pin": await togglePin(id); closePopover(); break;
       case "rename-conv": renameConversation(id); break;
       case "archive-conv": await archiveConversation(id); break;
@@ -528,6 +541,7 @@ export function bindEvents() {
       case "update-check": await checkUpdate(); break;
       case "update-apply": applyUpdate(); break;
       case "notify-toggle": await toggleNotifications(); break;
+      case "orchestration-toggle": await toggleOrchestration(); break;
       case "notify-test": await testNotification(); break;
       case "logout": doLogout(); break;
       case "delete-all-conversations": {
@@ -559,6 +573,7 @@ export function bindEvents() {
         e.preventDefault();
         previewAnnotation(target.dataset.upload, target.dataset.caption || "");
         break;
+      case "preview-file": previewFile(target.dataset.upload, target.dataset.name || "Attachment"); break;
       default: break;
     }
   });

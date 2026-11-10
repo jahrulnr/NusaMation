@@ -10,13 +10,13 @@ import (
 	"testing"
 
 	"github.com/jahrulnr/nusamation/internal/browser"
-	"github.com/jahrulnr/nusamation/internal/browseruse"
+	"github.com/jahrulnr/nusamation/internal/mcp/grants"
 )
 
 func TestBrowserUseAuth(t *testing.T) {
-	grants := browseruse.NewGrants("")
-	token := grants.Token("cv_test")
-	s := &Server{browserUse: grants}
+	g := grants.New("")
+	token := g.Token("cv_test")
+	s := &Server{browserUse: g}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/browser-use", s.handleBrowserUse)
 

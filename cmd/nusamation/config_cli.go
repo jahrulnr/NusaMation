@@ -16,16 +16,16 @@ Manage stored NusaMation settings (key/value). Structured settings such as
 channel.whatsapp.settings and routing.defaults take a JSON string value.
 
 Subcommands:
-  list                        List all settings (key=value, or -json)
+  list                        List all settings (key=value, or --json)
   get <key>                   Print a setting's raw value
   set <key> <value>           Create or update a setting
   add <key> <value>           Create a setting; fails if it exists
   remove <key>                Delete a setting
 
 Flags:
-  -data-dir DIR     NusaMation data directory (default ~/.nusamation)
-  -json             JSON output for list/get
-  -validate-json    For set/add: reject values that are not valid JSON
+  --data-dir DIR     NusaMation data directory (default ~/.nusamation)
+  --json             JSON output for list/get
+  --validate-json    For set/add: reject values that are not valid JSON
   -h                This help
 `
 
@@ -53,7 +53,7 @@ func configCmd(args []string) error {
 }
 
 func configList(args []string) error {
-	fs, dataDir := subFlagSet("config list", "usage: nusamation config list [-json] [-data-dir DIR]\n")
+	fs, dataDir := subFlagSet("config list", "usage: nusamation config list [--json] [--data-dir DIR]\n")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -78,7 +78,7 @@ func configList(args []string) error {
 }
 
 func configGet(args []string) error {
-	fs, dataDir := subFlagSet("config get", "usage: nusamation config get <key> [-json] [-data-dir DIR]\n")
+	fs, dataDir := subFlagSet("config get", "usage: nusamation config get <key> [--json] [--data-dir DIR]\n")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	pos, perr := parseInterleaved(fs, args)
 	if perr != nil {
@@ -113,7 +113,7 @@ func configSet(args []string, createOnly bool) error {
 		name = "add"
 	}
 	fs, dataDir := subFlagSet("config "+name,
-		"usage: nusamation config "+name+" <key> <value> [-validate-json] [-data-dir DIR]\n")
+		"usage: nusamation config "+name+" <key> <value> [--validate-json] [--data-dir DIR]\n")
 	validateJSON := fs.Bool("validate-json", false, "reject non-JSON values")
 	pos, perr := parseInterleaved(fs, args)
 	if perr != nil {
@@ -156,7 +156,7 @@ func configSet(args []string, createOnly bool) error {
 }
 
 func configRemove(args []string) error {
-	fs, dataDir := subFlagSet("config remove", "usage: nusamation config remove <key> [-data-dir DIR]\n")
+	fs, dataDir := subFlagSet("config remove", "usage: nusamation config remove <key> [--data-dir DIR]\n")
 	pos, perr := parseInterleaved(fs, args)
 	if perr != nil {
 		return perr

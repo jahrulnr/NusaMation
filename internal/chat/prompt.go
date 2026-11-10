@@ -636,15 +636,42 @@ func (s *Service) openDelivery(a *activeTurn, text string) channels.Delivery {
 }
 
 func (s *Service) notifyOrigin(a *activeTurn, text string) {
+	_ = s.notifyOriginErr(context.Background(), a, text)
+}
+
+func (s *Service) notifyOriginErr(ctx context.Context, a *activeTurn, text string) error {
 	ch, target, ok := s.originChannel(a)
 	if !ok {
-		return
+		return ErrNoChannel
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	if err := ch.Notify(ctx, target, text); err != nil {
 		s.log.Warn("failed to send channel message", "channel", ch.Name(), "error", err)
+		return err
 	}
+	return nil
+}
+
+// NotifyActive sends a progress message to the origin channel of the
+// conversation's running turn. It is the report tool's delivery path; the
+// normal turn digest still runs once when the turn finishes.
+func (s *Service) NotifyActive(ctx context.Context, conversationID, text string) error {
+	a := s.activeFor(conversationID)
+	if a == nil {
+		return ErrNoActiveTurn
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ErrInvalidPrompt
+	}
+	if len(text) > 4000 {
+		text = text[:4000]
+	}
+	if s.deliveryChannel(a) == "web" {
+		return ErrNoChannel
+	}
+	return s.notifyOriginErr(ctx, a, text)
 }
 
 func (s *Service) originChannel(a *activeTurn) (channels.Channel, channels.Target, bool) {
@@ -687,6 +714,10 @@ func (s *Service) originChannel(a *activeTurn) (channels.Channel, channels.Targe
 
 func (s *Service) mirrorFinal(a *activeTurn) {
 	a.mu.Lock()
+	if a.turn.OriginChannel == "agent" {
+		a.mu.Unlock()
+		return
+	}
 	routing := a.conv.Routing
 	links := append([]store.ChannelLink(nil), a.conv.Links...)
 	status, terminalError := a.finalStatus, a.finalError

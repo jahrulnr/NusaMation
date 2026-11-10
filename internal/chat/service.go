@@ -21,11 +21,13 @@ import (
 )
 
 var (
-	ErrBusy          = errors.New("the agent is still working in this conversation")
-	ErrNoActiveTurn  = errors.New("there is no active turn")
-	ErrApprovalGone  = errors.New("this approval is no longer waiting for an answer")
-	ErrNoAgent       = errors.New("no enabled agent is configured")
-	ErrInvalidPrompt = errors.New("a prompt or attachment is required")
+	ErrBusy              = errors.New("the agent is still working in this conversation")
+	ErrNoActiveTurn      = errors.New("there is no active turn")
+	ErrApprovalGone      = errors.New("this approval is no longer waiting for an answer")
+	ErrNoAgent           = errors.New("no enabled agent is configured")
+	ErrInvalidPrompt     = errors.New("a prompt or attachment is required")
+	ErrNoChannel         = errors.New("this conversation has no external reply channel")
+	ErrOrchestratedSteer = errors.New("a cross-conversation prompt cannot steer a running turn")
 )
 
 type Service struct {
@@ -112,6 +114,29 @@ func (s *Service) SetChannels(m *channels.Manager) {
 
 func (s *Service) Store() *store.Store { return s.store }
 
+// MCPChanged defers session drops until each room is idle, including rooms
+// currently preparing a session which may not yet be registered in byConv.
+func (s *Service) MCPChanged(ctx context.Context) {
+	ids := s.agents.LoadedConversations()
+	s.mu.Lock()
+	for id := range s.active {
+		ids = append(ids, id)
+	}
+	for id := range s.preparing {
+		ids = append(ids, id)
+	}
+	s.mu.Unlock()
+	seen := make(map[string]bool, len(ids))
+	unique := ids[:0]
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			unique = append(unique, id)
+		}
+	}
+	s.markRootReset(ctx, unique)
+}
+
 func (s *Service) Broadcast(ev events.Event) {
 	if s.bus != nil {
 		s.bus.Broadcast(ev)
@@ -170,11 +195,23 @@ type SubmitInput struct {
 	// mid-turn input. A channel message that cannot be steered waits until
 	// the running turn's tools finish, then cancels that turn and sends.
 	Delivery string `json:"delivery,omitempty"`
+	// Orchestrator marks a prompt sent by another conversation. It forces the
+	// origin channel to agent, stores the caller in message metadata, and
+	// suppresses channel delivery for the target's final answer.
+	Orchestrator *Orchestrator `json:"-"`
 	// Annotations carries resolved browser picks (pickId → descriptor +
 	// marked-screenshot upload); the http layer resolves them so chat sees
 	// plain data.
 	Annotations     []store.AnnotationInput `json:"-"`
 	AutomationRunID string                  `json:"-"`
+}
+
+// Orchestrator identifies the conversation that sent a cross-conversation
+// prompt.
+type Orchestrator struct {
+	ConversationID string `json:"conversationId"`
+	Title          string `json:"title,omitempty"`
+	AgentID        string `json:"agentId,omitempty"`
 }
 
 type messagePayload struct {
@@ -187,6 +224,9 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 	case "", deliveryQueue, deliveryAfterTools, deliverySteer:
 	default:
 		return store.Message{}, store.Turn{}, ErrInvalidDelivery
+	}
+	if in.Orchestrator != nil && in.Delivery == deliverySteer {
+		return store.Message{}, store.Turn{}, ErrOrchestratedSteer
 	}
 	text := strings.TrimSpace(in.Text)
 	if text == "" && len(in.Attachments) == 0 && len(in.Annotations) == 0 {
@@ -221,6 +261,15 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 		}
 		originChannel = link.Channel
 		originRef = linkRef(link)
+	}
+	if in.Orchestrator != nil {
+		channel = "agent"
+		originChannel = "agent"
+		if originRef == "" {
+			if b, err := json.Marshal(in.Orchestrator); err == nil {
+				originRef = string(b)
+			}
+		}
 	}
 
 	uploads, err := s.loadUploads(ctx, conv.ID, in.Attachments)
@@ -257,6 +306,9 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 		target = s.activeFor(conv.ID)
 	}
 	meta := map[string]any{}
+	if in.Orchestrator != nil {
+		meta["orchestration"] = in.Orchestrator
+	}
 	if in.AutomationRunID != "" {
 		meta["automationRunId"] = in.AutomationRunID
 	}

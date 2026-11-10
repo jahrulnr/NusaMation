@@ -20,7 +20,7 @@ import (
 // whatsappSend uses the running server's existing WhatsApp connection; it
 // never opens a second whatsmeow device against the same session database.
 func whatsappSend(args []string) error {
-	fs, dataDir := subFlagSet("whatsapp send", "usage: nusamation whatsapp send [-data-dir DIR] [-addr HOST:PORT] < request.json\n")
+	fs, dataDir := subFlagSet("whatsapp send", "usage: nusamation whatsapp send [--data-dir DIR] [--addr HOST:PORT] < request.json\n")
 	defaultAddr := os.Getenv("NUSAMATION_ADDR")
 	if defaultAddr == "" {
 		defaultAddr = config.DefaultAddr

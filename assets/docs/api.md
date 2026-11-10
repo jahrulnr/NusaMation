@@ -14,9 +14,10 @@ curl -c jar -H 'Content-Type: application/json' \
 
 Every mutating request then needs the cookie plus header
 `X-CSRF-Token: <csrf>`; Origin must match the Host (a missing Origin also
-passes). `POST /api/browser-use` is the exception: the `browser_use` MCP
-child calls it with `Authorization: Bearer <token>` and no cookie. Errors
-are flat JSON `{"error":"…","code":"…"}` with a 4xx/5xx status.
+passes). `POST /api/browser-use` and `POST /api/conversation-control` are the
+exceptions: the embedded MCP children call them with
+`Authorization: Bearer <token>` and no cookie. Errors are flat JSON
+`{"error":"…","code":"…"}` with a 4xx/5xx status.
 
 ## Endpoint map
 
@@ -35,6 +36,9 @@ POST /api/projects/{id}/restore
 GET  /api/fs/list?path=                 # child directories; empty path is the home directory
 GET|POST /api/conversations/{id}/messages
 POST /api/conversations/{id}/cancel|retry|config|agent|routing|prepare
+PUT  /api/conversations/{id}/orchestration
+POST /api/conversation-control             # loopback MCP bridge, bearer token
+GET  /api/conversation-control/activity    # in-memory control audit trail
 POST /api/conversations/{id}/turns/{turnId}/cancel   # queued turn only; {"dropMessage":true} also removes the queued message
 POST /api/conversations/{id}/approvals/{approvalId}
 GET  /api/conversations/{id}/export
@@ -55,6 +59,8 @@ POST /api/uploads     GET /api/uploads/{id}
 GET  /api/events                          # WebSocket realtime stream
 GET  /api/health                          # unauthenticated
 ```
+
+Conversation detail includes `historyHasMore` for the latest message window. Message pagination returns `hasMore` when another message exists in the requested direction.
 
 ## Automation payloads
 

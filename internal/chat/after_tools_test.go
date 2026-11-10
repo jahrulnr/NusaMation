@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jahrulnr/nusamation/internal/acp"
 	"github.com/jahrulnr/nusamation/internal/agent"
 	"github.com/jahrulnr/nusamation/internal/channels"
 	"github.com/jahrulnr/nusamation/internal/events"
@@ -342,12 +343,38 @@ func TestAfterToolsBoundary(t *testing.T) {
 		{"in progress", withTools("in_progress"), false},
 		{"missing status", withTools(""), false},
 		{"unknown status", withTools("weird"), false},
+		{"live terminal", func() *activeTurn {
+			a := withTools("completed")
+			a.terminals = map[string]agent.TerminalUpdate{"term": {ID: "term"}}
+			return a
+		}(), false},
+		{"exited terminal", func() *activeTurn {
+			a := withTools("completed")
+			a.terminals = map[string]agent.TerminalUpdate{"term": {ID: "term", ExitStatus: &acp.TerminalExitStatus{}}}
+			return a
+		}(), true},
 		{"approval pending", func() *activeTurn { a := withTools("completed"); a.approvals["ap"] = true; return a }(), false},
 	}
 	for _, c := range cases {
 		if got := c.a.afterToolsBoundaryReached(); got != c.want {
 			t.Fatalf("%s: boundary = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestAfterToolsCancelRechecksBoundary(t *testing.T) {
+	a := newActiveTurn(store.Conversation{ID: "c"}, store.Turn{ID: "t"}, store.Agent{}, store.Message{}, context.Background(), func() {})
+	a.afterTools = true
+	a.markPromptSent()
+	if !a.afterToolsBoundaryReached() {
+		t.Fatal("expected an initially clear boundary")
+	}
+	a.tools["new"] = &toolState{Status: "in_progress"}
+	if (&Service{}).requestAfterToolsCancel(a) {
+		t.Fatal("cancel started after a tool became active")
+	}
+	if a.isCancelRequested() {
+		t.Fatal("active tool was cancelled")
 	}
 }
 

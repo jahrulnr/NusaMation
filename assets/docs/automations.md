@@ -23,36 +23,36 @@ but does not delete its conversation transcripts.
 
 ## CLI
 
-All commands accept `-data-dir DIR` (default `~/.nusamation`). Use an enabled
+All commands accept `--data-dir DIR` (default `~/.nusamation`). Use an enabled
 agent's slug or ID; `nusamation agent list` shows available agents. Times can
 be RFC3339 with an offset, or `YYYY-MM-DDTHH:MM` in the chosen IANA timezone.
-The timezone defaults to the CLI machine's local timezone if `-tz` is
+The timezone defaults to the CLI machine's local timezone if `--tz` is
 omitted.
 
 ```bash
 # Run every day at 09:00 Jakarta time, reusing one dedicated chat.
-nusamation automation add -name 'Daily review' -prompt 'Review the workspace' \
-  -agent codex -cron '0 9 * * *' -tz Asia/Jakarta -session same \
-  -expires '2026-12-31T18:00'
+nusamation automation add --name 'Daily review' --prompt 'Review the workspace' \
+  --agent codex --cron '0 9 * * *' --tz Asia/Jakarta --session same \
+  --expires '2026-12-31T18:00'
 
 # Schedule a one-time run in a new chat.
-nusamation automation add -name 'One-off review' -prompt 'Inspect the logs' \
-  -agent codex -at '2026-12-01T09:00' -tz Asia/Jakarta -session isolated
+nusamation automation add --name 'One-off review' --prompt 'Inspect the logs' \
+  --agent codex --at '2026-12-01T09:00' --tz Asia/Jakarta --session isolated
 
-nusamation automation list -json
-nusamation automation get <id> -json
-nusamation automation history <id> -json
-nusamation automation set <id> -prompt 'Updated prompt' -expires '2026-12-31T18:00'
-nusamation automation set <id> -expires ''       # remove expiry
+nusamation automation list --json
+nusamation automation get <id> --json
+nusamation automation history <id> --json
+nusamation automation set <id> --prompt 'Updated prompt' --expires '2026-12-31T18:00'
+nusamation automation set <id> --expires ''       # remove expiry
 nusamation automation pause <id>
 nusamation automation resume <id>
 nusamation automation remove <id>
 ```
 
-`set` changes the specified fields; use `-at` or `-cron` to change the
-schedule, and `-session isolated|same` to change the session mode. A running
+`set` changes the specified fields; use `--at` or `--cron` to change the
+schedule, and `--session isolated|same` to change the session mode. A running
 server polls the database and picks up CLI changes without a restart. `list`,
-`get` and `history` support `-json`. IDs are returned by `add` and `list`.
+`get` and `history` support `--json`. IDs are returned by `add` and `list`.
 
 ## Schedule, expiry and recovery
 

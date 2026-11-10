@@ -11,14 +11,14 @@ import (
 
 const automationUsage = `usage: nusamation automation <list|get|add|set|pause|resume|remove|history> [flags]
 
-  list [-json]                         List jobs
-  get <id> [-json]                     Show a job and its history
-  add -name NAME -prompt TEXT -agent SLUG (-at TIME | -cron 'M H D M W') [-session isolated|same] [-tz ZONE] [-expires TIME]
+  list [--json]                         List jobs
+  get <id> [--json]                     Show a job and its history
+  add --name NAME --prompt TEXT --agent SLUG (--at TIME | --cron 'M H D M W') [--session isolated|same] [--tz ZONE] [--expires TIME]
   set <id> [same flags as add]          Update selected fields
   pause|resume|remove|history <id>       Manage a job
 
 TIME is RFC3339, or YYYY-MM-DDTHH:MM in the selected timezone. CLI changes are picked up by the running server.
-All commands accept -data-dir DIR; list/get/history also accept -json.
+All commands accept --data-dir DIR; list/get/history also accept --json.
 `
 
 func automationCmd(args []string) error {
@@ -112,7 +112,7 @@ func automationSave(action string, args []string) error {
 		job.AgentID = a.ID
 	}
 	if present["cron"] && present["at"] {
-		return usagef("choose either -cron or -at")
+		return usagef("choose either --cron or --at")
 	}
 	if present["cron"] {
 		job.Schedule = "cron"

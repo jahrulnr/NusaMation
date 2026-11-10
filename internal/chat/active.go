@@ -241,6 +241,10 @@ func (a *activeTurn) disarmAfterToolsBy(queuedTurnID string) {
 func (a *activeTurn) afterToolsBoundaryReached() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.afterToolsBoundaryReachedLocked()
+}
+
+func (a *activeTurn) afterToolsBoundaryReachedLocked() bool {
 	if !a.afterTools || a.cancelRequested || a.finished || len(a.approvals) > 0 {
 		return false
 	}
@@ -249,6 +253,11 @@ func (a *activeTurn) afterToolsBoundaryReached() bool {
 	}
 	for _, t := range a.tools {
 		if t.Status != "completed" && t.Status != "failed" {
+			return false
+		}
+	}
+	for _, terminal := range a.terminals {
+		if terminal.ExitStatus == nil {
 			return false
 		}
 	}

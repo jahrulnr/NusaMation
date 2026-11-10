@@ -2,12 +2,26 @@ import { $, $$, TOOL_KINDS, agentById, agentName, agentOrb, brandImage, clock, c
 import { S } from "./state.js";
 import { enhanceMarkdown, plainMarkdown, renderMarkdown } from "./markdown.js";
 import { closeDetachedPopovers, openPopover } from "./popover.js";
-import { openModal } from "./modal.js";
+import { modalHead, openModal } from "./modal.js";
 import { approvalCard } from "./requests.js";
 import { isBusyTurn, queuedTurnFor, queueStatusLabel } from "./composer.js";
 import { loadConversation, renderHistoryControl } from "./conversations.js";
 
 /* ---------------- chat ---------------- */
+export function orderMessages(messages, turns) {
+  const userSeq = new Map(messages.filter((m) => m.role === "user").map((m) => [m.id, m.seq]));
+  const turnSeq = new Map(Object.values(turns).filter((t) => userSeq.has(t.userMessageId)).map((t) => [t.id, userSeq.get(t.userMessageId)]));
+  const ordered = messages.slice().sort((a, b) => a.seq - b.seq);
+  for (const m of ordered) if (m.turnId && !turnSeq.has(m.turnId)) turnSeq.set(m.turnId, m.seq);
+  const steerTurns = new Map();
+  let lastTurn = null;
+  for (const m of ordered) {
+    if (m.role === "assistant" && m.turnId) lastTurn = m.turnId;
+    if (!m.turnId && m.role === "user" && parseJSON(m.metadata, {})?.delivery === "steer" && lastTurn) steerTurns.set(m.id, lastTurn);
+  }
+  return ordered.sort((a, b) => (turnSeq.get(a.turnId || steerTurns.get(a.id)) ?? a.seq) - (turnSeq.get(b.turnId || steerTurns.get(b.id)) ?? b.seq) || a.seq - b.seq);
+}
+
 export function renderChat(skeleton = false) {
   const chat = $("#chat");
   if (!chat) return;
@@ -38,9 +52,7 @@ export function renderChat(skeleton = false) {
   const plan = planEntries(S.current.plan);
   if (plan.length) rows.push({ key: "plan", html: planCard(plan) });
   let lastDay = "";
-  const userSeq = new Map(S.messages.filter((m) => m.role === "user").map((m) => [m.id, m.seq]));
-  const turnSeq = new Map(Object.values(S.turns).filter((t) => userSeq.has(t.userMessageId)).map((t) => [t.id, userSeq.get(t.userMessageId)]));
-  const messages = S.messages.slice().sort((a, b) => (turnSeq.get(a.turnId) ?? a.seq) - (turnSeq.get(b.turnId) ?? b.seq) || a.seq - b.seq);
+  const messages = orderMessages(S.messages, S.turns);
   const toolCounts = new Map();
   messages.forEach((m) => { if (m.kind === "tool") toolCounts.set(m.turnId, (toolCounts.get(m.turnId) || 0) + 1); });
   for (let i = 0; i < messages.length;) {
@@ -156,6 +168,8 @@ export function messageHead(m) {
 }
 
 export function userHTML(m) {
+  const meta = m.metadata && typeof m.metadata === "object" ? m.metadata : {};
+  const via = meta.orchestration ? `<div class="msg-via">${icon("zap", "sm")} via ${esc(meta.orchestration.title || meta.orchestration.conversationId || "another conversation")}</div>` : "";
   const match = /^(?:([^\r\n]*?: )?\[In reply to: ([^\r\n]*)\])(?:\r?\n|$)/.exec(m.text || "");
   const sender = match?.[1] ? `<div class="reply-sender">${esc(match[1])}</div>` : "";
   const format = m.channel === "whatsapp" ? "whatsapp" : "markdown";
@@ -171,6 +185,7 @@ export function userHTML(m) {
   return `<div class="msg user" data-msg-id="${esc(m.id)}">
     <div class="msg-body">
       ${messageHead(m)}
+      ${via}
       ${bubble ? `<div class="user-bubble">${bubble}</div>` : ""}
       ${match ? "" : attachments}
       ${qLabel ? `<div class="queue-status"><span>${esc(qLabel)}</span><span class="queue-actions"><button class="btn btn-ghost btn-xs" data-action="queue-edit" data-id="${esc(m.id)}" data-turn="${esc(qt.id)}" title="Edit this queued message">${icon("edit", "sm")} Edit</button><button class="btn btn-ghost btn-xs" data-action="queue-cancel" data-id="${esc(m.id)}" data-turn="${esc(qt.id)}" title="Cancel this queued message">${icon("x", "sm")} Cancel</button></span></div>` : ""}
@@ -382,9 +397,39 @@ export function attachmentsHTML(atts) {
   return `<div class="attach-grid">${atts.map((a) => {
     const url = `/api/uploads/${encodeURIComponent(a.id)}`;
     const isImg = String(a.mime || "").startsWith("image/");
-    if (isImg) return `<a class="attach-thumb" href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${esc(a.name)}" loading="lazy"></a>`;
-    return `<a class="attach-file" href="${url}" target="_blank" rel="noopener">${icon("file", "sm")}<span class="name">${esc(a.name)}</span><span class="size">${fmtBytes(a.size)}</span></a>`;
+    if (isImg) return `<button type="button" class="attach-thumb" data-action="preview-annotation" data-upload="${esc(a.id)}" data-caption="${esc(a.name)}"><img src="${url}" alt="${esc(a.name)}" loading="lazy"></button>`;
+    return `<button type="button" class="attach-file" data-action="preview-file" data-upload="${esc(a.id)}" data-name="${esc(a.name)}">${icon("file", "sm")}<span class="name">${esc(a.name)}</span><span class="size">${fmtBytes(a.size)}</span></button>`;
   }).join("")}</div>`;
+}
+
+export async function previewFile(uploadId, name) {
+  if (!uploadId) return;
+  const url = `/api/uploads/${encodeURIComponent(uploadId)}`;
+  S.modal = { type: "file-preview", uploadId };
+  openModal(`${modalHead(name, "Attachment preview")}<div class="modal-body file-preview-body"><div class="file-preview-content" role="status">Loading attachment…</div></div><div class="modal-foot"><a class="btn btn-secondary" href="${url}" download>Download</a></div>`, { size: "md" });
+  const root = $("#modal-root .file-preview-content");
+  try {
+    const response = await fetch(url, { credentials: "same-origin" });
+    if (!response.ok) throw new Error("Could not load this attachment.");
+    const bytes = await response.arrayBuffer();
+    if (!root?.isConnected) return;
+    const type = response.headers.get("content-type") || "";
+    if (type.includes("application/pdf") || type.startsWith("audio/") || type.startsWith("video/")) {
+      const element = document.createElement(type.startsWith("audio/") ? "audio" : type.startsWith("video/") ? "video" : "iframe");
+      element.src = url;
+      if (element.tagName !== "IFRAME") element.controls = true;
+      else element.title = name;
+      root.replaceChildren(element);
+    } else {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      if (text.includes("\0")) throw new Error("Preview is unavailable for this file type.");
+      const pre = document.createElement("pre");
+      pre.textContent = text;
+      root.replaceChildren(pre);
+    }
+  } catch (error) {
+    if (root?.isConnected) root.textContent = error instanceof TypeError ? "Preview is unavailable for this file type." : (error.message || "Could not load this attachment.");
+  }
 }
 
 // Page annotations sent with the message (contract §6.4): metadata.annotations

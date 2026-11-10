@@ -1,12 +1,14 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jahrulnr/nusamation/internal/config"
+	"github.com/jahrulnr/nusamation/internal/store"
 )
 
 func testConfig(t *testing.T) config.Config {
@@ -116,5 +118,42 @@ func TestSeedDocsWritesAndSyncs(t *testing.T) {
 	b, err := os.ReadFile(stale)
 	if err != nil || string(b) != "keep me" {
 		t.Fatal("user file in docs dir was removed or modified")
+	}
+}
+
+func TestMCPFingerprintTracksConfiguration(t *testing.T) {
+	cfg := testConfig(t)
+	a, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	ctx := context.Background()
+	initial, err := a.mcpFingerprint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := a.store.CreateMCP(ctx, store.MCPServer{Name: "fixture", Command: "fixture", Enabled: true, Env: store.SecretList{{Name: "TOKEN", Value: "first"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	added, err := a.mcpFingerprint(ctx)
+	if err != nil || added == initial {
+		t.Fatal("MCP addition not detected", err)
+	}
+	_, err = a.store.UpdateMCP(ctx, server.ID, store.MCPServer{Enabled: true, EnabledSet: true, Env: store.SecretList{{Name: "TOKEN", Value: "second"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := a.mcpFingerprint(ctx)
+	if err != nil || changed == added {
+		t.Fatal("secret update not detected", err)
+	}
+	if err := a.store.DeleteMCP(ctx, server.ID); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := a.mcpFingerprint(ctx)
+	if err != nil || removed != initial {
+		t.Fatal("MCP removal not detected", err)
 	}
 }

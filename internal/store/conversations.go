@@ -305,6 +305,14 @@ func (s *Store) ListConversations(ctx context.Context, f ConversationFilter) ([]
 		where = append(where, "EXISTS(SELECT 1 FROM channel_links l WHERE l.conversation_id=c.id AND l.channel=?)")
 		args = append(args, f.Channel)
 	}
+	if f.Status != "" {
+		where = append(where, "c.status=?")
+		args = append(args, f.Status)
+	}
+	if f.ProjectID != "" {
+		where = append(where, "c.project_id=?")
+		args = append(args, f.ProjectID)
+	}
 	if f.Pinned != nil {
 		where = append(where, "c.pinned=?")
 		args = append(args, boolInt(*f.Pinned))
@@ -331,6 +339,47 @@ func (s *Store) ListConversations(ctx context.Context, f ConversationFilter) ([]
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// CountSpawnedConversations counts active delegated chats created by a parent.
+// metadata_json.spawnedBy is written by chat.MarkSpawned.
+func (s *Store) CountSpawnedConversations(ctx context.Context, parentID string) (int, error) {
+	if parentID == "" {
+		return 0, nil
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM conversations
+		WHERE archived=0 AND json_extract(metadata_json,'$.spawnedBy')=?`, parentID).Scan(&n)
+	return n, err
+}
+
+// ConversationProgress is a compact snapshot used by the conversation-control
+// wait loop: one row query for the cursor and counters, then the active turn.
+type ConversationProgress struct {
+	HeadSeq          int64
+	Active           *Turn
+	Queued           int
+	PendingApprovals int
+}
+
+func (s *Store) ConversationProgress(ctx context.Context, conversationID string) (ConversationProgress, error) {
+	var p ConversationProgress
+	err := s.db.QueryRowContext(ctx, `SELECT
+		(SELECT COALESCE(MAX(seq),0) FROM messages WHERE conversation_id=?),
+		(SELECT COUNT(*) FROM turns WHERE conversation_id=? AND status='queued'),
+		(SELECT COUNT(*) FROM approvals WHERE conversation_id=? AND status='pending')`,
+		conversationID, conversationID, conversationID).
+		Scan(&p.HeadSeq, &p.Queued, &p.PendingApprovals)
+	if err != nil {
+		return p, err
+	}
+	turn, err := s.ActiveTurn(ctx, conversationID)
+	if err == nil {
+		p.Active = &turn
+	} else if !IsNotFound(err) {
+		return p, err
+	}
+	return p, nil
 }
 
 func (s *Store) ListChannelLinks(ctx context.Context, conversationID string) ([]ChannelLink, error) {

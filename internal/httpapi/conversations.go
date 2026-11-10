@@ -122,7 +122,11 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
 		return
 	}
-	msgs, _ := s.store.ListMessages(r.Context(), id, 0, 0, 150)
+	msgs, _ := s.store.ListMessages(r.Context(), id, 0, 0, 151)
+	historyHasMore := len(msgs) > 150
+	if historyHasMore {
+		msgs = msgs[1:]
+	}
 	turns := make(map[string]store.Turn)
 	for _, msg := range msgs {
 		if msg.TurnID == "" {
@@ -161,14 +165,15 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 	}
 	ag, _ := s.store.GetAgent(r.Context(), conv.AgentID)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"conversation": conv,
-		"messages":     views,
-		"turns":        turns,
-		"approvals":    approvals,
-		"elicitations": s.chat.PendingElicitations(id),
-		"configs":      configs,
-		"active":       map[string]any{"running": active, "turnId": activeTurnID, "status": activeStatus},
-		"agent":        ag.Public(),
+		"conversation":   conv,
+		"messages":       views,
+		"historyHasMore": historyHasMore,
+		"turns":          turns,
+		"approvals":      approvals,
+		"elicitations":   s.chat.PendingElicitations(id),
+		"configs":        configs,
+		"active":         map[string]any{"running": active, "turnId": activeTurnID, "status": activeStatus},
+		"agent":          ag.Public(),
 	})
 }
 
@@ -251,10 +256,21 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	after := int64(parseInt(q.Get("after"), 0))
 	before := int64(parseInt(q.Get("before"), 0))
 	limit := min(parseInt(q.Get("limit"), 100), 500)
-	msgs, err := s.store.ListMessages(r.Context(), r.PathValue("id"), after, before, limit)
+	if limit <= 0 {
+		limit = 100
+	}
+	msgs, err := s.store.ListMessages(r.Context(), r.PathValue("id"), after, before, limit+1)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "messages", err.Error())
 		return
+	}
+	hasMore := len(msgs) > limit
+	if hasMore {
+		if after > 0 {
+			msgs = msgs[:limit]
+		} else {
+			msgs = msgs[1:]
+		}
 	}
 	turns := make(map[string]store.Turn)
 	for _, msg := range msgs {
@@ -270,7 +286,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"messages": s.hydrateMessages(r, msgs),
 		"turns":    turns,
-		"hasMore":  len(msgs) == limit,
+		"hasMore":  hasMore,
 	})
 }
 
@@ -451,6 +467,24 @@ func (s *Server) handleRouting(w http.ResponseWriter, r *http.Request) {
 	conv, err := s.chat.UpdateConversation(r.Context(), r.PathValue("id"), chat.ConversationPatch{Routing: &routing})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "routing_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversation": conv})
+}
+
+func (s *Server) handleOrchestration(w http.ResponseWriter, r *http.Request) {
+	var policy chat.OrchestrationPolicy
+	if err := readJSON(w, r, &policy, 64<<10); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid orchestration policy.")
+		return
+	}
+	conv, err := s.chat.SetOrchestration(r.Context(), r.PathValue("id"), policy)
+	if err != nil {
+		if errors.Is(err, chat.ErrInvalidOrchestrationScope) {
+			writeError(w, http.StatusBadRequest, "invalid", err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, "orchestration_failed", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"conversation": conv})

@@ -30,6 +30,9 @@ func TestSteerInjectsIntoRunningTurn(t *testing.T) {
 	if turn.ID != p1.ID {
 		t.Fatalf("steer created turn %s, want the running turn %s", turn.ID, p1.ID)
 	}
+	if msg.TurnID != p1.ID {
+		t.Fatalf("steer belongs to turn %q, want %q", msg.TurnID, p1.ID)
+	}
 	if msg.Text != "use usb" {
 		t.Fatalf("stored text %q", msg.Text)
 	}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -54,8 +55,11 @@ func newFlagSet(cfg *Config) *flag.FlagSet {
 // FlagUsage writes the server flag list to w for help output.
 func FlagUsage(w io.Writer) {
 	fs := newFlagSet(&Config{})
-	fs.SetOutput(w)
+	var out bytes.Buffer
+	fs.SetOutput(&out)
 	fs.PrintDefaults()
+	text := strings.ReplaceAll("\n"+out.String(), "\n  -", "\n  --")
+	_, _ = io.WriteString(w, text[1:])
 }
 
 func Parse(args []string) (Config, error) {

@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,17 +20,20 @@ import (
 	"time"
 
 	"github.com/jahrulnr/nusamation/assets"
+	"github.com/jahrulnr/nusamation/internal/acp"
 	"github.com/jahrulnr/nusamation/internal/agent"
 	"github.com/jahrulnr/nusamation/internal/auth"
 	"github.com/jahrulnr/nusamation/internal/automation"
 	"github.com/jahrulnr/nusamation/internal/browser"
-	"github.com/jahrulnr/nusamation/internal/browseruse"
 	"github.com/jahrulnr/nusamation/internal/channels"
 	webchannel "github.com/jahrulnr/nusamation/internal/channels/web"
 	"github.com/jahrulnr/nusamation/internal/channels/whatsapp"
 	"github.com/jahrulnr/nusamation/internal/chat"
 	"github.com/jahrulnr/nusamation/internal/config"
 	"github.com/jahrulnr/nusamation/internal/httpapi"
+	"github.com/jahrulnr/nusamation/internal/mcp/browseruse"
+	"github.com/jahrulnr/nusamation/internal/mcp/conversation"
+	"github.com/jahrulnr/nusamation/internal/mcp/grants"
 	"github.com/jahrulnr/nusamation/internal/notify"
 	"github.com/jahrulnr/nusamation/internal/realtime"
 	"github.com/jahrulnr/nusamation/internal/security"
@@ -37,18 +42,19 @@ import (
 )
 
 type App struct {
-	cfg        config.Config
-	log        *slog.Logger
-	store      *store.Store
-	agents     *agent.Manager
-	browser    *browser.Manager
-	browserUse *browseruse.Grants
-	channels   *channels.Manager
-	chat       *chat.Service
-	hub        *realtime.Hub
-	notifier   *notify.Broadcaster
-	updater    *update.Manager
-	logFile    *os.File
+	cfg                config.Config
+	log                *slog.Logger
+	store              *store.Store
+	agents             *agent.Manager
+	browser            *browser.Manager
+	browserUse         *grants.Grants
+	conversationGrants *grants.Grants
+	channels           *channels.Manager
+	chat               *chat.Service
+	hub                *realtime.Hub
+	notifier           *notify.Broadcaster
+	updater            *update.Manager
+	logFile            *os.File
 }
 
 func Run(ctx context.Context, cfg config.Config) error {
@@ -129,10 +135,12 @@ func New(cfg config.Config) (*App, error) {
 		logger.Warn("startup recovery failed", "error", err)
 	}
 
-	grants := browseruse.NewGrants(filepath.Join(cfg.DataDir, "browser-use-tokens.json"))
+	browserGrants := grants.New(filepath.Join(cfg.DataDir, "browser-use-tokens.json"))
+	conversationGrants := grants.NewHashed(filepath.Join(cfg.DataDir, "conversation-tokens.json"))
 	a := &App{
 		cfg: cfg, log: logger, store: st, agents: agentMgr, browser: browserMgr,
-		browserUse: grants, channels: chanMgr, chat: chatSvc, hub: hub, notifier: notifyBus,
+		browserUse: browserGrants, conversationGrants: conversationGrants,
+		channels: chanMgr, chat: chatSvc, hub: hub, notifier: notifyBus,
 		updater: updater, logFile: logFile,
 	}
 	if created {
@@ -144,7 +152,8 @@ func New(cfg config.Config) (*App, error) {
 func (a *App) Serve(ctx context.Context) error {
 	api, err := httpapi.New(httpapi.Options{
 		Config: a.cfg, Store: a.store, Chat: a.chat, Agents: a.agents,
-		Browser: a.browser, BrowserUse: a.browserUse, Channels: a.channels, Hub: a.hub, Log: a.log,
+		Browser: a.browser, BrowserUse: a.browserUse, ConversationControl: a.conversationGrants,
+		Channels: a.channels, Hub: a.hub, Log: a.log,
 		Notifier: a.notifier, Updater: a.updater,
 	})
 	if err != nil {
@@ -156,10 +165,43 @@ func (a *App) Serve(ctx context.Context) error {
 		return fmt.Errorf("listen on %s: %w", a.cfg.Addr, err)
 	}
 	if exe, err := os.Executable(); err == nil {
-		a.agents.EnableBrowserUse(a.browserUse, exe, loopbackBase(ln.Addr()))
+		base := loopbackBase(ln.Addr())
+		a.agents.EnableInjectedMCP(
+			agent.InjectedMCP{
+				Name: "browser_use", Command: exe, Args: []string{"mcp", "run", "--browser-use"},
+				Env: func(conversationID string) ([]acp.EnvVar, bool) {
+					token := a.browserUse.Token(conversationID)
+					if token == "" {
+						return nil, false
+					}
+					return []acp.EnvVar{
+						{Name: browseruse.EnvURL, Value: base},
+						{Name: browseruse.EnvToken, Value: token},
+					}, true
+				},
+			},
+			agent.InjectedMCP{
+				Name: "nusamation_conversation", Command: exe, Args: []string{"mcp", "run", "--conversation"},
+				Env: func(conversationID string) ([]acp.EnvVar, bool) {
+					token := a.conversationGrants.Token(conversationID)
+					if token == "" {
+						return nil, false
+					}
+					return []acp.EnvVar{
+						{Name: conversation.EnvURL, Value: base},
+						{Name: conversation.EnvToken, Value: token},
+					}, true
+				},
+			},
+		)
 	} else {
-		a.log.Warn("browser_use MCP not registered", "error", err)
+		a.log.Warn("embedded MCP servers not registered", "error", err)
 	}
+	initialMCP, initialErr := a.mcpFingerprint(ctx)
+	watchCtx, stopMCPWatch := context.WithCancel(ctx)
+	watchDone := make(chan struct{})
+	go func() { defer close(watchDone); a.watchMCP(watchCtx, initialMCP, initialErr) }()
+	defer func() { stopMCPWatch(); <-watchDone }()
 	a.chat.ResumeQueues(ctx)
 	url := a.publicURL(ln.Addr())
 	srv := &http.Server{
@@ -210,6 +252,43 @@ func (a *App) Serve(ctx context.Context) error {
 	return nil
 }
 
+func (a *App) mcpFingerprint(ctx context.Context) ([32]byte, error) {
+	list, err := a.store.ListMCP(ctx)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	for i := range list {
+		list[i].CreatedAt = 0
+		list[i].UpdatedAt = 0
+	}
+	data, err := json.Marshal(list)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(data), nil
+}
+
+func (a *App) watchMCP(ctx context.Context, previous [32]byte, previousErr error) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			current, err := a.mcpFingerprint(ctx)
+			if err != nil {
+				a.log.Warn("could not check MCP settings", "error", err)
+				continue
+			}
+			if previousErr != nil || current != previous {
+				a.chat.MCPChanged(ctx)
+			}
+			previous, previousErr = current, nil
+		}
+	}
+}
+
 func (a *App) Close() {
 	if a.browser != nil {
 		a.browser.Close()
@@ -228,8 +307,8 @@ func (a *App) Close() {
 	}
 }
 
-// loopbackBase is the origin the browser_use child calls. A wildcard listen
-// address is rewritten to 127.0.0.1 so the child does not dial 0.0.0.0.
+// loopbackBase is the origin the embedded MCP children call. A wildcard
+// listen address is rewritten to 127.0.0.1 so the child does not dial 0.0.0.0.
 func loopbackBase(addr net.Addr) string {
 	host := ""
 	if addr != nil {
@@ -390,19 +469,20 @@ func opsSection(cfg config.Config) string {
 	return fmt.Sprintf(`%s
 
 If a task asks you to configure, operate, or debug NusaMation itself (agents,
-WhatsApp, settings, logs), read the ops docs first — do not guess:
+MCP servers, WhatsApp, settings, logs), read the ops docs first — do not guess:
 
 - Docs:   %s/ — start with README.md, then the file matching the task
           (agents.md, whatsapp.md, settings.md, api.md, troubleshooting.md).
           If client-side fs/read is denied outside this workspace, read the
           file via a terminal command (e.g. cat) instead.
-- CLI:    %s <command> -data-dir %s
+- CLI:    %s <command> --data-dir %s
 - Data:   %s
 - Logs:   %s
 - Web UI: %s
 
-Use the CLI (not SQL) to change state; mutations apply on the next server
-start. Never print secret.key or sealed env values.
+Use the CLI (not SQL) to change state. MCP changes refresh each room when it
+becomes idle; other settings may require a restart. Never print secret.key or
+sealed env values.
 `, opsMarker, cfg.DocsDir(), exe, cfg.DataDir, cfg.DataDir,
 		filepath.Join(cfg.LogDir(), "nusamation.log"), ui)
 }

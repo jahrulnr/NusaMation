@@ -35,14 +35,17 @@ func main() {
 		case "agent", "agents":
 			fail("agent", agentCmd(args[1:]))
 			return
+		case "mcp":
+			fail("mcp", mcpCmd(args[1:]))
+			return
 		case "config", "settings":
 			fail("config", configCmd(args[1:]))
 			return
 		case "whatsapp", "wa":
 			fail("whatsapp", whatsappCmd(args[1:]))
 			return
-		case "browser-use":
-			fail("browser-use", browserUseCmd())
+		case "conversations":
+			fail("conversations", conversationsCmd(args[1:]))
 			return
 		}
 	}
@@ -77,9 +80,10 @@ Usage:
 Commands:
   automation    Manage scheduled ACP jobs and run history
   agent         Manage ACP agent CLIs (list, detect, get, add, set, remove)
+  mcp           Manage shared MCP servers
   config        Manage stored settings (list, get, add, set, remove)
   whatsapp      Manage WhatsApp channel settings and send messages
-  browser-use   Internal stdio MCP server for the embedded browser
+  conversations Manage conversation control through the loopback bridge
   reset-password  Reset the admin password
   version       Print version
 
@@ -97,7 +101,7 @@ Use "%s <command> -h" for command-specific help.
 }
 
 func resetPassword(args []string) error {
-	fs, dataDir := subFlagSet("reset-password", "usage: nusamation reset-password [-data-dir DIR] [-password P]\n")
+	fs, dataDir := subFlagSet("reset-password", "usage: nusamation reset-password [--data-dir DIR] [--password P]\n")
 	password := fs.String("password", "", "new password (otherwise generated)")
 	if err := fs.Parse(args); err != nil {
 		return err

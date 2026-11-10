@@ -229,7 +229,7 @@ func (r *Runtime) loadOrCreate(ctx context.Context, s *Session, req EnsureReques
 		return s, err
 	}
 	mcps := mcpConfigs(mcpList, client.Capabilities().AgentCapabilities)
-	if extra, ok := r.mgr.browserUseServer(s.ConversationID()); ok {
+	for _, extra := range r.mgr.injectedServers(s.ConversationID()) {
 		mcps = replaceMCP(mcps, extra)
 	}
 	acpID := strings.TrimSpace(req.ACPSessionID)

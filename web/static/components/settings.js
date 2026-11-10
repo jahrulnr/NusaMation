@@ -1,5 +1,5 @@
 import { $, $$, AGENT_COLORS, agentById, agentOrb, configChoices, esc, icon, timeAgo } from "./util.js";
-import { S } from "./state.js";
+import { S, defaultSendDelivery } from "./state.js";
 import { api } from "./api.js";
 import { toast } from "./toast.js";
 import { confirmModal, modalHead, openModal } from "./modal.js";
@@ -18,6 +18,8 @@ export function openSettings(tab = "") {
   S.mcpForm = null;
   S.modal = { type: "settings" };
   if (S.settingsTab === "account") loadUpdateInfo();
+  if (S.settingsTab === "control") loadControlSettings();
+  if (S.settingsTab === "mcp") loadMCP();
   renderSettings();
 }
 
@@ -29,6 +31,7 @@ export function renderSettings() {
     ["mcp", "zap", "MCP servers"],
     ["channels", "message", "Channels"],
     ["routing", "link", "Routing"],
+    ["control", "zap", "Agent control"],
     ["account", "shield", "Account"],
   ];
   let body = "";
@@ -38,6 +41,7 @@ export function renderSettings() {
   else if (S.settingsTab === "mcp") body = mcpSettings();
   else if (S.settingsTab === "channels") body = channelsSettings();
   else if (S.settingsTab === "routing") body = routingSettings();
+  else if (S.settingsTab === "control") body = controlSettings();
   else body = accountSettings();
   const content = `<div class="settings-layout">
     <nav class="settings-tabs">${tabs.map(([id, ic, label]) => `<button class="settings-tab ${S.settingsTab === id ? "active" : ""}" data-action="settings-tab" data-tab="${id}">${icon(ic)}<span>${label}</span></button>`).join("")}</nav>
@@ -63,7 +67,8 @@ export function agentDefaultsSettings() {
     const choices = o.type === "boolean" ? [{ value: "true", name: "On" }, { value: "false", name: "Off" }] : configChoices(o);
     return `<div class="field"><label>${esc(o.name || o.id)}</label><select class="select" data-change="default-choice" data-id="${esc(o.id)}" data-type="${esc(o.type)}" ${S.defaultBusy ? "disabled" : ""}><option value="">Use agent default</option>${choices.map((c) => `<option value="${esc(c.value)}">${esc(c.groupName ? c.groupName + " · " + (c.name || c.value) : (c.name || c.value))}</option>`).join("")}</select></div>`;
   }).join("");
-  return `${settingsHead("Default ACP", "Used for new conversations, including new WhatsApp conversations. Choose options in order; each choice refreshes the available options.")}
+  return `<div class="field"><label for="default-send-delivery">Default web send mode</label><select id="default-send-delivery" class="select" data-change="default-send-delivery"><option value="steer" ${defaultSendDelivery() === "steer" ? "selected" : ""}>Steer</option><option value="queue" ${defaultSendDelivery() === "queue" ? "selected" : ""}>Queue</option></select><div class="settings-desc">Used for new web conversations. Other channels use steer.</div></div>
+    ${settingsHead("Default ACP", "Used for new conversations, including new WhatsApp conversations. Choose options in order; each choice refreshes the available options.")}
     <div class="field"><label>Agent</label><select class="select" data-change="default-agent" ${S.defaultBusy ? "disabled" : ""}><option value="">Choose an agent</option>${S.agents.filter((a) => a.enabled).map((a) => `<option value="${esc(a.id)}" ${draft.agentId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></div>
     ${S.defaultBusy ? `<div class="settings-loading" role="status"><span class="spinner"></span><span>Loading agent options…</span></div>` : ""}
     ${S.defaultError ? `<div class="settings-desc" role="alert">${esc(S.defaultError)} <button class="btn btn-secondary btn-sm" data-action="default-retry">Retry</button></div>` : ""}
@@ -202,6 +207,51 @@ export function routingSettings() {
       <div><b style="color:var(--text-soft)">External channels</b> receive one message when the turn finishes. Thoughts and raw tool output stay on the web.</div>
       <div><b style="color:var(--text-soft)">Approvals</b> are always required in web unless the agent policy or a remembered rule allows the call.</div>
     </div></div>`;
+}
+
+export function controlSettings() {
+  const o = S.orchestrationSettings || { enabled: false };
+  return `${settingsHead("Agent control", "Let an authorized conversation inspect and manage other conversations through the nusamation_conversation MCP server.")}
+    <div class="settings-row"><div><div class="label">Enable conversation control</div><div class="desc">Global kill switch. Every conversation still needs its own opt-in from the conversation menu.</div></div><button role="switch" aria-checked="${!!o.enabled}" class="switch ${o.enabled ? "on" : ""}" data-action="orchestration-toggle"></button></div>
+    <div class="settings-section" style="margin-top:22px"><div class="settings-title">What the agent can do</div><div class="settings-card" style="border:1px solid var(--border);border-radius:11px;padding:12px 14px;color:var(--muted);font-size:12px;line-height:1.7">
+      <div><b style="color:var(--text-soft)">list</b> — find conversations by title, agent, channel, status or project.</div>
+      <div><b style="color:var(--text-soft)">read</b> — read a message window, active turn and pending approvals. Thoughts and raw tool payloads stay hidden by default.</div>
+      <div><b style="color:var(--text-soft)">wait</b> — wait up to 30 seconds for a turn to finish or new messages to arrive.</div>
+      <div><b style="color:var(--text-soft)">send / stop</b> — queue, interrupt after tools, or cancel another conversation's turn. Cross-conversation steer is delivered as after_tools; the target's final answer is not mirrored to its own channel.</div>
+      <div><b style="color:var(--text-soft)">spawn</b> — create a delegated conversation (separate per-chat toggle).</div>
+      <div><b style="color:var(--text-soft)">report</b> — send a short progress ping to the caller's channel (separate per-chat toggle, one per minute).</div>
+      <div style="margin-top:8px">Approval decisions always stay with the human.</div>
+    </div></div>
+    <div class="settings-section"><div class="settings-title">How authorization works</div><div class="settings-desc">The MCP child receives a token scoped to the conversation that spawned it. A turn that was itself started by another conversation has no control access.</div></div>`;
+}
+
+export function loadControlSettings() {
+  api("/settings").then((d) => {
+    S.orchestrationSettings = d.orchestration || S.orchestrationSettings;
+    if (S.modal?.type === "settings" && S.settingsTab === "control") renderSettings();
+  }).catch(() => {});
+}
+
+export function loadMCP() {
+  api("/mcp").then((d) => {
+    S.mcp = d.servers || S.mcp;
+    if (S.modal?.type === "settings" && S.settingsTab === "mcp" && !S.mcpForm) renderSettings();
+  }).catch(() => {});
+}
+
+export async function toggleOrchestration() {
+  const prev = S.orchestrationSettings || {};
+  const next = !prev.enabled;
+  S.orchestrationSettings = { ...prev, enabled: next };
+  renderSettings();
+  try {
+    const d = await api("/settings", { method: "PUT", body: { orchestration: { enabled: next } } });
+    S.orchestrationSettings = d.orchestration || S.orchestrationSettings;
+  } catch (e) {
+    S.orchestrationSettings = prev;
+    toast("Could not save agent control setting", e.message, "error");
+  }
+  if (S.modal?.type === "settings" && S.settingsTab === "control") renderSettings();
 }
 
 export function accountSettings() {

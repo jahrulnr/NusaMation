@@ -21,12 +21,12 @@ If the session is logged out or corrupted: `POST /api/channels/whatsapp/logout`
 
 ```bash
 nusamation whatsapp show                       # current effective settings
-nusamation whatsapp set -enabled               # master switch
-nusamation whatsapp set -auto-start            # connect on server start
-nusamation whatsapp set -group-policy mention  # disabled | mention | all
-nusamation whatsapp set -allow '+628123456789,+15550100'   # replace allowlist
-nusamation whatsapp set -allow-add +628… -allow-remove 999… # edit allowlist
-nusamation whatsapp set -read-receipts=false -send-typing=false
+nusamation whatsapp set --enabled               # master switch
+nusamation whatsapp set --auto-start            # connect on server start
+nusamation whatsapp set --group-policy mention  # disabled | mention | all
+nusamation whatsapp set --allow '+628123456789,+15550100'   # replace allowlist
+nusamation whatsapp set --allow-add +628… --allow-remove 999… # edit allowlist
+nusamation whatsapp set --read-receipts=false --send-typing=false
 ```
 
 - **AllowedNumbers**: who may talk to the bot in private chats. Numbers are
@@ -52,14 +52,14 @@ user who started the turn may vote — other group members' taps are ignored.
 
 Use the CLI for WhatsApp lookup, including when the request originates in the
 web chat. Commands return JSON and work without ACP tool injection. Add
-`-data-dir DIR` if this instance does not use the default data directory.
+`--data-dir DIR` if this instance does not use the default data directory.
 
 ```sh
 nusamation whatsapp search 'upgrade php'
-nusamation whatsapp search -n 50 -chat '123@g.us' 'upgrade php'
-nusamation whatsapp search -n 50 -cursor 'TIMESTAMP:ROWID' 'upgrade php'
+nusamation whatsapp search -n 50 --chat '123@g.us' 'upgrade php'
+nusamation whatsapp search -n 50 --cursor 'TIMESTAMP:ROWID' 'upgrade php'
 nusamation whatsapp contacts 'Alice'
-nusamation whatsapp contacts -n 50 -page 2 'Alice'
+nusamation whatsapp contacts -n 50 --page 2 'Alice'
 nusamation whatsapp user '123@s.whatsapp.net'
 ```
 
@@ -109,7 +109,7 @@ POST /api/channels/whatsapp/connect
 The running server must have WhatsApp connected. `nusamation whatsapp send`
 reads one JSON object from stdin and sends it through the existing connection.
 It returns `{"messageId":"…"}`. It uses the configured data directory and
-`NUSAMATION_ADDR`; use `-data-dir` or `-addr` if the server uses other values.
+`NUSAMATION_ADDR`; use `--data-dir` or `--addr` if the server uses other values.
 The same JSON is accepted by authenticated `POST /api/channels/whatsapp/send`
 (with the usual session cookie and CSRF header).
 

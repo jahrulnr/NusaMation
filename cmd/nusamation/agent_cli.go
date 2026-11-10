@@ -18,29 +18,29 @@ Manage ACP agent CLIs.
 
 Subcommands:
   list                        List configured agents
-  detect [-add]               Detect popular ACP CLIs on PATH (-add registers them)
-  get <slug|id>               Show one agent (env values masked; -show-secrets to reveal)
-  add -name N -command C      Create an agent (requires -name and -command)
+  detect [--add]               Detect popular ACP CLIs on PATH (--add registers them)
+  get <slug|id>               Show one agent (env values masked; --show-secrets to reveal)
+  add --name N --command C      Create an agent (requires --name and --command)
   set <slug|id> [flags]       Update fields of an existing agent
   remove <slug|id>            Delete an agent
 
 Add/set flags:
-  -slug S           Agent slug (derived from -name when omitted on add)
-  -arg A            Command argument; repeatable. On 'set', replaces all args
-  -cwd DIR          Working directory (default: <data-dir>/workspace)
-  -env K=V          Environment variable; repeatable. On 'set', upserts by name
-  -env-rm K         Remove env var by name; repeatable ('set' only)
-  -policy P         Approval policy: ask, auto_safe, auto_all (default ask)
-  -model M          Default model ('set': -model "" clears)
-  -description T    Description text
-  -icon I           sparkles, zap, brain, terminal, globe, star
-  -color C          amber, violet, emerald, blue, rose, slate
-  -enabled=B        Enable/disable the agent (add default true)
-  -auto-start=B     Idle mode: start on boot and keep the agent warm
+  --slug S           Agent slug (derived from --name when omitted on add)
+  --arg A            Command argument; repeatable. On 'set', replaces all args
+  --cwd DIR          Working directory (default: <data-dir>/workspace)
+  --env K=V          Environment variable; repeatable. On 'set', upserts by name
+  --env-rm K         Remove env var by name; repeatable ('set' only)
+  --policy P         Approval policy: ask, auto_safe, auto_all (default ask)
+  --model M          Default model ('set': --model "" clears)
+  --description T    Description text
+  --icon I           sparkles, zap, brain, terminal, globe, star
+  --color C          amber, violet, emerald, blue, rose, slate
+  --enabled=B        Enable/disable the agent (add default true)
+  --auto-start=B     Idle mode: start on boot and keep the agent warm
 
 Other flags:
-  -data-dir DIR     NusaMation data directory (default ~/.nusamation)
-  -json             JSON output for list/get/detect/add/set
+  --data-dir DIR     NusaMation data directory (default ~/.nusamation)
+  --json             JSON output for list/get/detect/add/set
   -h                This help
 `
 
@@ -70,7 +70,7 @@ func agentCmd(args []string) error {
 }
 
 func agentList(args []string) error {
-	fs, dataDir := subFlagSet("agent list", "usage: nusamation agent list [-json] [-data-dir DIR]\n")
+	fs, dataDir := subFlagSet("agent list", "usage: nusamation agent list [--json] [--data-dir DIR]\n")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -100,7 +100,7 @@ func agentList(args []string) error {
 }
 
 func agentGet(args []string) error {
-	fs, dataDir := subFlagSet("agent get", "usage: nusamation agent get <slug|id> [-json] [-show-secrets] [-data-dir DIR]\n")
+	fs, dataDir := subFlagSet("agent get", "usage: nusamation agent get <slug|id> [--json] [--show-secrets] [--data-dir DIR]\n")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	showSecrets := fs.Bool("show-secrets", false, "include decrypted env values")
 	pos, perr := parseInterleaved(fs, args)
@@ -172,7 +172,7 @@ func agentFormFlags(fs *flag.FlagSet, f *agentForm, add bool) {
 
 func agentAdd(args []string) error {
 	fs, dataDir := subFlagSet("agent add",
-		"usage: nusamation agent add -name N -command C [-arg A]... [-cwd D] [flags]\n       see 'nusamation agent -h' for all flags\n")
+		"usage: nusamation agent add --name N --command C [--arg A]... [--cwd D] [flags]\n       see 'nusamation agent -h' for all flags\n")
 	var f agentForm
 	agentFormFlags(fs, &f, true)
 	jsonOut := fs.Bool("json", false, "JSON output")
@@ -343,7 +343,7 @@ func agentSet(args []string) error {
 }
 
 func agentRemove(args []string) error {
-	fs, dataDir := subFlagSet("agent remove", "usage: nusamation agent remove <slug|id> [-data-dir DIR]\n")
+	fs, dataDir := subFlagSet("agent remove", "usage: nusamation agent remove <slug|id> [--data-dir DIR]\n")
 	pos, perr := parseInterleaved(fs, args)
 	if perr != nil {
 		return perr
@@ -373,7 +373,7 @@ func agentRemove(args []string) error {
 }
 
 func agentDetect(args []string) error {
-	fs, dataDir := subFlagSet("agent detect", "usage: nusamation agent detect [-add] [-json] [-data-dir DIR]\n\nDetect popular ACP CLIs on PATH. -add registers each missing one.\n")
+	fs, dataDir := subFlagSet("agent detect", "usage: nusamation agent detect [--add] [--json] [--data-dir DIR]\n\nDetect popular ACP CLIs on PATH. --add registers each missing one.\n")
 	add := fs.Bool("add", false, "register detected CLIs as agents")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	if err := fs.Parse(args); err != nil {

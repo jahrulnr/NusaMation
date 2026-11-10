@@ -216,6 +216,19 @@ type Turn struct {
 	CreatedAt      int64  `json:"createdAt"`
 }
 
+// TurnSummary is the compact last-turn view used by conversation control.
+type TurnSummary struct {
+	ID         string
+	Status     string
+	StopReason string
+	Error      string
+	Prompt     string
+	Answer     string
+	CreatedAt  int64
+	StartedAt  int64
+	EndedAt    int64
+}
+
 type PermissionOption struct {
 	OptionID string `json:"optionId"`
 	Name     string `json:"name"`
@@ -387,13 +400,15 @@ type AgentInput struct {
 }
 
 type ConversationFilter struct {
-	Query    string
-	AgentID  string
-	Channel  string
-	Archived bool
-	Pinned   *bool
-	Limit    int
-	Offset   int
+	Query     string
+	AgentID   string
+	Channel   string
+	Status    string
+	ProjectID string
+	Archived  bool
+	Pinned    *bool
+	Limit     int
+	Offset    int
 }
 
 func js(v any, fallback string) string {

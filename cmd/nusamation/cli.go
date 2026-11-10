@@ -68,7 +68,7 @@ func defaultDataDir() string {
 	return filepath.Join(home, ".nusamation")
 }
 
-// subFlagSet builds a FlagSet with the shared -data-dir flag. help is printed
+// subFlagSet builds a FlagSet with the shared --data-dir flag. help is printed
 // for -h via fs.Usage.
 func subFlagSet(name, help string) (*flag.FlagSet, *string) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)

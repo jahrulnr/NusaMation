@@ -157,7 +157,7 @@ Stop the service, replace the binary, start it. The database schema is migrated 
 If the admin password is lost:
 
 ```bash
-./nusamation reset-password -data-dir /home/nusamation/.nusamation
+./nusamation reset-password --data-dir /home/nusamation/.nusamation
 ```
 
 ## Troubleshooting

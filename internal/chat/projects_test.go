@@ -688,3 +688,31 @@ func boolPtr(v bool) *bool { return new(v) }
 
 //go:fix inline
 func strPtr(v string) *string { return new(v) }
+
+func TestMCPChangeWaitsForEachRoom(t *testing.T) {
+	mgr := agent.NewManager(nil, nil)
+	svc := New(Options{Agents: mgr})
+	var dropped []string
+	svc.resetConversation = func(_ context.Context, id string) { dropped = append(dropped, id) }
+	first := &activeTurn{conversationID: "first"}
+	second := &activeTurn{conversationID: "second"}
+	svc.setActive(first)
+	svc.setActive(second)
+	donePrepare := svc.beginPrepare("preparing")
+	svc.MCPChanged(context.Background())
+	if len(dropped) != 0 {
+		t.Fatalf("dropped busy rooms: %v", dropped)
+	}
+	svc.finishActive(first)
+	if len(dropped) != 1 || dropped[0] != "first" || svc.activeFor("second") != second {
+		t.Fatalf("wrong room dropped: %v", dropped)
+	}
+	donePrepare()
+	if len(dropped) != 2 || dropped[1] != "preparing" {
+		t.Fatalf("preparing room not dropped: %v", dropped)
+	}
+	svc.finishActive(second)
+	if len(dropped) != 3 || dropped[2] != "second" {
+		t.Fatalf("second room not dropped: %v", dropped)
+	}
+}

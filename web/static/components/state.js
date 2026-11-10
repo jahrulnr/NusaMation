@@ -93,8 +93,12 @@ export const composers = new Map();
 
 export let composerKey = "";
 
+export function defaultSendDelivery() {
+  try { return localStorage.getItem("nusamation:sendDelivery") === "queue" ? "queue" : "steer"; } catch { return "steer"; }
+}
+
 export function composerFor(key) {
-  if (!composers.has(key)) composers.set(key, { draft: "", attachments: [], sendDelivery: "steer", replyToChannel: false, sending: false });
+  if (!composers.has(key)) composers.set(key, { draft: "", attachments: [], sendDelivery: defaultSendDelivery(), replyToChannel: false, sending: false });
   return composers.get(key);
 }
 

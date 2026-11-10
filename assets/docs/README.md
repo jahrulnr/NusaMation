@@ -11,7 +11,7 @@ and chat channels (currently WhatsApp).
 ## Data layout
 
 All state lives in the data directory — default `~/.nusamation`, or whatever
-`-data-dir` the server was started with. The workspace `AGENTS.md` lists the
+`--data-dir` the server was started with. The workspace `AGENTS.md` lists the
 resolved paths for this install.
 
 | Path | Purpose |
@@ -29,6 +29,7 @@ resolved paths for this install.
 | If you need to… | Read |
 |---|---|
 | Add/configure/remove agent CLIs, auth, policies, models | [agents.md](agents.md) |
+| Add/configure/remove shared MCP servers | [agents.md](agents.md#configure-mcp-servers) |
 | Schedule prompts, inspect runs, pause or edit automations | [automations.md](automations.md) |
 | Pair WhatsApp, search messages or contacts, set channel behavior | [whatsapp.md](whatsapp.md) |
 | Read or change any stored setting key | [settings.md](settings.md) |
