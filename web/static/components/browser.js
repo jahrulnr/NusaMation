@@ -36,6 +36,8 @@ const B = {
   prevFrameUrl: "",       // may still be displayed while frameUrl loads
   pendingPointer: null,   // {x, y, kind} from browser_use, placed over the frame
   holdViewport: false,    // agent drive keeps the remote viewport that the JPEG used
+  viewportGuest: false,   // attached over another live viewer: adopt its viewport, don't resize
+  sawMeta: false,         // first stream meta arrived (gates the attach-time emulate)
   navigating: false,
   paneGen: 0,
   restoreURL: "",
@@ -358,6 +360,8 @@ function attach(session) {
   B.session = session;
   B.meta = null;
   B.gotFrame = false;
+  B.viewportGuest = false;
+  B.sawMeta = false;
   applyNavState(session);
   connectStream();
 }
@@ -430,8 +434,8 @@ function connectStream() {
   ws.onopen = () => {
     if (B.socket !== ws) return;
     setStatus("live");
-    if (B.holdViewport) return;
-    applyDeviceChoice();
+    // The emulate decision waits for the first meta: a stream that replaced
+    // another viewer adopts the established viewport instead of resizing.
   };
   ws.onmessage = (e) => {
     if (B.socket !== ws) return;
@@ -467,6 +471,16 @@ function handleStreamMessage(msg) {
   switch (msg.type) {
     case "meta":
       B.meta = msg;
+      if (!B.sawMeta) {
+        B.sawMeta = true;
+        // This attach replaced another live viewer — the remote viewport is
+        // already sized for that client's pane. Forcing our own emulate here
+        // thrashes the shared surface and shows a transitional frame where
+        // the old render sits beside the new one ("mirror"). Adopt instead:
+        // the held size arrives in this meta and frames letterbox to fit.
+        if (msg.viewportHeld) B.viewportGuest = true;
+        if (!B.holdViewport && !B.viewportGuest) applyDeviceChoice();
+      }
       applyMeta();
       break;
     case "closed":
@@ -721,6 +735,9 @@ export function browserDeviceMode(mode) {
 // yet open. Relative clears the whole profile (plain desktop at pane size,
 // not a mobile UA stretched to fit); presets pin a fixed device.
 function applyDeviceChoice() {
+  // Any explicit call — device chip, preset, agent-drive release — is the
+  // user taking viewport control back from a guest attach.
+  B.viewportGuest = false;
   if (!B.socket || B.socket.readyState !== WebSocket.OPEN) return;
   if (B.deviceChoice && B.deviceChoice !== "relative") {
     stopResizeWatch();
@@ -764,6 +781,9 @@ function startResizeWatch() {
   const view = $("#browser-view");
   if (!view || typeof ResizeObserver === "undefined") return;
   B.observer = new ResizeObserver(() => {
+    // A guest viewer letterboxes the held viewport; its pane resizes must not
+    // resize the shared session or stretch the frame to the wrong ratio.
+    if (B.viewportGuest) return;
     // Stretch the last frame into the new box so the pane does not letterbox
     // with black bars while the resized screencast stream catches up; the
     // next real frame replaces the aspect ratio with the true viewport one.

@@ -232,9 +232,6 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 	if text == "" && len(in.Attachments) == 0 && len(in.Annotations) == 0 {
 		return store.Message{}, store.Turn{}, ErrInvalidPrompt
 	}
-	if len(text) > 200000 {
-		text = text[:200000]
-	}
 	conv, err := s.store.GetConversation(ctx, in.ConversationID)
 	if err != nil {
 		return store.Message{}, store.Turn{}, err

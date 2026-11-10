@@ -1,11 +1,12 @@
-import { $, agentById, isMobile, parseJSON } from "./util.js";
-import { S, composerFor, composerKey, saveActivityState, setSelectedProject, switchComposer } from "./state.js";
+import { previewResource } from "./file-preview.js";
+import { $, $$, agentById, isMobile, parseJSON } from "./util.js";
+import { S, composerFor, composerKey, saveActivityState, setSelectedProject, setUiFont, setUiFontSize, switchComposer } from "./state.js";
 import { api } from "./api.js";
 import { toast } from "./toast.js";
 import { closeModal, confirmModal, promptModal } from "./modal.js";
 import { closePopover } from "./popover.js";
 import { openToolMenu, previewAnnotation, previewFile, renderChat, toolPreFor } from "./chat.js";
-import { renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js";
+import { changeElicitationPage, renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js";
 import { autoGrow, editAnnotationComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js";
 import { browserDeviceMode, browserEscape, browserHistory, browserReconnect, cancelAnnotation, closeBrowserPane, submitAnnotation, toggleAnnotate, toggleBrowserPane, toggleDeviceBar } from "./browser.js";
 import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, newProjectChat, openControlActivity, openConversationMenu, openMoreMenu, openOrchestrationMenu, openRoutingMenu, openTeamPanel, renameConversation, selectConversation, setOrchestration, setRoute, toggleOrchestrationFlag, togglePin, toggleRouting } from "./conversations.js";
@@ -16,7 +17,7 @@ import { addDraftSource, confirmAddedFolders, deleteProject, loadFolderBrowser, 
 import { renderTopbar } from "./topbar.js";
 import { closeWS, connectWS } from "./ws.js";
 import { openAuthTerminal } from "./terminal.js";
-import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadControlSettings, loadMCP, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications, toggleOrchestration } from "./settings.js";
+import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadControlSettings, loadMCP, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, reloadActiveAgents, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications, toggleOrchestration } from "./settings.js";
 import { loadAutomations, saveAutomation, updateAutomationBuilder } from "./automations.js";
 import { refreshChannels, saveWaSettings, waAction } from "./whatsapp.js";
 import { openPalette, runPalette } from "./palette.js";
@@ -175,7 +176,8 @@ export function bindEvents() {
 
   document.addEventListener("input", (e) => {
     if (e.target.matches('[data-input="automation-cron"]')) {
-      const form = e.target.closest("form"); $('[data-change="automation-preset"]', form).value = ""; $(".automation-builder", form).hidden = true;
+      const form = e.target.closest("form"), preset = $('[data-change="automation-preset"]', form);
+      preset.value = ""; preset.dispatchEvent(new Event("change", { bubbles: true })); $(".automation-builder", form).hidden = true;
     }
     if (e.target.matches("[data-input=conv-search]")) {
       S.query = e.target.value;
@@ -194,6 +196,8 @@ export function bindEvents() {
       S.sendDelivery = sel.value;
       renderComposer();
     }
+    if (sel.dataset.change === "ui-font") setUiFont(sel.value);
+    if (sel.dataset.change === "ui-font-size") setUiFontSize(sel.value);
     if (sel.dataset.change === "wa-group") saveWaSettings({ groupPolicy: sel.value });
     if (sel.dataset.change === "automation-schedule") {
       const form = sel.closest("form");
@@ -270,7 +274,7 @@ export function bindEvents() {
           S.defaultDraft = { agentId: S.agentDefaults.agentId || "", selections: (S.agentDefaults.selections || []).map((s) => ({ ...s })) };
           previewAgentDefaults();
         } else {
-          if (S.settingsTab === "account") loadUpdateInfo();
+          if (S.settingsTab === "account" || S.settingsTab === "about") loadUpdateInfo();
           if (S.settingsTab === "control") loadControlSettings();
           if (S.settingsTab === "mcp") loadMCP();
           renderSettings();
@@ -327,6 +331,10 @@ export function bindEvents() {
       case "retry-prepare": closeModal(); await prepareComposer(); break;
       case "stop-preparing": S.prepareController?.abort(); closeModal(); break;
       case "stop-slow-turn": closeModal(); await stopTurn(); break;
+      case "elicitation-clear":
+        $$('input[type="radio"]', target.closest('.elicitation-page')).forEach((input) => { input.checked = false; });
+        break;
+      case "elicitation-page": changeElicitationPage(target.dataset.page, target.getAttribute("role") === "tab"); break;
       case "elicitation-decline": {
         if (S.modal?.type === "elicitation") respondElicitation(S.modal.conversationId, S.modal.id, { action: "decline" });
         break;
@@ -497,6 +505,7 @@ export function bindEvents() {
       }
       case "delete-mcp": deleteMCP(id); break;
       case "probe-agent": probeAgent(id); break;
+      case "reload-agents": reloadActiveAgents(); break;
       case "agent-logs": openAgentLogs(id); break;
       case "auth-agent": {
         if (target.dataset.authType === "terminal") { openAuthTerminal(id, target.dataset.method); break; }
@@ -573,12 +582,25 @@ export function bindEvents() {
         e.preventDefault();
         previewAnnotation(target.dataset.upload, target.dataset.caption || "");
         break;
+      case "preview-resource":
+        // Preserve modified link clicks (new tab, save link) as normal browser actions.
+        if (target.tagName === "A" && (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0)) break;
+        e.preventDefault();
+        previewResource(target.dataset.url || target.getAttribute("href"), target.dataset.name || "File", { conversationId: target.dataset.conversation, basePath: target.dataset.path, line: Number(target.dataset.line || 0), anchor: target.dataset.anchor, kind: target.dataset.kind });
+        break;
       case "preview-file": previewFile(target.dataset.upload, target.dataset.name || "Attachment"); break;
       default: break;
     }
   });
 
   document.addEventListener("keydown", (e) => {
+    if (e.target.matches?.('.elicitation-tabs [role="tab"]') && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
+      e.preventDefault();
+      const tabs = $$('.elicitation-tabs [role="tab"]');
+      const i = Number(e.target.dataset.page);
+      changeElicitationPage(e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length, true);
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
       if ($("#modal-root").innerHTML) closeModal();

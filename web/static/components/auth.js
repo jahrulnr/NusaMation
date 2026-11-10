@@ -48,7 +48,7 @@ export function renderLogin(error = "") {
             </div>
             <button class="btn btn-primary btn-block" type="submit" data-login-submit>Sign in ${icon("chevron-right", "sm")}</button>
           </form>
-          <div class="login-foot">NusaMation${S.appVersion ? ` ${esc(S.appVersion)}` : ""} · local-first · your data stays here</div>
+          <div class="login-foot">NusaMation${S.appVersion ? ` ${esc(S.appVersion)}` : ""}</div>
         </div>
       </div>
     </div>`;

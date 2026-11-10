@@ -132,6 +132,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/conversations/{id}", s.protected(s.handleGetConversation))
 	mux.HandleFunc("PATCH /api/conversations/{id}", s.protected(s.handleUpdateConversation))
 	mux.HandleFunc("DELETE /api/conversations/{id}", s.protected(s.handleDeleteConversation))
+	mux.HandleFunc("GET /api/conversations/{id}/files", s.protected(s.handleConversationFile))
 	mux.HandleFunc("GET /api/conversations/{id}/messages", s.protected(s.handleMessages))
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.protected(s.handlePrompt))
 	mux.HandleFunc("GET /api/conversations/{id}/meta", s.protected(s.handleGetConversationMeta))
@@ -166,6 +167,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/agents/{id}", s.protected(s.handleGetAgent))
 	mux.HandleFunc("PATCH /api/agents/{id}", s.protected(s.handleUpdateAgent))
 	mux.HandleFunc("DELETE /api/agents/{id}", s.protected(s.handleDeleteAgent))
+	mux.HandleFunc("POST /api/agents/reload", s.protected(s.handleReloadAgents))
 	mux.HandleFunc("POST /api/agents/{id}/probe", s.protected(s.handleProbeAgent))
 	mux.HandleFunc("POST /api/agents/{id}/authenticate", s.protected(s.handleAuthenticateAgent))
 	mux.HandleFunc("GET /api/agents/{id}/auth-terminal", s.protected(s.handleAuthTerminal))
@@ -382,7 +384,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			h.Set("Cache-Control", "no-store")
 		}
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob: https:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob: https: http:; media-src 'self' blob: data: https: http:; frame-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; connect-src 'self' ws: wss: https: http: blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		next.ServeHTTP(w, r)
 	})
 }

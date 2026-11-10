@@ -33,6 +33,172 @@ const consoleTapJS = `(function(){
   window.addEventListener('unhandledrejection', e => push('error', '[unhandledrejection] ' + fmt(e.reason)));
 })()`
 
+// selectShimJS replaces the native <select> popup with an in-page listbox.
+// Headless Chromium renders that popup in browser chrome, outside the web
+// contents the screencast streams, so selects in the pane open nothing at all.
+// The shim intercepts pointer/keyboard intent on single-value dropdowns and
+// commits through value + input/change, so page and framework handlers behave
+// exactly as with the native widget. List-style selects (multiple or size>1)
+// already render inline and are left alone. Selects with more than 5 options
+// get a search field that filters rows live; shorter lists stay search-free.
+const selectShimJS = `(function(){
+  if (window.__nusaSelectShim) return;
+  window.__nusaSelectShim = true;
+  let open = null;
+
+  const close = () => {
+    if (!open) return;
+    open.box.remove();
+    open.sel.removeAttribute('aria-expanded');
+    open = null;
+  };
+  // An option inside a disabled optgroup is unselectable even though its own
+  // disabled attribute is unset, matching native popup behavior.
+  const disabled = (o) => o.disabled || (o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled);
+  const commit = (o) => {
+    if (!open || !o || disabled(o)) return;
+    const sel = open.sel;
+    if (sel.options[sel.selectedIndex] === o) { close(); sel.focus({preventScroll: true}); return; }
+    o.selected = true;
+    sel.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+    sel.dispatchEvent(new Event('change', {bubbles: true}));
+    close();
+    sel.focus({preventScroll: true});
+  };
+  const avail = it => !disabled(it.opt) && !it.hidden;
+  const paint = () => {
+    for (const it of open.items) { it.row.style.background = ''; it.row.style.color = ''; }
+    const it = open.items[open.index];
+    if (it && avail(it)) { it.row.style.background = 'Highlight'; it.row.style.color = 'HighlightText'; }
+  };
+  const move = (d) => {
+    if (!open) return;
+    const items = open.items;
+    if (!items.length || !items.some(avail)) return;
+    let i = open.index;
+    if (d === 0) {
+      if (!avail(items[i])) i = items.findIndex(avail);
+    } else {
+      do { i = (i + d + items.length) % items.length; } while (!avail(items[i]));
+    }
+    if (i < 0) return;
+    open.index = i;
+    paint();
+    items[i].row.scrollIntoView({block: 'nearest'});
+  };
+  const show = (sel) => {
+    close();
+    const r = sel.getBoundingClientRect();
+    const box = document.createElement('div');
+    box.setAttribute('data-nusa-listbox', '');
+    box.style.cssText = 'position:fixed;z-index:2147483647;background:Canvas;color:CanvasText;border:1px solid #8889;border-radius:6px;padding:3px 0;box-shadow:0 8px 28px rgba(0,0,0,.4);font:13px system-ui,sans-serif;max-height:45vh;max-width:' + (innerWidth - 8) + 'px;overflow-y:auto;overflow-x:hidden;min-width:' + Math.max(r.width, 90) + 'px;';
+    const items = [];
+    const groups = [];
+    const addRow = (o, indent) => {
+      const row = document.createElement('div');
+      row.textContent = o.label || o.text;
+      row.style.cssText = 'padding:4px ' + (indent ? '10px 4px 20px' : '10px') + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
+        + (disabled(o) ? 'opacity:.45' : 'cursor:default');
+      row.addEventListener('mousedown', (e) => e.preventDefault());
+      row.addEventListener('click', () => commit(o));
+      row.addEventListener('mousemove', () => { if (row._i !== open.index) { open.index = row._i; paint(); } });
+      box.appendChild(row);
+      items.push({row: row, opt: o, hidden: false});
+      return row;
+    };
+    for (const node of sel.children) {
+      if (node.tagName === 'OPTGROUP') {
+        const h = document.createElement('div');
+        h.textContent = node.label || '';
+        h.style.cssText = 'padding:4px 10px;font-size:11px;opacity:.6;font-weight:600';
+        box.appendChild(h);
+        const rows = [];
+        for (const o of node.children) if (o.tagName === 'OPTION') rows.push(addRow(o, true));
+        groups.push({head: h, rows: rows});
+      } else if (node.tagName === 'OPTION') addRow(node, false);
+    }
+    if (!items.length) { box.remove(); return; }
+    items.forEach((it, i) => { it.row._i = i; });
+    let search = null;
+    if (items.length > 5) {
+      search = document.createElement('input');
+      search.type = 'text';
+      search.placeholder = 'Search…';
+      search.setAttribute('data-nusa-listbox-search', '');
+      search.style.cssText = 'display:block;box-sizing:border-box;width:100%;margin:0 0 3px;padding:5px 10px;border:0;border-bottom:1px solid #8884;background:Canvas;color:CanvasText;font:12px system-ui,sans-serif;outline:none;';
+      search.addEventListener('input', () => {
+        const q = search.value.trim().toLowerCase();
+        for (const it of items) {
+          it.hidden = !!q && !(it.opt.label || it.opt.text || '').toLowerCase().includes(q) && !(it.opt.value || '').toLowerCase().includes(q);
+          it.row.hidden = it.hidden;
+        }
+        for (const g of groups) g.head.hidden = g.rows.every(rw => rw.hidden);
+        move(0);
+      });
+      box.insertBefore(search, box.firstChild);
+    }
+    document.documentElement.appendChild(box);
+    const bh = Math.min(box.offsetHeight, innerHeight - 8), bw = Math.min(box.offsetWidth, innerWidth - 8);
+    const roomBelow = innerHeight - r.bottom;
+    const up = roomBelow < bh && r.top > roomBelow;
+    box.style.left = Math.max(4, Math.min(r.left, innerWidth - bw - 4)) + 'px';
+    box.style.top = up ? Math.max(4, r.top - bh - 2) + 'px' : Math.min(r.bottom + 2, innerHeight - bh - 4) + 'px';
+    let index = items.findIndex(it => it.opt === sel.options[sel.selectedIndex]);
+    if (index < 0) index = items.findIndex(avail);
+    open = {sel: sel, box: box, items: items, index: Math.max(0, index), search: search};
+    sel.setAttribute('aria-expanded', 'true');
+    move(0);
+    if (search) search.focus({preventScroll: true});
+  };
+
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    const path = e.composedPath ? e.composedPath() : [];
+    const sel = path.find(n => n && n.tagName === 'SELECT');
+    if (open) {
+      if (path.includes(open.box)) return;
+      if (sel === open.sel) { e.preventDefault(); close(); return; }
+      close();
+    }
+    if (!sel || sel.disabled || sel.multiple || sel.size > 1) return;
+    e.preventDefault();
+    sel.focus({preventScroll: true});
+    show(sel);
+  }, true);
+
+  document.addEventListener('keydown', (e) => {
+    if (open) {
+      // Native popups swallow keys entirely; keep them from reaching app-level
+      // handlers (Escape closing the underlying dialog, Enter submitting).
+      e.stopPropagation();
+      const searching = open.search && e.target === open.search;
+      if (e.key === 'Escape') { e.preventDefault(); const s = open.sel; close(); s.focus({preventScroll: true}); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+      else if (!searching && e.key === ' ') { e.preventDefault(); move(1); }
+      else if (!searching && e.key === 'Home') { e.preventDefault(); open.index = open.items.findIndex(avail); move(0); }
+      else if (!searching && e.key === 'End') { e.preventDefault(); for (let i = open.items.length - 1; i >= 0; i--) if (avail(open.items[i])) { open.index = i; break; } move(0); }
+      else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        const it = open.items[open.index];
+        if (it && avail(it)) commit(it.opt);
+        else { const f = open.items.findIndex(avail); if (f >= 0) commit(open.items[f].opt); else close(); }
+      }
+      return;
+    }
+    const t = e.target;
+    if (t && t.tagName === 'SELECT' && !t.disabled && !t.multiple && t.size <= 1
+        && [' ', 'Enter', 'ArrowDown', 'ArrowUp'].includes(e.key)) {
+      e.preventDefault();
+      show(t);
+    }
+  }, true);
+  // Scroll doesn't bubble but is visible at window during capture; a scroll
+  // inside the listbox (including our own scrollIntoView) must not close it.
+  window.addEventListener('scroll', (e) => { if (open && !open.box.contains(e.target)) close(); }, true);
+  window.addEventListener('resize', close);
+})()`
+
 // snapshotJS serializes the visible DOM into a compact tree. Interactive
 // elements get [ref=eN]; landmarks keep their role; leaf text becomes a text
 // line; generic wrappers are flattened so the output stays small.

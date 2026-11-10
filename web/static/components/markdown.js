@@ -1,5 +1,7 @@
 import { $, $$, esc, icon } from "./util.js";
 
+import { mediaHTML, prepareResources, enhanceMedia } from "./resources.js";
+
 /* ---------------- markdown ---------------- */
 export const markdownCache = new Map();
 
@@ -45,17 +47,22 @@ export function relaxListEndings(src) {
   return out.join("\n");
 }
 
-export function renderMarkdown(text, scope = "preview", format = "markdown") {
+export function renderMarkdown(text, scope = "preview", format = "markdown", context = {}) {
   const source = relaxListEndings(String(text || ""));
   const cached = markdownCache.get(scope);
-  if (cached?.source === source && cached.format === format) return cached.html;
+  if (cached?.source === source && cached.format === format && cached.context === JSON.stringify(context)) return cached.html;
   if (window.marked && window.DOMPurify) {
     try {
       const parser = new window.marked.Marked({ gfm: true, breaks: true });
-      // Chat is prose, not a host for live markup: raw HTML in message text
-      // renders as literal text instead of becoming real <button>/<iframe>
-      // elements (which DOMPurify would otherwise let through).
-      parser.use({ renderer: { html: (token) => esc(token.raw) } });
+      parser.use({ renderer: { html: (token) => mediaHTML(token.raw, esc) }, extensions: [{
+        name: "mediaElement", level: "inline",
+        start(src) { return src.search(/<(?:video|audio|picture|a)\b/i); },
+        tokenizer(src) {
+          const match = /^<(video|audio|picture|a)\b[^>]*>[\s\S]*?<\/\1\s*>/i.exec(src);
+          if (match) return { type: "mediaElement", raw: match[0] };
+        },
+        renderer(token) { return mediaHTML(token.raw, esc); },
+      }] });
       if (window.NusaMarkdown) parser.use(window.NusaMarkdown.latex(), window.NusaMarkdown.math(), window.NusaMarkdown.markedFootnote({ prefixId: "footnote-" + scope.replace(/[^a-zA-Z0-9_-]/g, "-") + "-" }), window.NusaMarkdown.emoji());
       if (format === "whatsapp") parser.use({
         walkTokens(token) {
@@ -79,9 +86,9 @@ export function renderMarkdown(text, scope = "preview", format = "markdown") {
         }],
       });
       let html = parser.parse(source);
-      html = window.DOMPurify.sanitize(html, { ADD_ATTR: ["target", "rel"] });
+      html = window.DOMPurify.sanitize(prepareResources(html, { ...context, scope }), { ADD_TAGS: ["video", "audio", "source", "track", "picture"], ADD_ATTR: ["target", "rel", "controls", "playsinline", "preload"] });
       if (!markdownCache.has(scope) && markdownCache.size >= 3000) markdownCache.delete(markdownCache.keys().next().value);
-      markdownCache.set(scope, { source, format, html });
+      markdownCache.set(scope, { source, format, context: JSON.stringify(context), html });
       return html;
     } catch (e) {
       console.warn("markdown failed", e);
@@ -243,6 +250,7 @@ export function sizeSVGImage(img) {
 
 export function enhanceMarkdown(root) {
   if (!root) return;
+  enhanceMedia(root);
   $$(".markdown img", root).forEach(sizeSVGImage);
   $$("a", root).forEach((a) => {
     if (!a.getAttribute("href")?.startsWith("#")) { a.target = "_blank"; a.rel = "noopener noreferrer"; }

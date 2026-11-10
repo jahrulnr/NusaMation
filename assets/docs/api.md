@@ -55,7 +55,8 @@ PUT  /api/channels/{name}/settings
 GET|PUT /api/settings   GET|DELETE /api/approval-rules/{id}
 GET  /api/update      POST /api/update/check|apply   # self-update status + actions
 POST /api/notifications/test              # desktop notification smoke test
-POST /api/uploads     GET /api/uploads/{id}
+POST /api/uploads     GET /api/uploads/{id}  # ?download=1 forces download
+GET  /api/conversations/{id}/files?path=... # local artifact bytes; HEAD/ranges supported
 GET  /api/events                          # WebSocket realtime stream
 GET  /api/health                          # unauthenticated
 ```
@@ -136,3 +137,8 @@ payloads return 400; ACP startup or validation failures return 502.
 
 The repo's `docs/API.md` contains additional endpoint details; call
 `GET /api/bootstrap` for the server's own view.
+
+Local artifact paths are resolved on the server: relative to the conversation cwd,
+or absolute (including `/tmp`). `file://` paths and editor `:line:column` suffixes
+are supported. Missing files return 404; non-regular files return 422. Both local
+files and uploads accept `download=1`.

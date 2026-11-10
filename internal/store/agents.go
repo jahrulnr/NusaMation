@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/jahrulnr/nusamation/internal/ids"
@@ -189,9 +190,38 @@ func (s *Store) CreateAgent(ctx context.Context, in AgentInput) (Agent, error) {
 	if name == "" {
 		return Agent{}, errors.New("agent name is required")
 	}
-	slug := NormalizeSlug(in.Slug)
-	if slug == "" || !ValidSlug(slug) {
+	raw := in.Slug
+	derived := strings.TrimSpace(raw) == ""
+	if derived {
+		raw = name
+	}
+	slug := NormalizeSlug(raw)
+	if !ValidSlug(slug) {
+		if !derived {
+			return Agent{}, errors.New("invalid agent slug")
+		}
+		// Names that normalize below the minimum length ("C++", "x") still need
+		// a usable slug; the form no longer offers a slug field to fall back on.
+		slug = NormalizeSlug(name + " agent")
+	}
+	if !ValidSlug(slug) {
 		return Agent{}, errors.New("invalid agent slug")
+	}
+	if derived {
+		// With no manual override, resolve collisions deterministically:
+		// name-2, name-3, …
+		base := slug
+		for i := 2; i < 50; i++ {
+			var n int
+			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE slug=?`, slug).Scan(&n); err != nil {
+				return Agent{}, err
+			}
+			if n == 0 {
+				break
+			}
+			suffix := "-" + strconv.Itoa(i)
+			slug = strings.TrimRight(base[:min(len(base), 40-len(suffix))], "-") + suffix
+		}
 	}
 	if strings.TrimSpace(in.Command) == "" {
 		return Agent{}, errors.New("command is required")

@@ -20,3 +20,28 @@ two-finger pinch zoom. It is a browser
 fixture, not an end-to-end ACP/backend load test; one synthetic delta is not a
 measured model token. Responsive, real-device, and network-failure checks remain
 separate.
+
+For question pagination and scrolling, run the isolated interaction fixture:
+
+```sh
+NUSAMATION_PLAYWRIGHT=/tmp/nusamation-stress/node_modules/playwright CHROME=/usr/bin/google-chrome node web/tests/browser-questions.cjs
+```
+
+It checks answer retention, typed submission, required fields, multi-select
+bounds, keyboard tabs, retry and pending behavior, and desktop/mobile/short-height
+layout. Screenshots go to `/tmp/nusamation-questions` (override with
+`QUESTION_SCREENSHOTS`). This does not exercise a real mobile software keyboard.
+
+For Markdown/local files/media, run `make build` then:
+
+```sh
+NUSAMATION_PLAYWRIGHT=/tmp/nusamation-stress/node_modules/playwright CHROME=/usr/bin/google-chrome node web/tests/browser-resources.cjs
+```
+
+This starts the actual binary with a temporary data directory and disposable
+login, creates artifacts and uploads through the HTTP API, and checks previews,
+local/relative/file URLs, media loading, downloads, text encodings, errors, and
+streaming player identity. It requires FFmpeg for tiny MP4/WAV fixtures. Screenshots
+and server logs go to `/tmp/nusamation-resources` (`RESOURCE_SCREENSHOTS` overrides
+it). `NUSAMATION_BINARY` can select another freshly built binary. The server and
+its temporary data are removed after the test. No installed instance is changed.

@@ -2,10 +2,13 @@ import { $, $$, TOOL_KINDS, agentById, agentName, agentOrb, brandImage, clock, c
 import { S } from "./state.js";
 import { enhanceMarkdown, plainMarkdown, renderMarkdown } from "./markdown.js";
 import { closeDetachedPopovers, openPopover } from "./popover.js";
-import { modalHead, openModal } from "./modal.js";
+import { openModal } from "./modal.js";
 import { approvalCard } from "./requests.js";
 import { isBusyTurn, queuedTurnFor, queueStatusLabel } from "./composer.js";
 import { loadConversation, renderHistoryControl } from "./conversations.js";
+
+import { snapshotMedia, restoreMedia } from "./resources.js";
+import { previewResource } from "./file-preview.js";
 
 /* ---------------- chat ---------------- */
 export function orderMessages(messages, turns) {
@@ -49,8 +52,6 @@ export function renderChat(skeleton = false) {
     return;
   }
   const rows = [{ key: "history", html: `<div id="history-control"></div>` }];
-  const plan = planEntries(S.current.plan);
-  if (plan.length) rows.push({ key: "plan", html: planCard(plan) });
   let lastDay = "";
   const messages = orderMessages(S.messages, S.turns);
   const toolCounts = new Map();
@@ -73,6 +74,11 @@ export function renderChat(skeleton = false) {
     }
   }
   const pending = currentApprovals();
+  // The plan describes current work, so it stays at the tail with approvals and
+  // the typing indicator — not at the top where prepending history would push
+  // it above the first message and out of the restored scroll anchor.
+  const plan = planEntries(S.current.plan);
+  if (plan.length) rows.push({ key: "plan", html: planCard(plan) });
   pending.forEach((a) => rows.push({ key: "approval:" + a.id, html: approvalCard(a) }));
   if (S.active && S.active.running && !pending.length) rows.push({ key: "typing", html: typingHTML() });
 
@@ -92,6 +98,7 @@ export function renderChat(skeleton = false) {
       detailsState.set(el.dataset.msgId, $$(".markdown details", el).map((d) => d.open));
     });
   }
+  const savedMedia = new Map([...existing.entries()].map(([key, node]) => [key, snapshotMedia(node)]));
   const changed = [];
   let cursor = chat.firstElementChild;
   for (const row of rows) {
@@ -121,6 +128,7 @@ export function renderChat(skeleton = false) {
         if (previous && previous._diagramSource === code.textContent) code.parentElement.replaceWith(previous);
       });
     });
+    restoreMedia(root, savedMedia.get(root.dataset.renderKey));
     enhanceMarkdown(root);
     messageNodes.forEach((el) => $$(".markdown details", el).forEach((d, i) => {
       const saved = detailsState.get(el.dataset.msgId);
@@ -173,7 +181,7 @@ export function userHTML(m) {
   const match = /^(?:([^\r\n]*?: )?\[In reply to: ([^\r\n]*)\])(?:\r?\n|$)/.exec(m.text || "");
   const sender = match?.[1] ? `<div class="reply-sender">${esc(match[1])}</div>` : "";
   const format = m.channel === "whatsapp" ? "whatsapp" : "markdown";
-  const quote = match ? `<div class="reply-quote"><div class="reply-quote-label">In reply to</div><div class="reply-quote-text markdown">${renderMarkdown(match[2], "quote-" + m.id, format)}</div></div>` : "";
+  const quote = match ? `<div class="reply-quote"><div class="reply-quote-label">In reply to</div><div class="reply-quote-text markdown">${renderMarkdown(match[2], "quote-" + m.id, format, { conversationId: m.conversationId })}</div></div>` : "";
   const text = match ? m.text.slice(match[0].length) : m.text;
   const anns = messageAnnotations(m);
   const pinUploadIds = new Set(anns.map((a) => a.uploadId).filter(Boolean));
@@ -181,7 +189,7 @@ export function userHTML(m) {
   const attachments = attachmentsHTML(visible) + annotationsHTML(anns);
   const qt = queuedTurnFor(m);
   const qLabel = qt && qt.status === "queued" ? queueStatusLabel(m) : "";
-  const bubble = `${sender}${quote}${text && text.trim() ? `<div class="markdown">${renderMarkdown(text, m.id, format)}</div>` : ""}${match ? attachments : ""}`;
+  const bubble = `${sender}${quote}${text && text.trim() ? `<div class="markdown">${renderMarkdown(text, m.id, format, { conversationId: m.conversationId })}</div>` : ""}${match ? attachments : ""}`;
   return `<div class="msg user" data-msg-id="${esc(m.id)}">
     <div class="msg-body">
       ${messageHead(m)}
@@ -201,7 +209,7 @@ export function assistantHTML(m) {
     <div class="msg-avatar">${agentOrb(agent, "agent-orb")}</div>
     <div class="msg-body">
       ${messageHead(m)}
-      <div class="markdown">${renderMarkdown(text, m.id)}${streaming ? `<span class="streaming-caret"></span>` : ""}</div>
+      <div class="markdown">${renderMarkdown(text, m.id, "markdown", { conversationId: m.conversationId })}${streaming ? `<span class="streaming-caret"></span>` : ""}</div>
       ${attachmentsHTML(m.attachments)}
     </div>
   </div>`;
@@ -219,7 +227,7 @@ export function thoughtHTML(m) {
           <span class="preview">${esc(preview || (streaming ? "…" : ""))}</span>
           ${icon("chevron-right", "chev")}
         </button>
-        <div class="thought-body markdown">${renderMarkdown(m.text || "", "thought-" + m.id)}</div>
+        <div class="thought-body markdown">${renderMarkdown(m.text || "", "thought-" + m.id, "markdown", { conversationId: m.conversationId })}</div>
       </div>
     </div>
   </div>`;
@@ -397,39 +405,13 @@ export function attachmentsHTML(atts) {
   return `<div class="attach-grid">${atts.map((a) => {
     const url = `/api/uploads/${encodeURIComponent(a.id)}`;
     const isImg = String(a.mime || "").startsWith("image/");
-    if (isImg) return `<button type="button" class="attach-thumb" data-action="preview-annotation" data-upload="${esc(a.id)}" data-caption="${esc(a.name)}"><img src="${url}" alt="${esc(a.name)}" loading="lazy"></button>`;
+    if (isImg) return `<button type="button" class="attach-thumb" data-action="preview-file" data-upload="${esc(a.id)}" data-name="${esc(a.name)}"><img src="${url}" alt="${esc(a.name)}" loading="lazy"></button>`;
     return `<button type="button" class="attach-file" data-action="preview-file" data-upload="${esc(a.id)}" data-name="${esc(a.name)}">${icon("file", "sm")}<span class="name">${esc(a.name)}</span><span class="size">${fmtBytes(a.size)}</span></button>`;
   }).join("")}</div>`;
 }
 
-export async function previewFile(uploadId, name) {
-  if (!uploadId) return;
-  const url = `/api/uploads/${encodeURIComponent(uploadId)}`;
-  S.modal = { type: "file-preview", uploadId };
-  openModal(`${modalHead(name, "Attachment preview")}<div class="modal-body file-preview-body"><div class="file-preview-content" role="status">Loading attachment…</div></div><div class="modal-foot"><a class="btn btn-secondary" href="${url}" download>Download</a></div>`, { size: "md" });
-  const root = $("#modal-root .file-preview-content");
-  try {
-    const response = await fetch(url, { credentials: "same-origin" });
-    if (!response.ok) throw new Error("Could not load this attachment.");
-    const bytes = await response.arrayBuffer();
-    if (!root?.isConnected) return;
-    const type = response.headers.get("content-type") || "";
-    if (type.includes("application/pdf") || type.startsWith("audio/") || type.startsWith("video/")) {
-      const element = document.createElement(type.startsWith("audio/") ? "audio" : type.startsWith("video/") ? "video" : "iframe");
-      element.src = url;
-      if (element.tagName !== "IFRAME") element.controls = true;
-      else element.title = name;
-      root.replaceChildren(element);
-    } else {
-      const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-      if (text.includes("\0")) throw new Error("Preview is unavailable for this file type.");
-      const pre = document.createElement("pre");
-      pre.textContent = text;
-      root.replaceChildren(pre);
-    }
-  } catch (error) {
-    if (root?.isConnected) root.textContent = error instanceof TypeError ? "Preview is unavailable for this file type." : (error.message || "Could not load this attachment.");
-  }
+export function previewFile(uploadId, name) {
+  if (uploadId) return previewResource(`/api/uploads/${encodeURIComponent(uploadId)}`, name);
 }
 
 // Page annotations sent with the message (contract §6.4): metadata.annotations
@@ -494,7 +476,7 @@ export function welcomeHTML(compact = false) {
     ${brandImage("welcome-orb")}
     <div class="agent-strip">${agents.map((a) => `<button class="agent-chip ${selected && a.id === selected.id ? "active" : ""}" data-action="pick-agent" data-id="${esc(a.id)}">${agentOrb(a)}<span>${esc(a.name)}</span></button>`).join("")}</div>
     <h1>${compact ? "This thread is <em>ready.</em>" : "What should we <em>build</em> today?"}</h1>
-    <p>${compact ? `Message ${esc(agentName(selected))} below. The web control center shows every thought, tool call and approval; chat channels only receive the final answer.` : "Your agent has hands on this workspace, full tool visibility in the web, and a concise presence on WhatsApp. Start with a sentence — or pick a thread below."}</p>
+    ${compact ? `<p>Message ${esc(agentName(selected))} below. The web control center shows every thought, tool call and approval; chat channels only receive the final answer.</p>` : ""}
     <div class="suggestion-grid">
       ${[
         ["search", "Explore the workspace", "List files and explain the project layout."],
@@ -592,10 +574,11 @@ export function renderStreamMessage(message) {
   if (!["text", "thought"].includes(message.kind)) return false;
   const body = message.kind === "thought" ? $(".thought-body", node || chat) : $(".msg-body > .markdown", node || chat);
   if (!body) return false;
+  const media = snapshotMedia(node);
   const oldDetails = $$("details", body).map((d) => d.open);
   const diagrams = $$("pre > code.language-mermaid, .mermaid-diagram", body).map((el) => el.classList.contains("mermaid-diagram") ? el : null);
   const text = message.text || "";
-  body.innerHTML = renderMarkdown(text, message.kind === "thought" ? "thought-" + message.id : message.id)
+  body.innerHTML = renderMarkdown(text, message.kind === "thought" ? "thought-" + message.id : message.id, "markdown", { conversationId: message.conversationId })
     + (message.kind === "text" && message.status === "streaming" ? `<span class="streaming-caret"></span>` : "");
   $$("pre > code.language-mermaid", body).forEach((code, i) => {
     const previous = diagrams[i];
@@ -608,6 +591,7 @@ export function renderStreamMessage(message) {
     const label = $(".thought-head .label", node);
     if (label) label.textContent = message.status === "streaming" ? "Thinking" : "Thought process";
   }
+  restoreMedia(node, media);
   enhanceMarkdown(body);
   if (S.scrollPinned) sc.scrollTop = sc.scrollHeight;
   return true;

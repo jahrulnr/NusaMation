@@ -1,5 +1,5 @@
 import { $, esc, icon } from "./util.js";
-import { S, setSelectedProject } from "./state.js";
+import { S, applyFont, applyFontSize, setSelectedProject } from "./state.js";
 import { api } from "./api.js";
 import { selectInitialConversation } from "./conversations.js";
 import { renderShell } from "./shell.js";
@@ -10,6 +10,8 @@ import { renderLogin } from "./auth.js";
 
 /* ---------------- boot / auth ---------------- */
 export async function boot() {
+  applyFont();
+  applyFontSize();
   try {
     const st = await api("/auth/status");
     S.authInitialized = !!st.initialized;

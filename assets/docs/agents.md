@@ -54,6 +54,9 @@ session options. The HTTP preview and save endpoints are listed in [api.md](api.
 - `--enabled=false` hides the agent from pickers without deleting it.
 - `--auto-start` enables idle mode: the agent process starts on server boot and
   keeps a session warm, so composer option/model changes skip the cold launch.
+- Without idle mode an agent process with no traffic for five minutes is
+  stopped automatically; the next prompt restarts it and reloads the room's
+  ACP session, so nothing is lost. A running turn counts as activity.
 - On first run, `agent detect -add` semantics apply: every known ACP CLI found
   on PATH is seeded automatically — but only while no enabled agent exists;
   once one does, seeding stops.
@@ -63,6 +66,7 @@ session options. The HTTP preview and save endpoints are listed in [api.md](api.
 ```
 GET  /api/agents                        # {"agents":[…]} — slug, status, capabilities,
                                         #   defaultModel, authMethods, lastError
+POST /api/agents/reload                 # restart every running agent process; busy agents skipped
 POST /api/agents/{id}/probe             # spawn test: validates command/cwd/env + auth
 POST /api/agents/{id}/authenticate      # start an interactive auth flow
 GET  /api/agents/{id}/auth-terminal     # terminal stream for interactive auth
@@ -123,3 +127,34 @@ bridge for terminals and debugging; set `NUSAMATION_CONVERSATION_URL` and
    binary, bad cwd, auth required).
 2. Check `GET /api/agents/{id}/logs` and `logs/nusamation.log`.
 3. Re-check detection: `nusamation agent detect` lists CLIs currently on PATH.
+
+## Answering agent questions
+
+In the web UI, an ACP input form shows one question per page. Use the numbered
+tabs, previous/next arrows, or Continue to move between questions. Answers stay
+in place when changing pages. Continue on the last page submits all answers;
+missing required answers return you to the relevant question. Skip or Escape
+dismisses the whole request: optional forms return an empty accepted answer,
+while required forms and URL requests cancel.
+
+## Files and media in chat
+
+Markdown links to absolute paths, relative paths, `file://` URLs and
+`sandbox:/...` paths open in a file preview. Relative paths use the conversation's
+working directory. These are files on the NusaMation server, including artifacts
+under `/tmp`. A file must still exist when opened. File links with `:line:column`
+or `#L12` open text at that line; Markdown heading links navigate within the
+rendered document.
+
+Markdown images and HTML `img`, `picture`, `video`, `audio`, `source` and `track`
+tags render media. Players have native browser controls. A Markdown image whose
+URL ends in a video/audio extension becomes the corresponding player. Ordinary
+web/email links keep normal browser behavior; code blocks remain literal.
+
+Click an image, file link or attachment to preview it. Previews support images,
+video, audio, PDF, rendered Markdown, static HTML, and text/source files (including
+UTF-16 BOM text). Links and media inside a Markdown preview resolve relative to
+the document. Every preview offers Download, Open original and Retry. Unsupported
+binary files and unavailable media show a fallback instead of corrupt text;
+external previews remain subject to the remote host's CORS and browser codec
+support. Media nodes retain playback position during chat streaming updates.

@@ -4,7 +4,7 @@ import { api } from "./api.js";
 import { toast } from "./toast.js";
 import { closeModal, confirmModal } from "./modal.js";
 import { renderSidebar } from "./sidebar.js";
-import { channelCard, openSettings, renderSettings } from "./settings.js";
+import { channelCards, openSettings, renderSettings } from "./settings.js";
 
 export function whatsappPanel() {
   const ch = S.whatsapp || S.channels.find((c) => c.name === "whatsapp");
@@ -62,7 +62,7 @@ export function startQRTimer() {
 export function updateWhatsAppPanel() {
   if (S.modal?.type !== "settings" || S.settingsTab !== "channels") return;
   const cards = $("#channel-cards");
-  if (cards) cards.innerHTML = S.channels.map(channelCard).join("");
+  if (cards) cards.innerHTML = channelCards();
   const el = $("#wa-panel");
   if (!el) return;
   const active = document.activeElement;
@@ -125,7 +125,7 @@ export async function refreshChannels() {
     updateWhatsAppPanel();
     if (S.modal?.type === "settings" && S.settingsTab === "channels") {
       const cards = $("#channel-cards");
-      if (cards) cards.innerHTML = S.channels.map(channelCard).join("");
+      if (cards) cards.innerHTML = channelCards();
     }
   } catch (e) { console.warn(e); }
 }

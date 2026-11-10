@@ -188,6 +188,7 @@ func (r *Runtime) warmClient() *acp.Client {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.client != nil && r.client.Alive() {
+		r.lastActivity = time.Now()
 		return r.client
 	}
 	return nil
@@ -202,6 +203,7 @@ func (r *Runtime) waitClient(ctx context.Context) (*acp.Client, error) {
 		r.mu.Lock()
 		if r.client != nil && r.client.Alive() {
 			c := r.client
+			r.lastActivity = time.Now()
 			r.mu.Unlock()
 			return c, nil
 		}
@@ -302,6 +304,8 @@ func (r *Runtime) newPreviewSession(ctx context.Context, client *acp.Client, ag 
 // diverging list recreates the session so replay always starts from a clean
 // catalog — in both cases the agent process is never respawned.
 func (r *Runtime) previewSelections(ctx context.Context, client *acp.Client, ag store.Agent, selections []store.ConfigSelection) (json.RawMessage, error) {
+	done := r.beginWork()
+	defer done()
 	r.previewMu.Lock()
 	defer r.previewMu.Unlock()
 	if r.preview == nil || r.preview.client != client {
@@ -342,6 +346,8 @@ func (r *Runtime) previewSelections(ctx context.Context, client *acp.Client, ag 
 // rebuilt on every call — warms follow lifecycle events (boot, update, auth,
 // MCP change) after which the advertised catalog may have changed.
 func (r *Runtime) warm(ctx context.Context) {
+	done := r.beginWork()
+	defer done()
 	client, err := r.ensureClient(ctx)
 	if err != nil {
 		r.log.Warn("idle agent failed to start", "agent", r.agent.Slug, "error", err)

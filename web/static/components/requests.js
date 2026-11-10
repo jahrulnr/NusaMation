@@ -91,25 +91,25 @@ export function showElicitation(entry) {
   const schema = req.requestedSchema || {};
   const required = new Set(schema.required || []);
   const unsupported = Object.values(schema.properties || {}).some((spec) => !["string", "integer", "number", "boolean", "array"].includes(spec.type) || (spec.type === "array" && !spec.items?.enum && !spec.items?.anyOf));
-  const fields = Object.entries(schema.properties || {}).map(([key, spec]) => {
+  const fields = Object.entries(schema.properties || {}).map(([key, spec], index) => {
     const title = esc(spec.title || key);
-    const label = `<label>${title}${required.has(key) ? " *" : ""}</label>${spec.description ? `<div class="settings-desc">${esc(spec.description)}</div>` : ""}`;
+    const label = `<h3 class="elicitation-question" id="question-title-${index}" tabindex="-1">${index + 1}. ${title}${required.has(key) ? " *" : ""}</h3>${spec.description ? `<div class="settings-desc">${esc(spec.description)}</div>` : ""}`;
     const attrs = `data-key="${esc(key)}" data-type="${esc(spec.type || "string")}" ${required.has(key) ? "required" : ""}`;
     const choices = spec.oneOf || (spec.enum || []).map((v) => ({ const: v, title: v }));
     let control = "";
     if (spec.type === "array") {
       const items = spec.items || {};
       const values = items.anyOf || (items.enum || []).map((v) => ({ const: v, title: v }));
-      control = `<div class="elicitation-multi" data-key="${esc(key)}" data-min="${esc(spec.minItems ?? (required.has(key) ? 1 : 0))}" data-max="${esc(spec.maxItems ?? "")}">${values.map((v) => `<label><input type="checkbox" value="${esc(v.const)}" ${(spec.default || []).includes(v.const) ? "checked" : ""}> ${esc(v.title || v.const)}</label>`).join("")}</div>`;
+      control = `<div class="elicitation-multi" data-key="${esc(key)}" data-min="${esc(spec.minItems ?? (required.has(key) ? 1 : 0))}" data-max="${esc(spec.maxItems ?? "")}">${values.map((v, i) => `<label class="elicitation-option"><input type="checkbox" value="${esc(v.const)}" ${(spec.default || []).includes(v.const) ? "checked" : ""}><span class="elicitation-letter">${i < 26 ? String.fromCharCode(65 + i) : i + 1}</span><span>${esc(v.title || v.const)}</span></label>`).join("")}</div>`;
     } else if (choices.length || spec.type === "boolean") {
       const options = spec.type === "boolean" ? [{ const: "true", title: "Yes" }, { const: "false", title: "No" }] : choices;
-      control = `<select class="select" ${attrs}><option value="">Choose…</option>${options.map((v) => `<option value="${esc(v.const)}" ${String(spec.default) === String(v.const) ? "selected" : ""}>${esc(v.title || v.const)}</option>`).join("")}</select>`;
+      control = `<div class="elicitation-options">${options.map((v, i) => `<label class="elicitation-option"><input type="radio" name="question-${index}" ${attrs} value="${esc(v.const)}" ${String(spec.default) === String(v.const) ? "checked" : ""}><span class="elicitation-letter">${i < 26 ? String.fromCharCode(65 + i) : i + 1}</span><span>${esc(v.title || v.const)}</span></label>`).join("")}</div>${required.has(key) ? "" : `<button type="button" class="btn btn-ghost btn-xs elicitation-clear" data-action="elicitation-clear">Clear answer</button>`}`;
     } else {
       const inputType = spec.type === "number" || spec.type === "integer" ? "number" : spec.format === "email" ? "email" : spec.format === "date" ? "date" : "text";
       const bounds = `${spec.minimum != null ? `min="${esc(spec.minimum)}"` : ""} ${spec.maximum != null ? `max="${esc(spec.maximum)}"` : ""} ${spec.minLength != null ? `minlength="${esc(spec.minLength)}"` : ""} ${spec.maxLength != null ? `maxlength="${esc(spec.maxLength)}"` : ""}`;
-      control = `<input class="input" type="${inputType}" ${attrs} ${bounds} ${spec.type === "number" ? 'step="any"' : ""} value="${esc(spec.default ?? "")}">`;
+      control = `<input aria-labelledby="question-title-${index}" class="input" type="${inputType}" ${attrs} ${bounds} ${spec.type === "number" ? 'step="any"' : ""} value="${esc(spec.default ?? "")}">`;
     }
-    return `<div class="field">${label}${control}</div>`;
+    return `<section class="field elicitation-page" data-page="${index}" role="tabpanel" id="question-page-${index}" aria-labelledby="question-tab-${index}" ${index ? "hidden" : ""}>${label}${control}</section>`;
   }).join("");
   let body = `<p class="muted">${esc(req.message || "The agent needs your input.")}</p>`;
   if (req.mode === "url") {
@@ -122,8 +122,56 @@ export function showElicitation(entry) {
   } else {
     body += fields;
   }
+  const paged = req.mode !== "url" && !unsupported && Object.keys(schema.properties || {}).length > 0;
+  const total = paged ? Object.keys(schema.properties).length : 0;
+  const pager = total > 1 ? `<nav class="elicitation-pager" aria-label="Question pagination"><button type="button" class="icon-btn sm" data-action="elicitation-page" data-page="-1" data-pager="previous" aria-label="Previous question" disabled>‹</button><span class="elicitation-count" aria-live="polite">1 of ${total}</span><button type="button" class="icon-btn sm" data-action="elicitation-page" data-page="1" data-pager="next" aria-label="Next question">›</button></nav>` : "";
+  const tabs = total > 1 ? `<div class="elicitation-tabs" role="tablist" aria-label="Questions">${Object.entries(schema.properties).map(([key, spec], i) => `<button type="button" role="tab" id="question-tab-${i}" aria-controls="question-page-${i}" aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}" title="${esc(spec.title || key)}" data-action="elicitation-page" data-page="${i}">${i + 1}</button>`).join("")}</div>` : "";
   S.modal = { type: "elicitation", id: entry.id, conversationId: entry.conversationId };
-  openModal(`<form data-form="elicitation" id="elicitation-form">${modalHead("Agent needs input", agentName(agent))}<div class="modal-body" style="padding:18px">${body}</div><div class="modal-foot"><button type="button" class="btn btn-secondary" data-action="elicitation-decline">Decline</button><button type="submit" class="btn btn-primary" ${unsupported ? "disabled" : ""}>${req.mode === "url" ? "Open link" : "Continue"}</button></div></form>`, { size: "md" });
+  openModal(`<form data-form="elicitation" id="elicitation-form" class="elicitation-form" novalidate data-page="0"><div class="modal-head elicitation-head"><div class="elicitation-heading">${icon("message")}<div><div class="modal-title">Questions</div><div class="modal-sub">${esc(agentName(agent))}</div></div></div>${pager}<button type="button" class="icon-btn" data-action="close-modal" aria-label="Close">${icon("x")}</button></div>${tabs}<div class="modal-body elicitation-body">${body}</div><div class="modal-foot elicitation-foot"><button type="button" class="btn btn-ghost" data-action="close-modal">Skip <kbd>Esc</kbd></button>${total > 1 ? `<button type="button" class="btn btn-secondary" data-action="elicitation-page" data-pager="back" data-page="-1" hidden>Back</button>` : ""}<button type="submit" class="btn btn-primary" ${unsupported ? "disabled" : ""}>${req.mode === "url" ? "Open link" : "Continue"}${icon("chevron-right", "sm")}</button></div></form>`, { size: "md elicitation-dialog" });
+  if (total === 1) $(".elicitation-page")?.setAttribute("aria-labelledby", "question-title-0");
+}
+
+// Keep every page mounted so values, multi-selections and free text survive navigation.
+export function changeElicitationPage(index, focusTab = false) {
+  const form = $("#elicitation-form");
+  if (!form || S.resolving.has(S.modal?.id)) return;
+  const pages = $$(".elicitation-page", form);
+  index = Math.max(0, Math.min(pages.length - 1, Number(index)));
+  if (!pages.length || !Number.isInteger(index)) return;
+  form.dataset.page = String(index);
+  pages.forEach((page, i) => { page.hidden = i !== index; });
+  $$('[role="tab"]', form).forEach((tab, i) => {
+    tab.setAttribute("aria-selected", String(i === index));
+    tab.tabIndex = i === index ? 0 : -1;
+  });
+  for (const button of $$('[data-pager]', form)) {
+    const back = button.dataset.pager !== "next";
+    button.dataset.page = String(index + (back ? -1 : 1));
+    button.disabled = back ? index === 0 : index === pages.length - 1;
+    if (button.dataset.pager === "back") button.hidden = index === 0;
+  }
+  const counter = $(".elicitation-count", form);
+  if (counter) counter.textContent = `${index + 1} of ${pages.length}`;
+  $(".elicitation-body", form).scrollTop = 0;
+  const tab = $(`[role="tab"][data-page="${index}"]`, form);
+  tab?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  (focusTab ? tab : $(".elicitation-question", pages[index]))?.focus({ preventScroll: true });
+}
+
+function validateElicitationPage(page) {
+  for (const group of $$(".elicitation-multi", page)) {
+    const selected = $$("input:checked", group).length;
+    const invalid = selected < Number(group.dataset.min || 0) || (group.dataset.max && selected > Number(group.dataset.max));
+    $("input", group)?.setCustomValidity(invalid ? "Choose the requested number of options." : "");
+  }
+  const invalid = $$("input, select, textarea", page).find((input) => !input.checkValidity());
+  if (invalid) {
+    changeElicitationPage(page.dataset.page);
+    invalid.reportValidity();
+    invalid.focus();
+    return false;
+  }
+  return true;
 }
 
 // A dismissal is not a rejection. Closing the popup on a form whose fields are
@@ -145,29 +193,49 @@ export function dismissElicitation(conversationId, id) {
 }
 
 export async function respondElicitation(conversationId, id, response) {
+  if (S.resolving.has(id)) return;
+  S.resolving.add(id);
+  const form = S.modal?.id === id ? $("#elicitation-form") : null;
+  const buttons = form ? $$("button", form).map((button) => [button, button.disabled]) : [];
+  buttons.forEach(([button]) => { button.disabled = true; });
+  const submit = form && $('button[type="submit"]', form);
+  const label = submit?.innerHTML;
+  if (submit) submit.textContent = "Sending…";
   try {
     await api(`/conversations/${encodeURIComponent(conversationId)}/elicitations/${encodeURIComponent(id)}`, { method: "POST", body: response });
     S.elicitations = S.elicitations.filter((e) => e.id !== id);
     if (S.modal?.type === "elicitation" && S.modal.id === id) closeModal(false);
     showPendingRequest();
   } catch (e) { toast("Could not answer agent", e.message, "error"); }
+  finally {
+    S.resolving.delete(id);
+    buttons.forEach(([button, disabled]) => { button.disabled = disabled; });
+    if (submit) submit.innerHTML = label;
+  }
 }
 
 export function submitElicitation(form) {
   const entry = S.elicitations.find((e) => e.id === S.modal?.id);
   if (!entry) return;
   const req = entry.request || {};
+  if (S.resolving.has(entry.id)) return;
+  const pages = $$(".elicitation-page", form);
+  const current = Number(form.dataset.page || 0);
+  if (pages.length) {
+    if (!validateElicitationPage(pages[current])) return;
+    if (current < pages.length - 1) { changeElicitationPage(current + 1); return; }
+    for (const page of pages) if (!validateElicitationPage(page)) return;
+  }
   const content = {};
   if (req.mode === "url") {
     try { const url = new URL(req.url); if (!["http:", "https:"].includes(url.protocol)) throw new Error("invalid protocol"); window.open(url.href, "_blank", "noopener"); } catch { toast("Invalid link", "The agent provided an invalid URL.", "error"); return; }
   } else {
     for (const input of $$('[data-key][data-type]', form)) {
-      if (input.value === "") continue;
+      if (input.value === "" || (input.type === "radio" && !input.checked)) continue;
       content[input.dataset.key] = input.dataset.type === "boolean" ? input.value === "true" : ["number", "integer"].includes(input.dataset.type) ? Number(input.value) : input.value;
     }
     for (const group of $$(".elicitation-multi", form)) {
       const selected = $$("input:checked", group).map((input) => input.value);
-      if (selected.length < Number(group.dataset.min || 0) || (group.dataset.max && selected.length > Number(group.dataset.max))) { toast("Check your selection", "Choose the requested number of options.", "error"); return; }
       if (selected.length) content[group.dataset.key] = selected;
     }
   }

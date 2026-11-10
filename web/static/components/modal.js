@@ -56,6 +56,7 @@ export function closeModal(cancelRequest = true) {
     }
     return;
   }
+  if (cancelRequest && S.modal?.type === "elicitation" && S.resolving.has(S.modal.id)) return;
   const previousType = S.modal?.type;
   if (cancelRequest && S.modal?.type === "elicitation") {
     const { id, conversationId } = S.modal;

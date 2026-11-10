@@ -75,6 +75,10 @@ type Meta struct {
 	Title           string  `json:"title"`
 	CanGoBack       bool    `json:"canGoBack"`
 	CanGoForward    bool    `json:"canGoForward"`
+	// ViewportHeld is set only on the attach-time meta when this stream
+	// replaced another live viewer: the viewport already has an owner, so the
+	// new client should adopt it instead of resizing to its own pane.
+	ViewportHeld bool `json:"viewportHeld,omitempty"`
 }
 
 // Stream is the per-session screencast subscription a WS handler drains.
@@ -860,7 +864,12 @@ func (s *Session) Attach() (*Stream, error) {
 	if old != nil {
 		old.closeWith("stream_replaced", "Another client attached to this browser session.")
 	}
-	b, _ := json.Marshal(meta)
+	// The attach meta tells a replacing viewer the viewport is already owned:
+	// re-emulating to its own pane size would thrash the shared surface and
+	// leak a transitional composite frame (old render beside the new one).
+	held := meta
+	held.ViewportHeld = old != nil
+	b, _ := json.Marshal(held)
 	sub.sendCtrl(b)
 	s.mu.Lock()
 	mark := s.pointer
@@ -1214,6 +1223,9 @@ func (s *Session) emulate(o DeviceOpts) error {
 	// Publish the profile change immediately; scroll offsets come back with
 	// the next screencast frame.
 	s.maybeMeta()
+	// A page with no repaints leaves the transitional composite frame on
+	// screen; a forced capture replaces it with a clean one.
+	go s.forceScreenshot()
 	return nil
 }
 

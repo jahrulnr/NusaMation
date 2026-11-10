@@ -22,10 +22,11 @@ Per-agent process supervision and per-conversation ACP sessions.
 - `Manager.EnableInjectedMCP` registers stdio servers added to every `session/new`, `session/load`, and `session/resume` (`browser_use` and `nusamation_conversation`). Each spec receives the conversation id and returns its own environment, so a server can issue a per-conversation token.
 - Session establishment order:
   1. reuse a loaded session;
-  2. `session/load` if supported (replay suppressed);
-  3. `session/resume` if supported;
+  2. `session/resume` if supported;
+  3. `session/load` if supported (replay suppressed);
   4. `session/new`.
 - If load/resume reports an unknown session, NusaMation creates a fresh ACP session and marks it `recovered`; the chat layer prepends a transcript recap.
+- A runtime with no traffic for five minutes is reaped (`Manager.ReapIdle`, ticked from `app.Run`): `stopIfIdle` marks `stopping` atomically with the idle check, `Stop` publishes `stopped`/`idle timeout` before closing, and the next `EnsureSession` spawns a fresh runtime and reloads the persisted ACP session id. Running prompts, in-flight session loads, starts in progress and `auto-start` agents are not candidates.
 - Agent processes get a sanitized environment and a working directory. The ACP terminal manager accepts a cwd inside any session root and truncates output safely.
 - `Probe` launches a temporary process, creates a session, captures capabilities/models/config/auth methods and persists them without disturbing a live conversation.
 

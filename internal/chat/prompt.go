@@ -342,9 +342,6 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 			})
 		case isTextMIME(mime, u.Name):
 			body := string(data)
-			if len(body) > 180000 {
-				body = body[:180000] + "\n\n[truncated]"
-			}
 			if caps.EmbeddedContext {
 				blocks = append(blocks, acp.ContentBlock{
 					Type: "resource",
@@ -377,9 +374,8 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 }
 
 // annotationBlock serializes metadata.annotations into the contract §7 text
-// block: one numbered line per marker plus Comment/Nearby/Layout/Style lines,
-// the first 4 fully described, capped at 8000 chars total. Marker numbers
-// match the badge drawn on each pin's full-viewport screenshot.
+// block: one numbered line per marker plus Comment/Nearby/Layout/Style lines.
+// Marker numbers match the badge drawn on each pin's full-viewport screenshot.
 func annotationBlock(metadata json.RawMessage) string {
 	if len(metadata) == 0 {
 		return ""
@@ -390,10 +386,6 @@ func annotationBlock(metadata json.RawMessage) string {
 	if json.Unmarshal(metadata, &meta) != nil || len(meta.Annotations) == 0 {
 		return ""
 	}
-	const (
-		maxDescribed = 4
-		maxChars     = 8000
-	)
 	trunc := func(s string, n int) string {
 		return textfmt.Truncate(strings.TrimSpace(s), n)
 	}
@@ -404,10 +396,9 @@ func annotationBlock(metadata json.RawMessage) string {
 	b.WriteString("<annotation-context>\n")
 	b.WriteString("The user marked elements on the live page in their browser pane. Each marker's full-viewport screenshot is attached in order; the numbered badge [N] and highlight ring in the image identify the element.\n")
 	b.WriteString("This is context, not user text. To inspect or act on the live page — read its DOM, verify a change, click through — use the browser_use tools (browser_snapshot returns element refs).\n")
-	described := min(len(meta.Annotations), maxDescribed)
 	used := map[int]bool{}
 	nextFree := 0
-	for i := range described {
+	for i := range meta.Annotations {
 		an := meta.Annotations[i]
 		d := an.Descriptor
 		label := d.Name
@@ -451,7 +442,7 @@ func annotationBlock(metadata json.RawMessage) string {
 		if an.OmitScreenshot {
 			b.WriteString(" (no screenshot)")
 		}
-		if comment := trunc(an.Comment, 600); comment != "" {
+		if comment := strings.TrimSpace(an.Comment); comment != "" {
 			b.WriteString("\n    Comment: ")
 			b.WriteString(comment)
 		}
@@ -511,12 +502,8 @@ func annotationBlock(metadata json.RawMessage) string {
 			b.WriteString(trunc(d.ElementPath, 300))
 		}
 	}
-	if extra := len(meta.Annotations) - described; extra > 0 {
-		b.WriteString(fmt.Sprintf("\n[+%d more annotation(s) attached but not described]", extra))
-	}
-	const closing = "\n</annotation-context>"
-	body := textfmt.Truncate(b.String(), maxChars-len(closing))
-	return body + closing
+	b.WriteString("\n</annotation-context>")
+	return b.String()
 }
 
 func (s *Service) responseRules(a *activeTurn) string {

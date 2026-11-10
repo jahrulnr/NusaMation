@@ -182,11 +182,11 @@ func (m *Manager) CreateSession(ctx context.Context, conversationID, url string,
 			return err
 		}
 		if _, err := chromedp.Call(tabCtx, page.AddScriptToEvaluateOnNewDocument,
-			page.AddScriptToEvaluateOnNewDocumentParams{Source: consoleTapJS}); err != nil {
+			page.AddScriptToEvaluateOnNewDocumentParams{Source: consoleTapJS + ";\n" + selectShimJS}); err != nil {
 			return err
 		}
 		// The hook only fires on later navigations; run it once for this load.
-		if _, err := chromedp.Call(tabCtx, runtime.Evaluate, runtime.EvaluateParams{Expression: consoleTapJS}); err != nil {
+		if _, err := chromedp.Call(tabCtx, runtime.Evaluate, runtime.EvaluateParams{Expression: consoleTapJS + ";\n" + selectShimJS}); err != nil {
 			return err
 		}
 		_, err := chromedp.Call(tabCtx, emulation.SetDeviceMetricsOverride,

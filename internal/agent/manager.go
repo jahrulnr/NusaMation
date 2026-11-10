@@ -205,6 +205,12 @@ func (m *Manager) ensureRuntime(agent store.Agent) *Runtime {
 }
 
 func (m *Manager) InvalidateAgent(agentID string) {
+	m.invalidate(agentID, "agent configuration changed")
+}
+
+// invalidate removes the runtime and every conversation mapping so the next
+// EnsureSession recreates both; reason lands in the reported agent status.
+func (m *Manager) invalidate(agentID, reason string) {
 	m.mu.Lock()
 	r := m.runtimes[agentID]
 	delete(m.runtimes, agentID)
@@ -215,8 +221,85 @@ func (m *Manager) InvalidateAgent(agentID string) {
 	}
 	m.mu.Unlock()
 	if r != nil {
-		r.Stop("agent configuration changed")
+		r.Stop(reason)
 	}
+}
+
+// ReapIdle stops agent processes with no traffic for at least maxIdle. Each
+// room's ACP session id stays in the store, so the next prompt restarts the
+// process and resumes or reloads its session transparently.
+func (m *Manager) ReapIdle(maxIdle time.Duration) {
+	m.mu.Lock()
+	runtimes := make([]*Runtime, 0, len(m.runtimes))
+	for _, r := range m.runtimes {
+		runtimes = append(runtimes, r)
+	}
+	m.mu.Unlock()
+	for _, r := range runtimes {
+		if !r.stopIfIdle(maxIdle) {
+			continue
+		}
+		if !m.unregisterRuntime(r) {
+			// A concurrent invalidation already removed and stopped it.
+			continue
+		}
+		m.log.Info("stopping idle agent process", "agent", r.agent.Slug)
+		r.Stop("idle timeout")
+	}
+}
+
+// unregisterRuntime drops r from the manager maps when it is still the
+// registered runtime for its agent. The caller must already have marked r for
+// shutdown; false means a concurrent invalidation replaced it.
+func (m *Manager) unregisterRuntime(r *Runtime) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.runtimes[r.agent.ID] != r {
+		return false
+	}
+	delete(m.runtimes, r.agent.ID)
+	for id, session := range m.byConv {
+		if session.AgentID() == r.agent.ID {
+			delete(m.byConv, id)
+		}
+	}
+	return true
+}
+
+// ReloadActive stops every runtime with a live process and starts each one
+// again in the background, so running agents pick up a fresh binary or config
+// without waiting for the next prompt. Room session ids survive in the store;
+// sessions resume or reload on their next turn. Runtimes with in-flight work
+// or a start underway are left alone and reported as skipped. Agents whose
+// process is not running are untouched — a reload never cold-starts a stopped
+// agent.
+func (m *Manager) ReloadActive() (reloaded, skipped []store.Agent) {
+	m.mu.Lock()
+	runtimes := make([]*Runtime, 0, len(m.runtimes))
+	for _, r := range m.runtimes {
+		runtimes = append(runtimes, r)
+	}
+	m.mu.Unlock()
+	for _, r := range runtimes {
+		marked, busy := r.markForReload()
+		if busy {
+			skipped = append(skipped, r.agent)
+			continue
+		}
+		if !marked || !m.unregisterRuntime(r) {
+			continue
+		}
+		m.log.Info("reloading agent process", "agent", r.agent.Slug)
+		r.Stop("reloaded")
+		reloaded = append(reloaded, r.agent)
+		fresh := m.ensureRuntime(r.agent)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			fresh.warm(ctx)
+		}()
+	}
+	return reloaded, skipped
 }
 
 func (m *Manager) InvalidateAllAgents() {
@@ -387,6 +470,7 @@ func (m *Manager) Steer(ctx context.Context, s *Session, blocks []acp.ContentBlo
 	if c == nil || !c.Alive() {
 		return acp.SteerResult{}, errors.New("agent is not running")
 	}
+	r.touchActivity()
 	return c.Steer(ctx, s.ACPID(), blocks)
 }
 

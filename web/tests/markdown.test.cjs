@@ -22,6 +22,8 @@ const renderContext = vm.createContext({
   window: { marked: context.marked, NusaMarkdown: context.NusaMarkdown, DOMPurify: { sanitize: (html) => html } },
   esc: (s) => String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
   console,
+  mediaHTML: (raw, esc) => esc(raw),
+  prepareResources: (html) => html,
 });
 
 test('WhatsApp multiline monospace keeps its first line and markup literal', () => {

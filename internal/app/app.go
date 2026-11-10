@@ -225,6 +225,7 @@ func (a *App) Serve(ctx context.Context) error {
 		(&automation.Scheduler{Store: a.store, Chat: a.chat, Log: a.log}).Run(schedulerCtx)
 	}()
 	go a.updater.Run(schedulerCtx)
+	go a.watchIdleAgents(schedulerCtx)
 	a.channels.StartAll(ctx)
 	a.agents.WarmAutoStart()
 	if a.cfg.OpenBrowser {
@@ -250,6 +251,24 @@ func (a *App) Serve(ctx context.Context) error {
 	a.agents.StopAll()
 	a.log.Info("NusaMation stopped")
 	return nil
+}
+
+// agentIdleTimeout is how long an agent process may sit without traffic
+// before the reaper stops it. The next prompt starts it again and resumes the
+// room's ACP session, so the cutoff is invisible to the user.
+const agentIdleTimeout = 5 * time.Minute
+
+func (a *App) watchIdleAgents(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.agents.ReapIdle(agentIdleTimeout)
+		}
+	}
 }
 
 func (a *App) mcpFingerprint(ctx context.Context) ([32]byte, error) {

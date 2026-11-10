@@ -90,6 +90,22 @@ func (s *Server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (s *Server) handleReloadAgents(w http.ResponseWriter, r *http.Request) {
+	if s.agents == nil {
+		writeError(w, http.StatusServiceUnavailable, "agents_unavailable", "Agent manager is not running.")
+		return
+	}
+	reloaded, skipped := s.agents.ReloadActive()
+	pub := func(list []store.Agent) []store.Agent {
+		out := make([]store.Agent, 0, len(list))
+		for _, a := range list {
+			out = append(out, a.Public())
+		}
+		return out
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"reloaded": pub(reloaded), "skipped": pub(skipped)})
+}
+
 func (s *Server) handleProbeAgent(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()

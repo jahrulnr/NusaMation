@@ -1,5 +1,5 @@
 import { $, $$, AGENT_COLORS, agentById, agentOrb, configChoices, esc, icon, timeAgo } from "./util.js";
-import { S, defaultSendDelivery } from "./state.js";
+import { S, UI_FONTS, UI_FONT_SIZES, defaultSendDelivery, uiFont, uiFontSize } from "./state.js";
 import { api } from "./api.js";
 import { toast } from "./toast.js";
 import { confirmModal, modalHead, openModal } from "./modal.js";
@@ -17,7 +17,7 @@ export function openSettings(tab = "") {
   S.agentForm = null;
   S.mcpForm = null;
   S.modal = { type: "settings" };
-  if (S.settingsTab === "account") loadUpdateInfo();
+  if (S.settingsTab === "account" || S.settingsTab === "about") loadUpdateInfo();
   if (S.settingsTab === "control") loadControlSettings();
   if (S.settingsTab === "mcp") loadMCP();
   renderSettings();
@@ -33,6 +33,7 @@ export function renderSettings() {
     ["routing", "link", "Routing"],
     ["control", "zap", "Agent control"],
     ["account", "shield", "Account"],
+    ["about", "info", "About"],
   ];
   let body = "";
   if (S.settingsTab === "agents") body = agentsSettings();
@@ -42,6 +43,7 @@ export function renderSettings() {
   else if (S.settingsTab === "channels") body = channelsSettings();
   else if (S.settingsTab === "routing") body = routingSettings();
   else if (S.settingsTab === "control") body = controlSettings();
+  else if (S.settingsTab === "about") body = aboutSettings();
   else body = accountSettings();
   const content = `<div class="settings-layout">
     <nav class="settings-tabs">${tabs.map(([id, ic, label]) => `<button class="settings-tab ${S.settingsTab === id ? "active" : ""}" data-action="settings-tab" data-tab="${id}">${icon(ic)}<span>${label}</span></button>`).join("")}</nav>
@@ -70,10 +72,9 @@ export function agentDefaultsSettings() {
   return `<div class="field"><label for="default-send-delivery">Default web send mode</label><select id="default-send-delivery" class="select" data-change="default-send-delivery"><option value="steer" ${defaultSendDelivery() === "steer" ? "selected" : ""}>Steer</option><option value="queue" ${defaultSendDelivery() === "queue" ? "selected" : ""}>Queue</option></select><div class="settings-desc">Used for new web conversations. Other channels use steer.</div></div>
     ${settingsHead("Default ACP", "Used for new conversations, including new WhatsApp conversations. Choose options in order; each choice refreshes the available options.")}
     <div class="field"><label>Agent</label><select class="select" data-change="default-agent" ${S.defaultBusy ? "disabled" : ""}><option value="">Choose an agent</option>${S.agents.filter((a) => a.enabled).map((a) => `<option value="${esc(a.id)}" ${draft.agentId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></div>
-    ${S.defaultBusy ? `<div class="settings-loading" role="status"><span class="spinner"></span><span>Loading agent options…</span></div>` : ""}
     ${S.defaultError ? `<div class="settings-desc" role="alert">${esc(S.defaultError)} <button class="btn btn-secondary btn-sm" data-action="default-retry">Retry</button></div>` : ""}
     ${draft.selections.length ? `<div class="settings-section"><div class="settings-title">Selected in order</div>${draft.selections.map((s) => { const opt = S.defaultConfigs.find((o) => o.id === s.id); const label = opt && configChoices(opt).find((c) => String(c.value) === String(s.value))?.name; return `<div class="settings-row"><div class="label">${esc(s.name || opt?.name || s.id)}</div><span class="default-value">${esc(s.label ?? label ?? s.value)}</span></div>`; }).join("")}<button class="btn btn-secondary btn-sm" data-action="default-undo" ${S.defaultBusy ? "disabled" : ""}>Undo last choice</button></div>` : ""}
-    ${draft.agentId && !S.defaultError ? `<div class="form-grid" style="margin-top:16px">${rows || (!S.defaultBusy ? `<div class="settings-desc">No more configurable options.</div>` : "")}</div>` : ""}
+    ${draft.agentId && !S.defaultError ? `<div class="form-grid" style="margin-top:16px">${S.defaultBusy ? `<div class="history-skeleton" style="margin:0;width:100%"><span class="skeleton-line short"></span><span class="skeleton-line"></span><span class="skeleton-line"></span></div>` : (rows || `<div class="settings-desc">No more configurable options.</div>`)}</div>` : ""}
     <div class="form-actions"><button class="btn btn-primary" data-action="save-agent-defaults" ${!draft.agentId || S.defaultBusy || S.defaultError ? "disabled" : ""}>Save defaults</button></div>`;
 }
 
@@ -107,7 +108,7 @@ export async function saveAgentDefaults() {
 
 export function agentsSettings() {
   if (S.agentForm) return agentFormHTML();
-  return `${settingsHead("Agents", "ACP CLIs are the brain. Launch commands, workspaces, policies and secrets.", `<button class="btn btn-primary btn-sm" data-action="add-agent">${icon("plus", "sm")} Add agent</button>`)}
+  return `${settingsHead("Agents", "ACP CLIs are the brain. Launch commands, workspaces, policies and secrets.", `<div style="display:flex;gap:6px;align-items:center"><button class="icon-btn sm" data-action="reload-agents" title="Reload active agents">${icon("refresh", "sm")}</button><button class="btn btn-primary btn-sm" data-action="add-agent" title="Add agent">${icon("plus", "sm")}</button></div>`)}
     <div class="agent-list">${S.agents.map((a) => `<div class="agent-card">
       ${agentOrb(a)}
       <div class="agent-card-main">
@@ -122,7 +123,7 @@ export function agentsSettings() {
         <button class="icon-btn sm" data-action="delete-agent" data-id="${esc(a.id)}" title="Delete">${icon("trash", "sm")}</button>
       </div>
     </div>`).join("") || `<div class="empty-settings">No agents configured yet.<br>Add any ACP-compatible CLI to get started.</div>`}</div>
-    <div class="settings-section" style="margin-top:22px">${settingsHead("Approval policy", "Local policy is separate from the agent's own permission mode. Ask is the safest default.")}<div class="settings-row"><div><div class="label">Default workspace</div><div class="desc">${esc((S.bootstrap?.app && S.bootstrap.app.dataDir) || "the NusaMation data directory")}/workspace</div></div><code class="mono" style="font-size:10.5px;color:var(--muted)">AGENTS.md seeded</code></div></div>`;
+    <div class="settings-section" style="margin-top:22px"><div class="settings-row"><div><div class="label">Default workspace</div><div class="desc">${esc((S.bootstrap?.app && S.bootstrap.app.dataDir) || "the NusaMation data directory")}/workspace</div></div><code class="mono" style="font-size:10.5px;color:var(--muted)">AGENTS.md seeded</code></div></div>`;
 }
 
 export function envRowsHTML(list, prefix) {
@@ -140,7 +141,6 @@ export function agentFormHTML() {
     <form data-form="agent" data-id="${esc(f.id || "")}">
       <div class="form-grid">
         <div class="field"><label>Name</label><input class="input" name="name" value="${esc(a.name || "")}" placeholder="Devin" required></div>
-        <div class="field"><label>Slug</label><input class="input" name="slug" value="${esc(a.slug || "")}" placeholder="devin" required></div>
         <div class="field full"><label>Command</label><input class="input" name="command" value="${esc(a.command || "")}" placeholder="/usr/local/bin/devin" required></div>
         <div class="field full"><label>Arguments (one per line)</label><textarea class="textarea" name="args" rows="3" placeholder="acp">${esc((a.args || []).join("\n"))}</textarea></div>
         <div class="field full"><label>Working directory</label><input class="input" name="cwd" value="${esc(a.cwd || ((S.bootstrap?.app && S.bootstrap.app.dataDir) || "") + "/workspace")}" placeholder="/home/me/.nusamation/workspace" required></div>
@@ -162,7 +162,7 @@ export function agentFormHTML() {
 export function mcpSettings() {
   if (S.mcpForm) return mcpFormHTML();
   const list = S.mcp || [];
-  const cards = list.map((m) => `<div class="mcp-card"><span class="tool-icon kind-execute">${icon(m.transport === "stdio" ? "terminal" : "globe")}</span><div class="grow" style="min-width:0"><div class="mcp-name">${esc(m.name)} <span class="status-dot ${m.enabled ? "" : "warn"}"></span></div><div class="mcp-sub">${esc(m.transport)} · ${esc(m.transport === "stdio" ? m.command : m.url)} ${esc((m.args || []).join(" "))}</div></div><div class="mcp-actions"><button class="icon-btn sm" data-action="edit-mcp" data-id="${esc(m.id)}" title="Edit">${icon("edit", "sm")}</button><button class="icon-btn sm" data-action="delete-mcp" data-id="${esc(m.id)}" title="Delete">${icon("trash", "sm")}</button></div></div>`).join("");
+  const cards = list.map((m) => `<div class="mcp-card"><span class="tool-icon kind-execute">${icon(m.transport === "stdio" ? "terminal" : "globe")}</span><div class="grow" style="min-width:0"><div class="mcp-name">${esc(m.name)} <span class="agent-status"><span class="status-dot ${m.enabled ? "" : "warn"}"></span>${m.enabled ? "enabled" : "disabled"}</span></div><div class="mcp-sub">${esc(m.transport)} · ${esc(m.transport === "stdio" ? m.command : m.url)} ${esc((m.args || []).join(" "))}</div></div><div class="mcp-actions"><button class="icon-btn sm" data-action="edit-mcp" data-id="${esc(m.id)}" title="Edit">${icon("edit", "sm")}</button><button class="icon-btn sm" data-action="delete-mcp" data-id="${esc(m.id)}" title="Delete">${icon("trash", "sm")}</button></div></div>`).join("");
   return `${settingsHead("MCP servers", "Shared by all agents. Saving changes restarts active agent runtimes.")}<div class="settings-section"><div class="section-head"><div><h3>Shared servers</h3><div class="settings-desc">${list.length} server${list.length === 1 ? "" : "s"}</div></div><button class="btn btn-secondary btn-sm" data-action="add-mcp">${icon("plus", "sm")} Add server</button></div>${cards || `<div class="mcp-empty"><span>No servers configured</span></div>`}</div>`;
 }
 
@@ -187,8 +187,15 @@ export function mcpFormHTML() {
 
 export function channelsSettings() {
   return `${settingsHead("Channels", "Web always sees everything. WhatsApp receives one message when the turn finishes, plus approval pings.")}
-    <div class="agent-list" id="channel-cards">${S.channels.map(channelCard).join("")}</div>
+    <div class="agent-list" id="channel-cards">${channelCards()}</div>
     <div id="wa-panel" style="margin-top:20px">${whatsappPanel()}</div>`;
+}
+
+// The built-in web channel is not a manageable adapter; it stays out of the
+// card list everywhere the list re-renders (initial render, WS updates, QR
+// timer, refresh button).
+export function channelCards() {
+  return S.channels.filter((ch) => ch.name !== "web").map(channelCard).join("");
 }
 
 export function channelCard(ch) {
@@ -254,9 +261,9 @@ export async function toggleOrchestration() {
   if (S.modal?.type === "settings" && S.settingsTab === "control") renderSettings();
 }
 
-export function accountSettings() {
+export function aboutSettings() {
   const app = (S.bootstrap && S.bootstrap.app) || {};
-  return `${settingsHead("Account", "Single-admin local control center.")}
+  return `${settingsHead("About", "Build info and software updates for this NusaMation installation.")}
     <div class="about-grid">
       <div class="about-item"><div class="k">Version</div><div class="v">${esc(app.version || S.appVersion || "unknown")}</div></div>
       <div class="about-item"><div class="k">Mode</div><div class="v">${app.dev ? "Development" : "Local-first"}</div></div>
@@ -266,6 +273,15 @@ export function accountSettings() {
     <div class="settings-section" style="margin-top:24px">
       <div class="settings-title">Software update</div>
       ${updateSection()}
+    </div>`;
+}
+
+export function accountSettings() {
+  return `${settingsHead("Account", "Single-admin local control center.")}
+    <div class="settings-section">
+      <div class="settings-title">Appearance</div>
+      <div class="field" style="max-width:320px"><label for="ui-font">Interface font</label><select id="ui-font" class="select" data-change="ui-font">${UI_FONTS.map((f) => `<option value="${esc(f.id)}" ${uiFont() === f.id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select><div class="settings-desc">Changes the app font in this browser only.</div></div>
+      <div class="field" style="max-width:320px"><label for="ui-font-size">Interface text size</label><select id="ui-font-size" class="select" data-change="ui-font-size"><option value="" ${uiFontSize() === "" ? "selected" : ""}>System default</option>${UI_FONT_SIZES.map((s) => `<option value="${s}" ${uiFontSize() === String(s) ? "selected" : ""}>${s}px</option>`).join("")}</select><div class="settings-desc">Scales the whole interface proportionally (9–20px base text).</div></div>
     </div>
     ${(S.notifySettings || {}).available ? `<div class="settings-section">
       <div class="settings-title">Desktop notifications</div>
@@ -329,7 +345,7 @@ export function loadUpdateInfo() {
   api("/settings").then((d) => {
     S.notifySettings = d.notifications || S.notifySettings;
     S.updateInfo = d.update || S.updateInfo;
-    if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
+    if (S.modal?.type === "settings" && (S.settingsTab === "account" || S.settingsTab === "about")) renderSettings();
   }).catch(() => {});
 }
 
@@ -345,7 +361,7 @@ export async function checkUpdate() {
     toast("Update check failed", e.message, "error");
   } finally {
     S.updateBusy = "";
-    if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
+    if (S.modal?.type === "settings" && S.settingsTab === "about") renderSettings();
   }
 }
 
@@ -361,7 +377,7 @@ export function applyUpdate() {
       toast("Update failed", e.message, "error");
     } finally {
       S.updateBusy = "";
-      if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
+      if (S.modal?.type === "settings" && S.settingsTab === "about") renderSettings();
     }
   }, "Update");
 }
@@ -407,6 +423,21 @@ export async function openAgentLogs(id, fromSettings = false) {
   }
 }
 
+export async function reloadActiveAgents() {
+  try {
+    const d = await api("/agents/reload", { method: "POST" });
+    const reloaded = d.reloaded || [];
+    const skipped = (d.skipped || []).map((a) => a.name || a.slug).join(", ");
+    if (!reloaded.length && !skipped.length) toast("Nothing to reload", "No agent process is running.", "info");
+    else toast(`Reloaded ${reloaded.length} agent${reloaded.length === 1 ? "" : "s"}`, skipped ? `Skipped while busy: ${skipped}.` : "Fresh ACP processes are starting.", "success");
+    const list = await api("/agents");
+    S.agents = list.agents || S.agents;
+    if (S.modal?.type === "settings" && S.settingsTab === "agents") renderSettings();
+  } catch (e) {
+    toast("Reload failed", e.message, "error");
+  }
+}
+
 export async function probeAgent(id) {
   toast("Probing agent", "Starting a temporary ACP session…", "info");
   try {
@@ -437,7 +468,7 @@ export async function saveAgent(form) {
   });
   const body = {
     name: String(fd.get("name") || "").trim(),
-    slug: String(fd.get("slug") || "").trim(),
+    slug: S.agentForm?.agent?.slug || "",
     command: String(fd.get("command") || "").trim(),
     args: String(fd.get("args") || "").split("\n").map((s) => s.trim()).filter(Boolean),
     cwd: String(fd.get("cwd") || "").trim(),

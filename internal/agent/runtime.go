@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/jahrulnr/nusamation/internal/acp"
@@ -50,6 +49,14 @@ type Runtime struct {
 	state    string
 	lastErr  string
 	stopping bool
+	// stopReason keeps the Stop cause so the exit path reports it instead of
+	// the generic "agent stopped".
+	stopReason string
+	// lastActivity is the last client or agent-side traffic; inflight counts
+	// unbounded operations (prompts, session loads, preview replays). Both
+	// feed stopIfIdle for the idle-process reaper.
+	lastActivity time.Time
+	inflight     int
 
 	sessions map[string]*Session
 	byACP    map[string]*Session
@@ -100,6 +107,71 @@ func (r *Runtime) setState(state, lastErr string) {
 	r.mgr.Sink().AgentState(r.agent.ID, state, lastErr)
 }
 
+// touchActivity marks client/agent traffic for the idle reaper.
+func (r *Runtime) touchActivity() {
+	r.mu.Lock()
+	r.lastActivity = time.Now()
+	r.mu.Unlock()
+}
+
+// beginWork marks an unbounded operation (prompt, session load, preview
+// replay) so the idle reaper does not stop the process mid-flight. The
+// returned func releases the mark and refreshes activity.
+func (r *Runtime) beginWork() func() {
+	r.mu.Lock()
+	r.inflight++
+	r.lastActivity = time.Now()
+	r.mu.Unlock()
+	return func() {
+		r.mu.Lock()
+		r.inflight--
+		r.lastActivity = time.Now()
+		r.mu.Unlock()
+	}
+}
+
+// stopIfIdle atomically marks the runtime for shutdown when the process has
+// had no traffic for at least maxIdle. Marking stopping under the same lock
+// as the check keeps ensureClient from handing out the doomed client or
+// spawning a fresh process the reaper would then kill. Auto-start agents are
+// never candidates: that flag exists to keep a resident process.
+func (r *Runtime) stopIfIdle(maxIdle time.Duration) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch {
+	case r.stopping, r.starting, r.agent.AutoStart, r.inflight > 0:
+		return false
+	case r.client == nil || !r.client.Alive():
+		return false
+	case time.Since(r.lastActivity) < maxIdle:
+		return false
+	}
+	r.stopping = true
+	r.stopReason = "idle timeout"
+	return true
+}
+
+// markForReload atomically marks the runtime for a manual reload: like
+// stopIfIdle it refuses while a prompt/session op is in flight or a start is
+// underway, but there is no auto-start exemption — a reload restarts resident
+// agents too. busy reports whether the refusal was live work, as opposed to
+// an already-dead or absent process (which is simply nothing to reload).
+func (r *Runtime) markForReload() (marked, busy bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch {
+	case r.stopping:
+		return false, false
+	case r.starting, r.inflight > 0:
+		return false, true
+	case r.client == nil || !r.client.Alive():
+		return false, false
+	}
+	r.stopping = true
+	r.stopReason = "reloaded"
+	return true, false
+}
+
 func (r *Runtime) ensureClient(ctx context.Context) (*acp.Client, error) {
 	for {
 		r.mu.Lock()
@@ -109,6 +181,7 @@ func (r *Runtime) ensureClient(ctx context.Context) (*acp.Client, error) {
 		}
 		if r.client != nil && r.client.Alive() {
 			c := r.client
+			r.lastActivity = time.Now()
 			r.mu.Unlock()
 			return c, nil
 		}
@@ -156,6 +229,7 @@ func (r *Runtime) ensureClient(ctx context.Context) (*acp.Client, error) {
 			r.client = client
 			r.state = "ready"
 			r.lastErr = ""
+			r.lastActivity = time.Now()
 		}
 		r.mu.Unlock()
 		if err != nil {
@@ -192,6 +266,7 @@ func (r *Runtime) failStart(err error) {
 
 func (r *Runtime) EnsureSession(ctx context.Context, req EnsureRequest) (*Session, error) {
 	r.mu.Lock()
+	r.lastActivity = time.Now()
 	if s, ok := r.sessions[req.ConversationID]; ok {
 		r.mu.Unlock()
 		s.touch()
@@ -224,6 +299,8 @@ func (r *Runtime) loadOrCreate(ctx context.Context, s *Session, req EnsureReques
 	if err != nil {
 		return s, err
 	}
+	done := r.beginWork()
+	defer done()
 	mcpList, err := r.mgr.store.ListMCP(ctx)
 	if err != nil {
 		return s, err
@@ -600,6 +677,8 @@ func (r *Runtime) Prompt(ctx context.Context, s *Session, blocks []acp.ContentBl
 	if err != nil {
 		return acp.PromptResult{}, err
 	}
+	done := r.beginWork()
+	defer done()
 	s.touch()
 	result, err := client.Prompt(ctx, s.ACPID(), blocks)
 	s.mu.Lock()
@@ -620,6 +699,7 @@ func (r *Runtime) Cancel(_ context.Context, s *Session) error {
 	if client == nil || !client.Alive() {
 		return errors.New("agent is not running")
 	}
+	r.touchActivity()
 	return client.Cancel(s.ACPID())
 }
 
@@ -674,6 +754,7 @@ func (r *Runtime) DropSession(ctx context.Context, s *Session) {
 func (r *Runtime) Stop(reason string) {
 	r.mu.Lock()
 	r.stopping = true
+	r.stopReason = reason
 	c := r.client
 	r.client = nil
 	sessions := make([]*Session, 0, len(r.sessions))
@@ -681,10 +762,12 @@ func (r *Runtime) Stop(reason string) {
 		sessions = append(sessions, s)
 	}
 	r.mu.Unlock()
+	// Publish before closing so the write lands on this goroutine; onExit then
+	// dedups instead of racing a trailing write past a fresh runtime's "ready".
+	r.setState("stopped", reason)
 	if c != nil {
 		_ = c.Close()
 	}
-	r.setState("stopped", reason)
 	for _, s := range sessions {
 		s.mu.Lock()
 		s.loaded = false
@@ -702,6 +785,8 @@ func (r *Runtime) Authenticate(ctx context.Context, methodID string) error {
 			return errors.New("this authentication method requires an interactive terminal, which is not available in the web UI")
 		}
 	}
+	done := r.beginWork()
+	defer done()
 	if err := client.Authenticate(ctx, methodID); err != nil {
 		return err
 	}
@@ -722,6 +807,7 @@ func (r *Runtime) Logout(ctx context.Context) error {
 }
 
 func (r *Runtime) handleNotification(method, sessionID string, raw json.RawMessage) {
+	r.touchActivity()
 	if method != "session/update" {
 		if strings.HasPrefix(method, "_cognition.ai/output") {
 			var out struct {
@@ -829,6 +915,7 @@ func (r *Runtime) dispatchNotification(s *Session, method string, raw json.RawMe
 func (r *Runtime) onExit(err error) {
 	r.mu.Lock()
 	wasStopping := r.stopping
+	stopReason := r.stopReason
 	// A restarted process can replace r.client while the old process is still
 	// winding down. Never let a stale exit tear down the new runtime.
 	if r.client != nil && r.client.Alive() {
@@ -849,7 +936,10 @@ func (r *Runtime) onExit(err error) {
 	}
 	r.mu.Unlock()
 	if wasStopping {
-		r.setState("stopped", "agent stopped")
+		if stopReason == "" {
+			stopReason = "agent stopped"
+		}
+		r.setState("stopped", stopReason)
 		return
 	}
 	msg := "agent process exited"
@@ -886,6 +976,7 @@ func (h *runtimeHandler) OnExit(err error) {
 }
 
 func (h *runtimeHandler) OnRequest(ctx context.Context, method string, params json.RawMessage) (any, *acp.RPCError) {
+	h.r.touchActivity()
 	switch method {
 	case "session/request_permission":
 		var req acp.PermissionRequest
@@ -1090,5 +1181,3 @@ func sensitivePath(p string) bool {
 	}
 	return false
 }
-
-var _ = atomic.Bool{}

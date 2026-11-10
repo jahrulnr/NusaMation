@@ -94,8 +94,8 @@ export function handleEvent(ev) {
       break;
     case "update.status": {
       S.updateInfo = data;
+      if (S.modal?.type === "settings" && S.settingsTab === "about") renderSettings();
       if (data.stage === "restarting") toast("Restarting to finish update", "This page reconnects and refreshes automatically.", "info", 15000);
-      if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
       break;
     }
     case "conversation.created":

@@ -80,10 +80,6 @@ func (s *Server) handleGetUpload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", up.MIME)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", st.Size()))
 	w.Header().Set("Cache-Control", "private, max-age=86400")
-	disposition := "attachment"
-	if strings.HasPrefix(up.MIME, "image/") || strings.HasPrefix(up.MIME, "video/") || strings.HasPrefix(up.MIME, "audio/") || up.MIME == "application/pdf" {
-		disposition = "inline"
-	}
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`%s; filename="%s"`, disposition, filepath.Base(up.Name)))
+	setFileDisposition(w, r, filepath.Base(up.Name), up.MIME)
 	http.ServeFile(w, r, path)
 }

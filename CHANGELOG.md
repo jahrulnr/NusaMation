@@ -4,6 +4,21 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+### Changed
+
+- Every native `<select>` in the control center is now upgraded to a styled SlimSelect widget (vendored, no jQuery): dropdowns with more than five options get a live search field while shorter lists stay search-free. The original element keeps its value so form submits and existing change handlers work unchanged, option and disabled mutations re-sync automatically, and `data-select-raw` opts an element out.
+- The plan card now renders at the tail of the transcript with the other current-work artifacts (approvals, typing indicator) instead of above the message history. Previously a lazy history prepend scrolled it out of view, making it look like the card flashed during loading and then vanished.
+- A second client attaching to an in-use browser session now adopts the established viewport instead of forcing its own pane size, ending the "mirrored" ghost frame two-viewer contention left on static pages; deliberate device choices still take over sizing, and every emulation change pushes a fresh screenshot so stale composite frames never persist.
+- Select dropdowns inside the embedded browser pane now open a styled in-page listbox with live search when there are more than five options (shorter lists stay search-free), fixing indented optgroup rows losing their padding and the Home key throwing an error.
+- The agent prompt no longer truncates user input: browser pin annotations are all described with their comment, selector, layout and style instead of only the first four, annotation comments and message text are sent in full, and attached text files are no longer cut at 180k characters. ACP agents enforce their own context limits.
+- Chat links to local files now open in a shared preview instead of navigating to a nonexistent web route. Markdown images, media HTML tags, video/audio sources, attachments, PDFs, Markdown, static HTML and text files share working preview/download behavior. Media players retain their state during streaming updates.
+- Agent questions now use one question per tab with pagination, retained answers, and a bounded scroll area that keeps navigation and submission reachable on small screens.
+- Agent processes without idle mode now stop automatically after five minutes without traffic; the next prompt restarts the process and resumes or reloads each room's ACP session. Agents opted into idle mode stay resident.
+- Version/build info and the Software update panel moved from Account to a new About settings tab, and the interface font can be switched per browser (system default, Inter, Tinos, or Toddler Writing) and the interface text size scaled per browser (9–20px base, proportional zoom) from the Account tab.
+- Native `<select>` dropdowns now work inside the embedded browser pane: headless Chromium renders the popup outside the streamed page, so a small in-page listbox shim is injected into pane pages and commits selections through the usual `input`/`change` events.
+- The Defaults settings tab shows skeleton rows while an agent's options are loading instead of an empty area, and the agent add form no longer asks for a slug — one is derived from the name (the API still accepts an explicit slug). The Channels tab no longer lists the built-in Web channel, and MCP server cards label their enabled/disabled state in text.
+- The Agents settings header gained a reload icon that restarts every running agent process (`POST /api/agents/reload`) so an updated CLI or config takes effect; busy agents are skipped and reported, stopped agents are left alone, and rooms resume their sessions on the next turn.
+
 ## [0.2.5] - 2026-11-10
 
 ### Changed

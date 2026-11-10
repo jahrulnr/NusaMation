@@ -24,3 +24,28 @@
 .markdown .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
 .markdown .footnotes { border-top: 1px solid var(--border); margin-top: 18px; padding-top: 8px; font-size: 0.9em; }
 .markdown .footnotes .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); }
+
+.markdown video, .markdown audio { display: block; max-width: 100%; margin: 12px 0; border-radius: 9px; }
+.markdown video { max-height: min(60dvh, 560px); background: #08090c; }
+.markdown img[data-action="preview-resource"] { cursor: zoom-in; }
+.markdown a { overflow-wrap: anywhere; }
+.media-load-error { display: block; color: var(--muted); font-size: 12px; padding: 8px 0; }
+.modal.file-preview-dialog { width: min(100%, 1080px); max-height: calc(var(--app-h, 100dvh) - 32px); }
+.file-preview-dialog .modal-body { flex: 1 1 auto; min-height: 0; }
+.file-preview-dialog .modal-title { overflow-wrap: anywhere; }
+.file-preview-content { min-width: 0; }
+.file-preview-content img { display: block; max-width: 100%; max-height: 68dvh; object-fit: contain; margin: auto; }
+.file-preview-content video { display: block; width: 100%; max-height: 68dvh; background: #08090c; }
+.file-preview-content audio { display: block; width: 100%; }
+.file-preview-content iframe { display: block; width: 100%; height: min(68dvh, 700px); border: 0; background: white; border-radius: 8px; }
+.file-preview-error { padding: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.file-line { display: block; min-height: 1.5em; }
+.file-line-selected { background: var(--accent-dim); box-shadow: -3px 0 var(--accent); }
+.file-preview-dialog .modal-foot { flex-wrap: wrap; }
+@media (max-width: 480px) {
+  .modal-overlay:has(.file-preview-dialog) { padding: 8px; }
+  .modal.file-preview-dialog { max-height: calc(var(--app-h, 100dvh) - 16px); }
+  .file-preview-body { padding: 12px; }
+  .file-preview-dialog .modal-foot { gap: 6px; padding: 10px 12px; }
+  .file-preview-dialog .modal-foot .btn { font-size: 11px; padding: 7px 9px; }
+}

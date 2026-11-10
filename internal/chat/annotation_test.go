@@ -59,6 +59,26 @@ func TestAnnotationBlockFallsBackToIndexWithoutMarker(t *testing.T) {
 	}
 }
 
+func TestAnnotationBlockDescribesEveryAnnotation(t *testing.T) {
+	var anns []store.MessageAnnotation
+	for i := 1; i <= 9; i++ {
+		anns = append(anns, store.MessageAnnotation{
+			PickID: "pk", Marker: i, Comment: "komentar pin " + string(rune('0'+i)),
+			Descriptor: store.AnnotationDescriptor{TagName: "div"},
+		})
+	}
+	out := annotationBlock(annotationMeta(t, anns...))
+	for i := 1; i <= 9; i++ {
+		want := "Comment: komentar pin " + string(rune('0'+i))
+		if !strings.Contains(out, want) {
+			t.Fatalf("annotation %d missing from block:\n%s", i, out)
+		}
+	}
+	if strings.Contains(out, "not described") {
+		t.Fatalf("annotations should never be summarised away:\n%s", out)
+	}
+}
+
 func TestAnnotationBlockNotesOmittedScreenshot(t *testing.T) {
 	meta := annotationMeta(t,
 		store.MessageAnnotation{

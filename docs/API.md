@@ -111,13 +111,14 @@ Approval option kinds: `allow_once`, `allow_always`, `reject_once`, `reject_alwa
 | `GET` | `/agents/{id}` | public agent |
 | `PATCH` | `/agents/{id}` | full/partial agent update; restarts runtime |
 | `DELETE` | `/agents/{id}` | refuses while conversations exist |
+| `POST` | `/agents/reload` | restarts every running agent process → `{reloaded, skipped}`; busy agents are skipped |
 | `POST` | `/agents/{id}/probe` | starts temporary ACP session |
 | `POST` | `/agents/{id}/authenticate` | `{methodId}` |
 | WebSocket | `/agents/{id}/auth-terminal?methodId=` | interactive terminal for the agent's advertised terminal login method |
 | `POST` | `/agents/{id}/logout` | |
 | `GET` | `/agents/{id}/logs` | runtime status, PID, uptime, stderr ring |
 
-`AgentInput` fields: `name`, `slug`, `description`, `command`, `args`, `env`, `cwd`, `icon`, `color`, `enabled`, `autoStart`, `approvalPolicy`, `defaultModel`.
+`AgentInput` fields: `name`, `slug` (optional on create — derived from `name` when omitted), `description`, `command`, `args`, `env`, `cwd`, `icon`, `color`, `enabled`, `autoStart`, `approvalPolicy`, `defaultModel`.
 
 ## MCP
 
@@ -179,7 +180,10 @@ WhatsApp settings:
 | Method | Path | Notes |
 |---|---|---|
 | `POST` | `/uploads` | multipart `file`, optional `conversationId`; max 25 MB |
-| `GET` | `/uploads/{id}` | authenticated file bytes; images inline |
+| `GET` | `/uploads/{id}` | authenticated file bytes; media and PDF inline; `?download=1` forces a download |
+| `GET` | `/conversations/{id}/files?path=` | authenticated local file bytes; absolute, relative or `file://` paths; `?download=1` forces a download |
+
+Local artifact paths resolve on the server. Relative paths use the conversation cwd (or the default workspace when missing); absolute paths may point outside the workspace, such as generated files in `/tmp`. Regular files support HEAD and byte ranges for media playback. Editor suffixes `:line` and `:line:column` are resolved after checking for an exact filename. Missing files return 404; directories and non-regular files return 422.
 
 ## Embedded browser
 
@@ -198,7 +202,7 @@ Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser co
 | `POST` | `/browser/sessions/{id}/annotate/clear` | clears the painted highlight; picks/uploads persist |
 | WebSocket | `/browser/sessions/{id}/stream` | one live stream per session; a new attach sends the old one `closed/stream_replaced` |
 
-Stream protocol: server→client binary messages are JPEG screencast frames; text messages are `{type:"meta"|"closed"|"pong"}`. `meta` carries `deviceWidth/deviceHeight/mobile/touch/dpr/pageScaleFactor/scrollOffsetX/scrollOffsetY/url/title/canGoBack/canGoForward` on change. Client→server text messages: `{type:"mousemove"|"click"|"wheel"|"text"|"key"|"resize"|"emulate"|"ping"}` with coordinates in viewport CSS px (the client scales the displayed frame using the latest `meta`). `resize` keeps the current device profile; `emulate` takes `{preset?:"desktop"|"mobile"|"tablet", width?, height?, dpr?, mobile?, ua?, touch?}` and applies full CDP device emulation — the pane's device bar sends these.
+Stream protocol: server→client binary messages are JPEG screencast frames; text messages are `{type:"meta"|"closed"|"pong"}`. `meta` carries `deviceWidth/deviceHeight/mobile/touch/dpr/pageScaleFactor/scrollOffsetX/scrollOffsetY/url/title/canGoBack/canGoForward` on change. The attach-time meta adds `viewportHeld` when the stream replaced another live viewer; clients should adopt the reported viewport instead of emulating their own pane size, which avoids thrash and the transitional "mirrored" frame a mid-stream resize can leave on static pages. Client→server text messages: `{type:"mousemove"|"click"|"wheel"|"text"|"key"|"resize"|"emulate"|"ping"}` with coordinates in viewport CSS px (the client scales the displayed frame using the latest `meta`). `resize` keeps the current device profile; `emulate` takes `{preset?:"desktop"|"mobile"|"tablet", width?, height?, dpr?, mobile?, ua?, touch?}` and applies full CDP device emulation — the pane's device bar sends these.
 
 `annotations` on `POST /messages` reference `{pickId, comment, screenshot?}` values; `screenshot:false` keeps the pin's image out of the agent prompt (history thumbnails still work). Picks persist as JSON files under `<data>/browser-picks/` so chips survive a server restart; they are deleted when the browser session closes and swept after a week. The server resolves each pick to its descriptor + marked screenshot (400 `annotation_invalid` for unknown/stale picks), stores them in `message.metadata.annotations` (incl. `marker` — the badge number drawn on the image — and `omitScreenshot`), and adds an annotation context block with selector, nearby text, layout (rect · viewport · scroll) and computed style lines plus the marked image blocks to the agent prompt. The descriptor also carries `viewport{w,h,dpr}`, `computed` style fields, the element's opening `html` tag, `framePath`, scroll offsets and page dimensions.
 

@@ -37,7 +37,7 @@ On first run (when no enabled agent exists) NusaMation scans `PATH` for the know
 
 | Field | Notes |
 |---|---|
-| Name / slug | Display name and stable identifier |
+| Name | Display name; the stable slug identifier is derived from it |
 | Command | Absolute path is most reliable (`which devin`) |
 | Arguments | One per line; e.g. `acp` |
 | Working directory | Absolute path; must exist and be a directory |
@@ -53,11 +53,20 @@ warm session instead of waiting for a cold launch. Without it, previews merge
 into the agent's cached catalog and only spawn the process when the cache is
 missing or disputed.
 
+Agents without idle mode do not stay resident either: a process with no
+traffic for five minutes is stopped automatically. Each room's ACP session id
+is persisted, so the next prompt restarts the process and resumes or reloads
+the session — the cutoff is invisible in the conversation. A running turn (or
+a prompt waiting on a permission answer) counts as activity and is never cut;
+stderr chatter alone does not keep a process alive.
+
 Press **Probe** to start a temporary ACP session and capture capabilities, models, config options and auth methods. Probing does not disturb a live conversation.
+
+The reload icon beside **Add agent** restarts every running agent process — including resident idle-mode agents — so an updated CLI or config takes effect without restarting NusaMation. Stopped agents are left alone, an agent with a turn or session operation in flight is skipped and reported, and each room resumes its persisted ACP session on the next turn.
 
 In a conversation, **Connect agent** prepares the ACP session before the first message. The composer shows the mode separately and groups the model, reasoning, and other advertised settings under the model/options menu. The choices come from the current session; a long list can be searched. On narrow screens the composer keeps the selected model summary and moves all advertised options, including mode, into the **+** menu. The textarea grows within the available viewport.
 
-Permission requests and ACP form/URL input requests appear in a dialog. Login methods advertised by the agent can be started there; terminal-based methods run in a terminal in the dialog, and the agent reconnects after a successful login. A request that the agent never sends over ACP cannot be answered by the client. If a connection or prompt takes a long time, the dialog offers details, wait and stop actions.
+Permission requests and ACP form/URL input requests appear in a dialog. Forms show one question per page: use the numbered tabs, previous/next arrows, or Continue to navigate. Answers stay in place when changing pages; Continue on the last page submits all answers and returns to any required question still unanswered. Skip (or Escape) dismisses the whole request using its existing optional/required behavior. Login methods advertised by the agent can be started there; terminal-based methods run in a terminal in the dialog, and the agent reconnects after a successful login. A request that the agent never sends over ACP cannot be answered by the client. If a connection or prompt takes a long time, the dialog offers details, wait and stop actions.
 
 ### Devin
 
@@ -123,7 +132,7 @@ NusaMation sends per-input application context separately from user text, within
 
 ## Sessions and handoff
 
-- NusaMation prefers `session/load` when advertised, then `session/resume`, then a new session.
+- NusaMation prefers `session/resume` when advertised, then `session/load`, then a new session.
 - When an existing ACP session is missing, a new session is created and the next prompt includes a bounded transcript recap. The web shows a “Session recovered” notice.
 - Switching agents keeps the conversation history and creates a handoff recap for the new agent.
 - `/new` on a channel starts a fresh conversation and moves the chat link.
@@ -213,3 +222,25 @@ The agent's own sandbox controls its direct filesystem and command access; the A
 | MCP tools missing | Check agent capability `mcpCapabilities.http/sse` and whether the server is enabled; wait for the room to become idle. |
 
 Use `NUSAMATION_LOG_LEVEL=debug` for more detail. Agent stderr is deliberately kept out of chat to avoid flooding the UI.
+
+## Files and media in chat
+
+Markdown links to absolute paths, relative paths, `file://` URLs and
+`sandbox:/...` paths open in a file preview. Relative paths use the conversation's
+working directory. These are files on the NusaMation server, including artifacts
+under `/tmp`. A file must still exist when opened. File links with `:line:column`
+or `#L12` open text at that line; Markdown heading links navigate within the
+rendered document.
+
+Markdown images and HTML `img`, `picture`, `video`, `audio`, `source` and `track`
+tags render media. Players have native browser controls. A Markdown image whose
+URL ends in a video/audio extension becomes the corresponding player. Ordinary
+web/email links keep normal browser behavior; code blocks remain literal.
+
+Click an image, file link or attachment to preview it. Previews support images,
+video, audio, PDF, rendered Markdown, static HTML, and text/source files (including
+UTF-16 BOM text). Links and media inside a Markdown preview resolve relative to
+the document. Every preview offers Download, Open original and Retry. Unsupported
+binary files and unavailable media show a fallback instead of corrupt text;
+external previews remain subject to the remote host's CORS and browser codec
+support. Media nodes retain playback position during chat streaming updates.
