@@ -1,4 +1,4 @@
-import { $, $$, agentById, agentName, agentOrb, configChoices, configLabel, currentAgent, esc, icon, isMobile, isShort, parseConfigs } from "./util.js";
+import { $, $$, agentById, agentName, agentOrb, configChoices, configLabel, currentAgent, esc, icon, isMobile, isShort, parseConfigs, parseJSON } from "./util.js";
 import { S, composerFor, composerKey, moveComposer } from "./state.js";
 import { api } from "./api.js";
 import { toast } from "./toast.js";
@@ -10,8 +10,111 @@ import { loadConversation, normalizeMessage, setRoute, upsertConversation, upser
 import { clearDraft, saveDraftNow, scheduleDraftSave } from "./convmeta.js";
 import { renderTopbar } from "./topbar.js";
 import { openSettings } from "./settings.js";
+import { referenceTrigger, reconcileReferences, referencesForSend } from "./references.js";
 
 /* ---------------- composer ---------------- */
+let commandIndex = 0;
+let commandDismissed = false;
+let referenceSearch = { key: "", items: [], loading: false, error: "", seq: 0 };
+let referenceTimer;
+let referenceController;
+let beforeEdit;
+
+export function matchingCommands(text, commands) {
+  const match = /^\/([^\s/]*)$/.exec(text);
+  if (!match || !Array.isArray(commands)) return [];
+  const query = match[1].toLowerCase();
+  return commands.filter((c) => c && typeof c.name === "string" && c.name.toLowerCase().startsWith(query));
+}
+
+function commandChoices() {
+  const ta = $("#prompt");
+  if (!ta || ta.selectionStart !== ta.selectionEnd) return [];
+  const trigger = referenceTrigger(ta.value, ta.selectionStart);
+  if (!trigger) return [];
+  const conv = S.current;
+  const meta = parseJSON(conv?.metadata, {}) || {};
+  const commands = conv && composerKey === conv.id && conv.acpSessionId && meta.commandsSessionId === conv.acpSessionId
+    ? matchingCommands("/" + trigger.query, meta.commands).map((c) => ({ kind: "command", id: c.name, name: c.name, detail: c.description || "", hint: c.input?.hint || "" })) : [];
+  const key = searchKey(trigger.query);
+  return commands.concat(referenceSearch.key === key ? referenceSearch.items : []);
+}
+
+function searchKey(query) {
+  return JSON.stringify([composerKey, S.current?.agentId || S.welcomeAgent, S.current?.projectId || S.selectedProjectId, query]);
+}
+
+function searchReferences() {
+  const ta = $("#prompt");
+  const trigger = ta && document.activeElement === ta && ta.selectionStart === ta.selectionEnd ? referenceTrigger(ta.value, ta.selectionStart) : null;
+  if (!trigger || commandDismissed) { clearTimeout(referenceTimer); referenceController?.abort(); referenceSearch = { key: "", items: [], loading: false, error: "", seq: referenceSearch.seq + 1 }; renderCommands(); return; }
+  const key = searchKey(trigger.query);
+  if (key === referenceSearch.key) { renderCommands(); return; }
+  clearTimeout(referenceTimer);
+  referenceController?.abort();
+  const seq = ++referenceSearch.seq;
+  referenceSearch = { key, items: [], loading: true, error: "", seq };
+  renderCommands();
+  referenceTimer = setTimeout(async () => {
+    const controller = new AbortController();
+    referenceController = controller;
+    const deadline = setTimeout(() => controller.abort(), 20000);
+    const params = new URLSearchParams({ q: trigger.query, agentId: S.current?.agentId || S.welcomeAgent || "" });
+    if (composerKey) params.set("conversationId", composerKey);
+    else if (S.selectedProjectId) params.set("projectId", S.selectedProjectId);
+    try {
+      const result = await api(`/references?${params}`, { timeout: 0, signal: controller.signal });
+      if (referenceSearch.seq !== seq || searchKey(trigger.query) !== key) return;
+      referenceSearch = { key, items: result.items || [], loading: false, error: "", truncated: !!result.truncated, seq };
+    } catch (error) {
+      if (referenceSearch.seq !== seq || searchKey(trigger.query) !== key) return;
+      referenceSearch = { key, items: [], loading: false, error: error.message || "Search failed", seq };
+    } finally {
+      clearTimeout(deadline);
+      if (referenceController === controller) referenceController = null;
+    }
+    renderCommands();
+  }, 180);
+}
+
+function selectCommand(index) {
+  const ta = $("#prompt"), item = commandChoices()[index];
+  const trigger = ta && referenceTrigger(ta.value, ta.selectionStart);
+  if (!ta || !item || !trigger) return;
+  const owner = composerFor(composerKey), old = ta.value;
+  const label = trigger.prefix + item.name;
+  const space = !old.slice(trigger.end).startsWith(" ") ? " " : "";
+  const next = old.slice(0, trigger.start) + label + space + old.slice(trigger.end);
+  owner.references = reconcileReferences(old, next, owner.references, trigger.start, trigger.end);
+  owner.references.push({ kind: item.kind, id: item.id, label, start: trigger.start, end: trigger.start + label.length });
+  owner.references.sort((a, b) => a.start - b.start);
+  ta.value = next;
+  owner.draft = next;
+  commandDismissed = true;
+  searchReferences();
+  autoGrow(); scheduleDraftSave(); ta.focus();
+  ta.setSelectionRange(trigger.start + label.length + space.length, trigger.start + label.length + space.length);
+}
+
+export function renderCommands() {
+  const menu = $("#command-suggestions"), ta = $("#prompt");
+  if (!menu || !ta) return;
+  const trigger = ta.selectionStart === ta.selectionEnd ? referenceTrigger(ta.value, ta.selectionStart) : null;
+  const choices = commandDismissed || document.activeElement !== ta ? [] : commandChoices();
+  const search = trigger && referenceSearch.key === searchKey(trigger.query) ? referenceSearch : null;
+  const message = !commandDismissed && document.activeElement === ta && trigger && search ? (search.loading ? "Searching…" : search.error || (search.truncated ? "Search results are limited." : !choices.length ? "No matches" : "")) : "";
+  commandIndex = Math.min(commandIndex, Math.max(0, choices.length - 1));
+  menu.hidden = !choices.length && !message;
+  ta.setAttribute("aria-expanded", String(!menu.hidden));
+  const symbols = { file: "📄", folder: "📁", skill: "✦", mcp: "🔌", command: "⌘" };
+  menu.innerHTML = choices.map((c, i) => `<button type="button" role="option" aria-selected="${i === commandIndex}" class="command-suggestion ${i === commandIndex ? "selected" : ""}" data-index="${i}"><span aria-hidden="true">${symbols[c.kind] || "•"}</span><b>${esc(trigger.prefix + c.name)}</b><span>${esc(c.kind)}${c.hint ? " · " + esc(c.hint) : ""}</span>${c.detail ? `<small>${esc(c.detail)}</small>` : ""}</button>`).join("") + (message ? `<div class="popover-empty">${esc(message)}</div>` : "");
+  menu.querySelectorAll("button").forEach((button) => {
+    button.addEventListener("pointerdown", (e) => e.preventDefault());
+    button.addEventListener("click", () => selectCommand(Number(button.dataset.index)));
+  });
+  menu.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+}
+
 export function renderComposer() {
   const wrap = $("#composer-wrap");
   if (!wrap) return;
@@ -33,10 +136,11 @@ export function renderComposer() {
   const mobileSummary = mobileConfigSummary();
   const scope = conv ? null : (S.projects || []).find((p) => p.id === S.selectedProjectId);
   const markup = `<div class="composer-inner">
+    <div id="command-suggestions" class="command-suggestions" role="listbox" aria-label="Reference suggestions" hidden></div>
     <div class="composer" id="composer">
       <div class="composer-attachments" id="pending-attachments"></div>
       <div class="composer-scope" id="composer-scope">${scope ? `<span class="composer-scope-label">${icon("folder", "sm")}<span>New conversation in <b>${esc(scope.name || "project")}</b></span></span><button type="button" class="icon-btn sm" data-action="project-clear-scope" aria-label="Stop adding new conversations to ${esc(scope.name || "project")}" title="Stop adding new conversations to ${esc(scope.name || "project")}">${icon("x", "sm")}</button>` : ""}</div>
-      <textarea id="prompt" rows="1" placeholder="Message ${esc(agentName(agent))}…" aria-label="Message">${esc(S.draft)}</textarea>
+      <textarea id="prompt" rows="1" placeholder="Message ${esc(agentName(agent))}…" aria-label="Message" aria-controls="command-suggestions" aria-expanded="false">${esc(S.draft)}</textarea>
       <div class="composer-bar">
         <button class="icon-btn sm" data-action="attach" title="Attach files">${icon("paperclip", "sm")}</button>
         <button class="icon-btn sm" data-action="secret-ref-menu" title="Insert secret reference" aria-label="Insert secret reference">${icon("shield", "sm")}</button>
@@ -73,9 +177,19 @@ export function renderComposer() {
   const ta = $("#prompt");
   ta.dataset.composerKey = composerKey;
   if (!oldTa || !existing) {
-    ta.addEventListener("input", () => { S.draft = ta.value; autoGrow(); scheduleDraftSave(); });
-    ta.addEventListener("blur", () => { saveDraftNow(); });
+    ta.addEventListener("beforeinput", (e) => { beforeEdit = { value: ta.value, start: ta.selectionStart, end: ta.selectionEnd, type: e.inputType }; });
+    ta.addEventListener("input", () => { const owner = composerFor(composerKey); const edit = beforeEdit || { value: owner.draft }; owner.references = reconcileReferences(edit.value, ta.value, owner.references, edit.start, edit.end, edit.type); beforeEdit = null; S.draft = ta.value; commandDismissed = false; commandIndex = 0; autoGrow(); scheduleDraftSave(); searchReferences(); });
+    ta.addEventListener("focus", searchReferences);
+    ta.addEventListener("click", () => { commandDismissed = false; searchReferences(); });
+    ta.addEventListener("keyup", (e) => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) { commandDismissed = false; searchReferences(); } });
+    ta.addEventListener("blur", () => { saveDraftNow(); searchReferences(); });
     ta.addEventListener("keydown", (e) => {
+      const choices = commandDismissed ? [] : commandChoices();
+      if (choices.length && !e.isComposing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); commandIndex = (commandIndex + (e.key === "ArrowDown" ? 1 : -1) + choices.length) % choices.length; renderCommands(); return; }
+        if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); selectCommand(commandIndex); return; }
+        if (e.key === "Escape") { e.preventDefault(); commandDismissed = true; renderCommands(); return; }
+      }
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !isMobile() && !e.isComposing) {
         e.preventDefault();
         sendMessage();
@@ -101,6 +215,7 @@ export function renderComposer() {
   };
   renderPendingAttachments();
   updateComposerState();
+  searchReferences();
   if (menuOpen) reopenSendMenu(menuFocus);
   else if (popover && oldAnchor) {
     const replacement = $$('[data-action]', wrap).find((el) => el.dataset.action === anchorAction && el.dataset.id === anchorId);
@@ -311,6 +426,8 @@ export async function sendMessage() {
   let conversation = S.current;
   const delivery = isBusyTurn() ? owner.sendDelivery : "queue";
   const attachments = owner.attachments.slice();
+  const references = referencesForSend(ta.value, owner.references);
+  const sentReferences = JSON.stringify(owner.references);
   owner.sending = true;
   updateComposerState();
   try {
@@ -349,6 +466,7 @@ export async function sendMessage() {
     const annotations = attachments.filter((a) => a.type === "annotation");
     const body = {
       text,
+      references,
       attachments: files.map((a) => ({ uploadId: (a.upload || a).id })),
       replyToChannel: !!(owner.replyToChannel && links.length),
       replyChannel: links.length ? links[0].channel : "",
@@ -357,7 +475,7 @@ export async function sendMessage() {
     if (annotations.length) body.annotations = annotations.map((a) => ({ pickId: a.pickId, comment: a.comment || "", screenshot: a.shot !== false }));
     const d = await api(`/conversations/${encodeURIComponent(conversation.id)}/messages`, { method: "POST", body });
     owner.sending = false;
-    if (owner.draft.trim() === text) { owner.draft = ""; if (composerFor(composerKey) === owner) $("#prompt").value = ""; }
+    if (owner.draft.trim() === text && JSON.stringify(owner.references) === sentReferences) { owner.draft = ""; owner.references = []; if (composerFor(composerKey) === owner) $("#prompt").value = ""; }
     owner.attachments = owner.attachments.filter((a) => !attachments.includes(a));
     // Clear only the fields that actually went out; leftover text/attachments
     // (edited mid-send or added while sending) stay persisted as the draft.
@@ -477,6 +595,7 @@ export async function prepareComposer() {
   }
   const id = S.current.id;
   const agentId = S.current.agentId;
+  const initialMetadata = S.current.metadata;
   if (S.preparing === id) return;
   S.preparing = id;
   const controller = new AbortController();
@@ -486,6 +605,12 @@ export async function prepareComposer() {
   try {
     const d = await api(`/conversations/${encodeURIComponent(id)}/prepare`, { method: "POST", body: {}, signal: controller.signal });
     if (S.current?.id !== id || S.current?.agentId !== agentId) return;
+    // A command update may arrive after the server formed this response.
+    const liveMeta = parseJSON(S.current.metadata, {}) || {};
+    const responseMeta = parseJSON(d.conversation.metadata, {}) || {};
+    if (S.current.metadata !== initialMetadata && liveMeta.commandsSessionId === d.conversation.acpSessionId && liveMeta.commandsSessionId) {
+      d.conversation.metadata = { ...responseMeta, commands: liveMeta.commands, commandsSessionId: liveMeta.commandsSessionId };
+    }
     S.current = d.conversation;
     S.configs = d.configs || [];
     upsertConversation(d.conversation, false);

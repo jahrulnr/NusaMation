@@ -77,6 +77,16 @@ type MCPServer struct {
 	UpdatedAt  int64      `json:"updatedAt"`
 }
 
+// PromptReference identifies an explicitly selected composer item. Start and
+// End are UTF-8 byte offsets in the saved user message.
+type PromptReference struct {
+	Kind  string `json:"kind"`
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+}
+
 func (m MCPServer) Public() MCPServer {
 	pub := func(in SecretList) SecretList {
 		out := make(SecretList, 0, len(in))

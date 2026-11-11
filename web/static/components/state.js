@@ -158,7 +158,7 @@ export function setUiFontSize(v) {
 }
 
 export function composerFor(key) {
-  if (!composers.has(key)) composers.set(key, { draft: "", attachments: [], sendDelivery: defaultSendDelivery(), replyToChannel: false, sending: false });
+  if (!composers.has(key)) composers.set(key, { draft: "", attachments: [], references: [], sendDelivery: defaultSendDelivery(), replyToChannel: false, sending: false });
   return composers.get(key);
 }
 

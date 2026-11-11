@@ -26,6 +26,13 @@ text against the conversation agent's saved env (fail-closed preflight:
 that endpoint's JSON responses only — exact match, no encoded/transformed or
 screenshot masking.
 
+The browser stream sends `login_offer` when a submitted login can be saved.
+The authenticated pane can retrieve that offer's username and password for
+editing; `POST /api/browser/sessions/{id}/login-offer` with `{id, save}` and
+optional edited values accepts or dismisses it. Focusing a login field offers
+saved accounts instead of filling automatically. `browser_vault_fill` can
+select a username in the current profile and origin without returning the password.
+
 ## Endpoint map
 
 ```
@@ -42,6 +49,7 @@ PATCH|DELETE /api/projects/{id}
 POST /api/projects/{id}/restore
 GET  /api/fs/list?path=                 # child directories; empty path is the home directory
 GET|POST /api/conversations/{id}/messages
+GET  /api/references?conversationId=...&q=... # picker candidates; draft uses agentId and optional projectId
 POST /api/conversations/{id}/cancel|retry|config|agent|routing|prepare
 POST /api/conversation-control             # loopback MCP bridge, bearer token
 GET  /api/conversation-control/activity    # in-memory control audit trail
@@ -68,6 +76,8 @@ GET  /api/health                          # unauthenticated
 ```
 
 Conversation detail includes `historyHasMore` for the latest message window. Message pagination returns `hasMore` when another message exists in the requested direction.
+
+Reference file and folder search follows Git ignore rules in worktrees when `git` is available, retaining tracked files. Otherwise it uses bounded filesystem search.
 
 ## Automation payloads
 

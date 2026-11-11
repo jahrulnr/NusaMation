@@ -68,6 +68,12 @@ The reload icon beside **Add agent** restarts every running agent process — in
 
 In a conversation, **Connect agent** prepares the ACP session before the first message. The composer shows the mode separately and groups the model, reasoning, and other advertised settings under the model/options menu. The choices come from the current session; a long list can be searched. On narrow screens the composer keeps the selected model summary and moves all advertised options, including mode, into the **+** menu. The textarea grows within the available viewport.
 
+Type `/`, `@`, or `#` in the composer to search files, folders, skills, MCP servers, and commands advertised by the current ACP session. Use the arrow keys then Tab, or click an item, to select it; Escape dismisses the menu. Typing without selecting sends ordinary text. Selections retain their identity across draft restoration and queue editing, and editing inside a selection removes that identity. The current project roots are searched, along with skills under `.agents/skills`, `.codex/skills`, `.claude/skills` and `.opencode/skills` in those roots and the home directory. Search is bounded and may not visit every file in a large workspace. MCP suggestions name registered enabled servers, not a guaranteed inventory of agent tools. New-conversation drafts have no session command list yet. Agents can change the command list during a session; manually typed commands, including commands not advertised, still reach the agent as text.
+
+Selected files are passed as ACP resource links; folders are identified by path. Selected skills instruct the agent to read their `SKILL.md`; selected MCP servers request their use. Adapter access and tool availability determine whether these can actually be used. A selected agent command is converted to its `/command` form for ACP, while the displayed message keeps the original text.
+
+In a Git worktree, file and folder suggestions follow Git's ignore rules when the `git` executable is available. Ignored directories are skipped, while tracked files remain searchable. Outside a worktree, or without Git, the picker uses its regular bounded filesystem search. Skill discovery and already selected references are unaffected by ignore rules.
+
 Permission requests and ACP form/URL input requests appear in a dialog. Forms show one question per page: use the numbered tabs, previous/next arrows, or Continue to navigate. Answers stay in place when changing pages; Continue on the last page submits all answers and returns to any required question still unanswered. Skip (or Escape) dismisses the whole request using its existing optional/required behavior. Login methods advertised by the agent can be started there; terminal-based methods run in a terminal in the dialog, and the agent reconnects after a successful login. A request that the agent never sends over ACP cannot be answered by the client. If a connection or prompt takes a long time, the dialog offers details, wait and stop actions.
 
 ### Devin
@@ -130,11 +136,11 @@ Changing the mode during a turn is supported. The approval card shows a mode sel
 
 ## Prompt instructions
 
-NusaMation sends per-input application context separately from user text, within the ACP user turn. Channel formatting follows the reply destination; automation invocations carry a persisted run identifier. The context applies to the current input, including steering, rather than binding a shared session to one channel. See [ACP prompt context](ACP_PROMPTS.md) for the protocol research, implementation, and limitations.
+NusaMation sends application context separately from ordinary user text, within the ACP user turn. Channel formatting follows the reply destination; automation invocations carry a persisted run identifier. Slash-prefixed inputs are forwarded without the extra context block to allow agent-side command recognition. The context applies to the current input, including steering, rather than binding a shared session to one channel. See [ACP prompt context](ACP_PROMPTS.md) for the protocol research, implementation, and limitations.
 
 ## Sessions and handoff
 
-- NusaMation prefers `session/resume` when advertised, then `session/load`, then a new session.
+- NusaMation prefers `session/resume` when advertised, then `session/load`, then a new session. Agents advertising `sessionCapabilities.systemPrompt` receive NusaMation's stable session instructions using append mode on each lifecycle request; other agents receive the same text as user-role bootstrap on the first ordinary input after session creation or attachment. Slash commands defer bootstrap and recovery recap to the next ordinary input.
 - When an existing ACP session is missing, a new session is created and the next prompt includes a bounded transcript recap. The web shows a “Session recovered” notice.
 - Switching agents keeps the conversation history and creates a handoff recap for the new agent.
 - `/new` on a channel starts a fresh conversation and moves the chat link.
@@ -180,6 +186,7 @@ On those same session calls NusaMation also injects a stdio server named `browse
 - `browser_wait_for` — `time` seconds, `text` to appear, or `textGone` to disappear.
 - `browser_evaluate` — run JavaScript in the page (`expression`, or `function` invoked with no arguments); promises are awaited and the JSON result returned. BigInt, `NaN`, and `Infinity` come back as strings, and `-0` stays `-0`.
 - `browser_console_messages` — console output and page errors captured since load.
+- `browser_vault_fill` — fill a login with the most recent saved credential for the current profile and exact page origin, or pass `username` to choose an account. Does not submit, return the password, or replace a different value already being typed. Passwords are masked in browser-use JSON by exact match only, not in transformed results or screenshots. Browser agents have their existing local execution access.
 - `browser_profile` — switch the pane to a different persistent browser profile. Each profile keeps its own cookies, storage, history, and saved logins in its own Chromium data directory under the NusaMation data dir; the current page reloads in the new profile. Omit `profile` or pass `default` to return to the default profile.
 - `browser_resize`, `browser_emulate` — viewport size, or a device profile (preset `desktop`, `mobile`, `tablet`, or explicit `width/height/dpr/mobile/ua/touch`) via CDP overrides; mobile profiles turn clicks into taps.
 - `browser_lock` — take (`mode: true`) or release (`mode: false`) the pane's input lease. While locked, every open pane keeps watching the live view but human input is muted, so a stray click cannot disturb the run. The human can always reclaim control with the pane's **Take over** button, which ends the lock; release hands input back to the current viewer. Lock during a measurement or scripted test, then release — a forgotten lock never permanently excludes the operator.

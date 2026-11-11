@@ -13,7 +13,7 @@ import (
 // handled is false when the caller should queue a normal turn instead, and
 // in that case nothing has been written yet. A steer that the agent rejects
 // after the message is stored is queued from here and reported as handled.
-func (s *Service) trySteer(ctx context.Context, conv store.Conversation, text, channel, originChannel, originRef string) (store.Message, store.Turn, bool, error) {
+func (s *Service) trySteer(ctx context.Context, conv store.Conversation, text, channel, originChannel, originRef string, references []store.PromptReference) (store.Message, store.Turn, bool, error) {
 	a := s.activeFor(conv.ID)
 	if a == nil || !a.injectable() {
 		return store.Message{}, store.Turn{}, false, nil
@@ -39,18 +39,19 @@ func (s *Service) trySteer(ctx context.Context, conv store.Conversation, text, c
 		Status:         "complete",
 		Channel:        channel,
 		ExternalID:     originRef,
-		Metadata:       mustJSON(map[string]any{"delivery": deliverySteer}),
+		Metadata:       mustJSON(map[string]any{"delivery": deliverySteer, "references": references}),
 	}
 	if err := s.store.AppendMessage(ctx, &msg); err != nil {
 		return store.Message{}, store.Turn{}, false, err
 	}
 	s.emit("message.created", conv.ID, s.hydrateMessage(ctx, msg))
 
-	blocks := []acp.ContentBlock{{Type: "text", Text: text}}
+	promptText, referenceBlocks, _ := promptReferences(text, references)
+	blocks := append([]acp.ContentBlock{{Type: "text", Text: promptText}}, referenceBlocks...)
 	inputContext := s.inputContext(msg, originChannel, originRef, s.deliveryChannel(a))
-	inputContext.Instructions = append(inputContext.Instructions, "This input steers the running turn. Its reply destination remains the running turn's deliveryChannel.")
+	inputContext.steering = true
 	if rules := s.responseRules(a); rules != "" {
-		inputContext.Instructions = append(inputContext.Instructions, rules)
+		inputContext.rules = rules
 	}
 	blocks = appendPromptContext(blocks, inputContext)
 	if steering {
@@ -72,7 +73,7 @@ func (s *Service) trySteer(ctx context.Context, conv store.Conversation, text, c
 		s.log.Warn("steering was not accepted; queueing the message", "conversation", conv.ID, "error", err, "outcome", res.Outcome)
 		// A rejected steer becomes cancel-and-resend on every channel: wait
 		// for the running turn's tools, cancel it, then send this input.
-		msg.Metadata = mustJSON(map[string]any{"delivery": deliveryAfterTools})
+		msg.Metadata = mustJSON(map[string]any{"delivery": deliveryAfterTools, "references": references})
 		if uerr := s.store.UpdateMessage(ctx, msg.ID, nil, nil, nil, msg.Metadata); uerr != nil {
 			s.log.Warn("failed to record after_tools fallback", "conversation", conv.ID, "error", uerr)
 		}

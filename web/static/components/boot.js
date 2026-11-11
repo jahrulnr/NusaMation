@@ -1,5 +1,5 @@
 import { $, esc, icon } from "./util.js";
-import { S, applyFont, applyFontSize, setSelectedProject } from "./state.js";
+import { S, applyFont, applyFontSize, composerFor, composerKey, setSelectedProject } from "./state.js";
 import { api } from "./api.js";
 import { selectInitialConversation } from "./conversations.js";
 import { renderShell } from "./shell.js";
@@ -40,6 +40,7 @@ export async function startApp() {
   S.active = null;
   S.attachments = [];
   S.draft = "";
+  composerFor(composerKey).references = [];
   S.approvals = [];
   S.approvalsById = new Map();
   const app = $("#app");

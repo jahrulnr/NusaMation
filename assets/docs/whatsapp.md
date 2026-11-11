@@ -113,8 +113,8 @@ It returns `{"messageId":"…"}`. It uses the configured data directory and
 The same JSON is accepted by authenticated `POST /api/channels/whatsapp/send`
 (with the usual session cookie and CSRF header).
 
-For a WhatsApp-origin turn, the prompt includes `target`, `messageId`,
-`senderId`, and `quotedText` for the incoming message. Use its `target` for
+For a WhatsApp-origin turn, the prompt context includes `WhatsApp target`,
+`WhatsApp messageId`, `WhatsApp senderId`, and `WhatsApp quotedText` for the incoming message. Use its `target` for
 the current chat and its message and sender IDs for a reply or reaction. For
 a different chat or message, use its actual WhatsApp JIDs and message ID.
 Do not substitute the NusaMation conversation/message ID for a WhatsApp ID.

@@ -186,6 +186,7 @@ type SubmitInput struct {
 	ConversationID string                  `json:"conversationId"`
 	Text           string                  `json:"text"`
 	Attachments    []store.AttachmentInput `json:"attachments,omitempty"`
+	References     []store.PromptReference `json:"references,omitempty"`
 	Channel        string                  `json:"channel,omitempty"`
 	OriginRef      string                  `json:"originRef,omitempty"`
 	ReplyToChannel bool                    `json:"replyToChannel,omitempty"`
@@ -229,6 +230,9 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 		return store.Message{}, store.Turn{}, ErrOrchestratedSteer
 	}
 	text := strings.TrimSpace(in.Text)
+	if err := validatePromptReferences(text, in.References); err != nil {
+		return store.Message{}, store.Turn{}, err
+	}
 	if text == "" && len(in.Attachments) == 0 && len(in.Annotations) == 0 {
 		return store.Message{}, store.Turn{}, ErrInvalidPrompt
 	}
@@ -287,7 +291,7 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 	// or annotations, so any message with them must take the
 	// wait-tools→cancel→send path below instead of silently dropping them.
 	if in.Delivery == deliverySteer && len(uploads) == 0 && len(in.Annotations) == 0 {
-		if msg, turn, handled, err := s.trySteer(ctx, conv, text, channel, originChannel, originRef); err != nil || handled {
+		if msg, turn, handled, err := s.trySteer(ctx, conv, text, channel, originChannel, originRef, in.References); err != nil || handled {
 			return msg, turn, err
 		}
 	}
@@ -303,6 +307,9 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 		target = s.activeFor(conv.ID)
 	}
 	meta := map[string]any{}
+	if len(in.References) > 0 {
+		meta["references"] = in.References
+	}
 	if in.Orchestrator != nil {
 		meta["orchestration"] = in.Orchestrator
 	}

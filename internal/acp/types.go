@@ -31,6 +31,7 @@ type SessionCapabilities struct {
 	Resume                json.RawMessage `json:"resume,omitempty"`
 	Close                 json.RawMessage `json:"close,omitempty"`
 	AdditionalDirectories json.RawMessage `json:"additionalDirectories,omitempty"`
+	SystemPrompt          json.RawMessage `json:"systemPrompt,omitempty"`
 }
 
 type AuthCapabilities struct {
@@ -63,9 +64,18 @@ type InitializeResult struct {
 	Meta              json.RawMessage   `json:"_meta,omitempty"`
 }
 
+// SupportsSystemPrompt requires the capability object, including an empty object.
+func (r InitializeResult) SupportsSystemPrompt() bool {
+	var capability map[string]json.RawMessage
+	raw := r.AgentCapabilities.SessionCapabilities.SystemPrompt
+	return len(raw) > 0 && json.Unmarshal(raw, &capability) == nil && capability != nil
+}
+
 func (r InitializeResult) SupportsLoad() bool { return r.AgentCapabilities.LoadSession }
 func (r InitializeResult) SupportsResume() bool {
-	return hasRaw(r.AgentCapabilities.SessionCapabilities.Resume)
+	raw := r.AgentCapabilities.SessionCapabilities.Resume
+	var capability map[string]json.RawMessage
+	return (json.Unmarshal(raw, &capability) == nil && capability != nil) || hasRaw(raw)
 }
 func (r InitializeResult) SupportsClose() bool {
 	v := r.AgentCapabilities.SessionCapabilities.Close
@@ -178,10 +188,16 @@ func (c MCPServerConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
+type SystemPrompt struct {
+	Mode    string         `json:"mode"`
+	Content []ContentBlock `json:"content"`
+}
+
 type NewSessionRequest struct {
 	Cwd                   string            `json:"cwd"`
 	AdditionalDirectories []string          `json:"additionalDirectories,omitempty"`
 	MCPServers            []MCPServerConfig `json:"mcpServers"`
+	SystemPrompt          *SystemPrompt     `json:"systemPrompt,omitempty"`
 }
 
 type LoadSessionRequest struct {
@@ -189,6 +205,7 @@ type LoadSessionRequest struct {
 	Cwd                   string            `json:"cwd"`
 	AdditionalDirectories []string          `json:"additionalDirectories,omitempty"`
 	MCPServers            []MCPServerConfig `json:"mcpServers"`
+	SystemPrompt          *SystemPrompt     `json:"systemPrompt,omitempty"`
 }
 
 type ResumeSessionRequest struct {
@@ -196,6 +213,7 @@ type ResumeSessionRequest struct {
 	Cwd                   string            `json:"cwd"`
 	AdditionalDirectories []string          `json:"additionalDirectories,omitempty"`
 	MCPServers            []MCPServerConfig `json:"mcpServers"`
+	SystemPrompt          *SystemPrompt     `json:"systemPrompt,omitempty"`
 }
 
 type SessionMode struct {
@@ -410,6 +428,11 @@ const (
 func IsAuthRequired(err error) bool {
 	re, ok := err.(*RPCError)
 	return ok && re.Code == CodeAuthRequired
+}
+
+func IsInvalidParams(err error) bool {
+	re, ok := err.(*RPCError)
+	return ok && re.Code == CodeInvalidParams
 }
 
 func IsUnknownSession(err error) bool {

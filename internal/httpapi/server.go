@@ -125,6 +125,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/automations/{id}", s.protected(s.handleAutomation))
 	mux.HandleFunc("PATCH /api/automations/{id}/enabled", s.protected(s.handleAutomationEnabled))
 	mux.HandleFunc("GET /api/bootstrap", s.protected(s.handleBootstrap))
+	mux.HandleFunc("GET /api/references", s.protected(s.handleReferenceSearch))
 	mux.HandleFunc("GET /api/events", s.protected(s.handleEvents))
 
 	mux.HandleFunc("GET /api/conversations", s.protected(s.handleListConversations))
@@ -204,7 +205,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/browser/sessions/{id}/profile", s.protected(s.handleBrowserProfile))
 	mux.HandleFunc("GET /api/browser/sessions/{id}/console", s.protected(s.handleBrowserConsole))
 	mux.HandleFunc("POST /api/browser/sessions/{id}/eval", s.protected(s.handleBrowserEval))
+	mux.HandleFunc("POST /api/browser/sessions/{id}/login-offer", s.protected(s.handleBrowserLoginOffer))
+	mux.HandleFunc("GET /api/browser/sessions/{id}/login-offer", s.protected(s.handleBrowserLoginOfferDetails))
 	mux.HandleFunc("POST /api/browser/sessions/{id}/autofill", s.protected(s.handleBrowserAutofill))
+	mux.HandleFunc("GET /api/browser/sessions/{id}/autofill", s.protected(s.handleBrowserAutofillChoices))
 	mux.HandleFunc("GET /api/browser/history", s.protected(s.handleBrowserHistoryQuery))
 	mux.HandleFunc("GET /api/browser/profiles", s.protected(s.handleBrowserProfiles))
 	mux.HandleFunc("GET /api/browser/credentials", s.protected(s.handleBrowserCredentials))

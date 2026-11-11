@@ -43,6 +43,18 @@ The legacy `agent add/set --model` flag remains available for an individual
 agent. Prefer **Defaults** for capability-checked, ordered model and other
 session options. The HTTP preview and save endpoints are listed in [api.md](api.md).
 
+The browser pane offers to save submitted logins to its profile vault; choose Edit to adjust the username and password before saving. Saved logins appear as a choice when a login field is focused, or from the key button; the page is filled only after an account is chosen. An agent can call `browser_vault_fill`, optionally with an exact `username`, for the current profile and origin without returning the password. Exact password text is masked in browser-use JSON; transformed results and screenshots are not masked. Local execution access is unchanged.
+
+## Session instructions
+
+Type `/`, `@`, or `#` in the composer to search files, folders, skills, MCP servers, and commands advertised by the active session. Use arrow keys and Tab or click to select; Escape closes the menu. Without selection, the typed text is sent normally. Selected items keep their identities in drafts and queued messages; editing inside one removes its selection. Workspace and home skill directories are searched; the bounded search may not visit every file in a large workspace. MCP results name registered enabled servers; agent tool availability can vary. Drafts for new conversations have no session command list yet.
+
+Selected files become ACP resource links, folders are identified by path, and skills and MCP servers are identified in instructions to the agent. The agent's access and capabilities determine whether it can use them. Selected commands are sent in the agent's `/command` form while the chat shows the original text.
+
+In a Git worktree, file and folder search follows Git ignore rules when `git` is available: ignored directories are skipped and tracked files remain searchable. Outside a worktree or without Git, regular bounded filesystem search is used. Skill discovery and existing selections are unaffected.
+
+Agents that advertise ACP `sessionCapabilities.systemPrompt` receive stable NusaMation instructions in append mode on session creation, load and resume. Other agents receive the same guidance as user-role content with the first ordinary input after a session is created or attached. Ordinary inputs carry channel and delivery context; slash-prefixed inputs are forwarded without it so the agent can recognize commands. Fallback retention after compaction depends on the adapter.
+
 ## Semantics
 
 - `--env KEY=val` merges (repeatable); `--env-rm KEY` deletes. Secrets stay

@@ -38,7 +38,7 @@ func (c *Channel) Begin(context.Context, channels.Target, string) (channels.Deli
 // ResponseRules tells the agent the web UI renders full Markdown and how to
 // attach files (absolute paths inside allowed roots are collected as media).
 func (c *Channel) ResponseRules() string {
-	return ""
+	return "Full Markdown, including code, tables, math, footnotes and Mermaid diagrams."
 }
 
 func (c *Channel) Notify(context.Context, channels.Target, string) error { return nil }

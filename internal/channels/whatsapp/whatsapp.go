@@ -106,14 +106,9 @@ func (c *Channel) Label() string { return "WhatsApp" }
 // WhatsApp markup, short messages, with files referenced by absolute path so
 // they are delivered as attachments.
 func (c *Channel) ResponseRules() string {
-	return "Your reply is delivered to WhatsApp. Format it with WhatsApp markup " +
-		"only: *bold*, _italic_, ~strikethrough~, `code`, ``` code blocks ```, " +
-		"> quotes, and simple lists — headings, tables, footnotes and HTML do " +
-		"not render. Write URLs out in full; a [text](url) link shows the " +
-		"markdown literally. Keep the reply short — text over 30,000 " +
-		"characters is truncated. To send the user a file, link its absolute " +
-		"path inside your working directory, e.g. [name](/absolute/path); the " +
-		"file arrives as an attachment and the link is stripped from the text."
+	return "WhatsApp markup: *bold*, _italic_, ~strikethrough~, `code`, code blocks, quotes and simple lists. " +
+		"Avoid headings, tables, footnotes, HTML and Markdown links; write URLs in full. " +
+		"Text over 30,000 characters is truncated. Send an attachment with [name](/absolute/path) in the working directory; the link is removed from the message."
 }
 
 func (c *Channel) Start(ctx context.Context) error {

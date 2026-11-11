@@ -86,12 +86,14 @@ export function toggleBrowserPane() {
 // session, if any, stays alive and re-attaches on next open.
 export function resetBrowserPane() {
   disconnectStream();
+  hideSavedLogins();
   stopResizeWatch();
   closePopover();
   if (B.frameUrl) { try { URL.revokeObjectURL(B.frameUrl); } catch {} B.frameUrl = ""; }
   if (B.prevFrameUrl) { try { URL.revokeObjectURL(B.prevFrameUrl); } catch {} B.prevFrameUrl = ""; }
   B.open = false;
   B.session = null;
+  const loginOffer = $("#browser-login-offer"); if (loginOffer) { loginOffer.hidden = true; loginOffer.dataset.id = ""; }
   B.meta = null;
   B.nav = { url: "", title: "", canGoBack: false, canGoForward: false };
   B.status = "idle";
@@ -171,6 +173,7 @@ export function closeBrowserPane(opts = {}) {
   B.hoverSeq++;
   $("#browser-hover")?.remove();
   disconnectStream();
+  hideSavedLogins();
   stopResizeWatch();
   closePopover();
   B.open = false;
@@ -180,6 +183,7 @@ export function closeBrowserPane(opts = {}) {
   B.picking = false;
   B.pendingPointer = null;
   B.session = null;
+  const loginOffer = $("#browser-login-offer"); if (loginOffer) { loginOffer.hidden = true; loginOffer.dataset.id = ""; }
   B.nav = { url: "", title: "", canGoBack: false, canGoForward: false };
   B.meta = null;
   B.gotFrame = false;
@@ -239,12 +243,15 @@ function buildPane(pane) {
       <button class="icon-btn sm" data-action="browser-forward" title="Forward" aria-label="Forward">${icon("chevron-right", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-reload" title="Reload" aria-label="Reload">${icon("refresh", "sm")}</button>
       <div class="browser-addr"><input class="input" id="browser-url" placeholder="Enter a URL" spellcheck="false" autocomplete="off" aria-label="Browser address"><div class="browser-suggest" id="browser-suggest" hidden></div></div>
+      <button class="icon-btn sm" id="browser-vault-button" title="Saved logins" aria-label="Saved logins" aria-expanded="false">${icon("key", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-annotate" title="Annotate an element" aria-label="Annotate an element" aria-pressed="false">${icon("pin", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-device" title="Device emulation" aria-label="Device emulation" aria-pressed="true">${icon("smartphone", "sm")}</button>
       <span class="browser-profile-wrap" title="Persistent browser profile"><button class="device-chip browser-profile" id="browser-profile" data-action="browser-profile-picker" aria-label="Browser profile">default</button></span>
       <button class="icon-btn sm" data-action="browser-devtools" title="Developer tools" aria-label="Developer tools" aria-pressed="false">${icon("terminal", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-close" title="Close pane" aria-label="Close pane">${icon("x", "sm")}</button>
     </div>
+    <div class="browser-login-offer" id="browser-login-offer" hidden></div>
+    <div class="browser-vault-pop" id="browser-vault-pop" hidden></div>
     <div class="browser-device-bar" id="browser-device-bar">
       <button class="device-chip" data-action="browser-device-mode" data-device="relative" title="The remote viewport follows this pane — no fixed size, no letterboxing">Relative</button>
       <button class="device-chip" data-action="browser-device-mode" data-device="desktop" title="Fixed 1280×800 desktop profile">Desktop</button>
@@ -268,6 +275,62 @@ function buildPane(pane) {
 }
 
 function bindPane(pane) {
+  const offer = $("#browser-login-offer", pane);
+  offer.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-offer-action]");
+    if (!button || !B.session || !offer.dataset.id) return;
+    const session = B.session.id, id = offer.dataset.id;
+    const action = button.dataset.offerAction;
+    if (action === "toggle-password") {
+      const input = $("[data-offer-password]", offer);
+      if (input) { input.type = input.type === "password" ? "text" : "password"; button.textContent = input.type === "password" ? "Show" : "Hide"; }
+      return;
+    }
+    if (action === "edit") {
+      button.disabled = true;
+      try {
+        const data = await api(`/browser/sessions/${encodeURIComponent(session)}/login-offer?id=${encodeURIComponent(id)}`);
+        if (B.session?.id !== session || offer.dataset.id !== id) return;
+        const fields = $(".browser-login-fields", offer);
+        fields.hidden = false;
+        $("[data-offer-username]", fields).value = data.username || "";
+        $("[data-offer-password]", fields).value = data.password || "";
+        button.hidden = true;
+        $("[data-offer-username]", fields).focus();
+      } catch (e) { if (B.session?.id === session && offer.dataset.id === id) { button.disabled = false; toast("Could not edit login", e.message, "error"); } }
+      return;
+    }
+    const save = action === "save";
+    const fields = $(".browser-login-fields", offer);
+    const body = { id, save };
+    if (save && fields && !fields.hidden) {
+      body.username = $("[data-offer-username]", fields).value;
+      body.password = $("[data-offer-password]", fields).value;
+      if (!body.password) { $("[data-offer-password]", fields).focus(); toast("Password required", "Enter a password to save this login.", "error"); return; }
+    }
+    for (const el of offer.querySelectorAll("button")) el.disabled = true;
+    try { await api(`/browser/sessions/${encodeURIComponent(session)}/login-offer`, { method: "POST", body }); }
+    catch (e) { if (B.session?.id === session && offer.dataset.id === id) { for (const el of offer.querySelectorAll("button")) el.disabled = false; toast("Could not update password manager", e.message, "error"); } }
+  });
+  $("#browser-vault-button", pane).addEventListener("click", openSavedLogins);
+  $("#browser-vault-pop", pane).addEventListener("click", async (event) => {
+    const close = event.target.closest("[data-vault-close]");
+    if (close) { hideSavedLogins(); return; }
+    const button = event.target.closest("[data-vault-id]");
+    const box = $("#browser-vault-pop");
+    if (!button || !B.session || !box?.dataset.origin) return;
+    const session = B.session.id, origin = box.dataset.origin;
+    for (const el of box.querySelectorAll("button")) el.disabled = true;
+    try {
+      const result = await api(`/browser/sessions/${encodeURIComponent(session)}/autofill`, { method: "POST", body: { id: button.dataset.vaultId, origin } });
+      if (B.session?.id !== session) return;
+      hideSavedLogins();
+      if (!result.filled) toast("Could not fill login", "No editable login field was found on this page.", "info");
+      else $("#browser-view")?.focus();
+    } catch (e) {
+      if (B.session?.id === session && box.dataset.origin === origin) { for (const el of box.querySelectorAll("button")) el.disabled = false; toast("Could not fill login", e.message, "error"); }
+    }
+  });
   const view = $("#browser-view", pane);
   const url = $("#browser-url", pane);
   url.addEventListener("keydown", (e) => {
@@ -535,6 +598,7 @@ function handleStreamMessage(msg) {
       B.inputOwner = msg.owner === "you";
       B.agentLock = msg.owner === "agent";
       if (!B.inputOwner) {
+        hideSavedLogins();
         // An ex-controller stops resizing the shared viewport; its pane
         // resizes would otherwise spam the socket and stretch the frame.
         stopResizeWatch();
@@ -547,6 +611,19 @@ function handleStreamMessage(msg) {
       updateToolbar();
       break;
     }
+    case "login_offer": {
+      const box = $("#browser-login-offer");
+      if (!box) break;
+      const offer = msg.offer;
+      if (offer && box.dataset.id === offer.id) break;
+      box.hidden = !offer;
+      box.dataset.id = offer?.id || "";
+      box.innerHTML = offer ? `<div class="browser-login-summary"><b>Save to Password Manager?</b><span>${esc(offer.origin)}${offer.username ? ` · ${esc(offer.username)}` : ""}</span></div><div class="browser-login-fields" hidden><label>Username or email<input class="input" data-offer-username autocomplete="off"></label><label>Password<div class="browser-login-password"><input class="input" type="password" data-offer-password autocomplete="new-password"><button type="button" class="btn btn-sm" data-offer-action="toggle-password">Show</button></div></label></div><div class="browser-login-actions"><button class="btn btn-sm" data-offer-action="edit">Edit</button><button class="btn btn-sm" data-offer-action="dismiss">Not now</button><button class="btn btn-sm btn-primary" data-offer-action="save">Save</button></div>` : "";
+      break;
+    }
+    case "login_choices":
+      if (B.inputOwner && !B.agentLock && sameBrowserOrigin(msg.origin, B.nav.url)) showSavedLogins(msg.origin, msg.credentials || []);
+      break;
     case "closed":
       setStatus("closed", msg.message || "", msg.code || "");
       break;
@@ -616,6 +693,8 @@ function applyMeta() {
   const img = $("#browser-frame");
   if (img && m.deviceWidth && m.deviceHeight) img.style.aspectRatio = `${m.deviceWidth} / ${m.deviceHeight}`;
   if (typeof m.url === "string" && m.url && (usableBrowserURL(m.url) || !usableBrowserURL(B.nav.url))) {
+    const pop = $("#browser-vault-pop");
+    if (pop && !pop.hidden && !sameBrowserOrigin(pop.dataset.origin, m.url)) hideSavedLogins();
     B.nav.url = m.url;
     B.nav.title = m.title || "";
     noteURL(m.url);
@@ -629,6 +708,8 @@ function applyMeta() {
 
 function applyNavState(v) {
   if (!v) return;
+  const pop = $("#browser-vault-pop");
+  if (pop && !pop.hidden && v.url && !sameBrowserOrigin(pop.dataset.origin, v.url)) hideSavedLogins();
   if (typeof v.url === "string" && (usableBrowserURL(v.url) || !usableBrowserURL(B.restoreURL))) B.nav.url = v.url;
   if (typeof v.title === "string") B.nav.title = v.title;
   B.nav.canGoBack = !!v.canGoBack;
@@ -639,9 +720,46 @@ function applyNavState(v) {
 
 /* ---------------- REST actions ---------------- */
 
+function sameBrowserOrigin(origin, url) {
+  try { return !!origin && new URL(url).origin === origin; } catch { return false; }
+}
+
+function hideSavedLogins() {
+  const box = $("#browser-vault-pop");
+  if (box) { box.hidden = true; box.dataset.origin = ""; box.innerHTML = ""; }
+  $("#browser-vault-button")?.setAttribute("aria-expanded", "false");
+}
+
+function showSavedLogins(origin, credentials) {
+  const box = $("#browser-vault-pop");
+  if (!box) return;
+  box.dataset.origin = origin || "";
+  box.hidden = false;
+  box.innerHTML = `<div class="browser-vault-heading"><b>Saved logins</b><button class="icon-btn sm" type="button" data-vault-close aria-label="Close saved logins">${icon("x", "sm")}</button></div><div class="browser-vault-origin">${esc(origin || "This page")}</div><div class="browser-vault-list">${credentials.length ? credentials.map((c) => `<button type="button" class="browser-vault-account" data-vault-id="${esc(c.id)}">${icon("key", "sm")}<span>${esc(c.username || "Password-only login")}</span></button>`).join("") : `<div class="browser-vault-empty">No saved logins for this page.</div>`}</div>`;
+  $("#browser-vault-button")?.setAttribute("aria-expanded", "true");
+}
+
+async function openSavedLogins() {
+  const box = $("#browser-vault-pop");
+  if (!B.session || !B.inputOwner || !box) return;
+  if (!box.hidden) { hideSavedLogins(); return; }
+  const session = B.session.id, url = B.nav.url;
+  box.hidden = false;
+  box.innerHTML = `<div class="browser-vault-empty">Loading saved logins…</div>`;
+  $("#browser-vault-button")?.setAttribute("aria-expanded", "true");
+  try {
+    const result = await api(`/browser/sessions/${encodeURIComponent(session)}/autofill`);
+    if (B.session?.id !== session || box.hidden || B.nav.url !== url) return;
+    showSavedLogins(result.origin, result.credentials || []);
+  } catch (e) {
+    if (B.session?.id === session && !box.hidden) { hideSavedLogins(); toast("Could not load saved logins", e.message, "error"); }
+  }
+}
+
 export async function browserNavigate(url) {
   url = String(url || "").trim();
   if (!url || !B.session || B.navigating) return;
+  hideSavedLogins();
   B.navigating = true;
   updateToolbar();
   try {
@@ -657,6 +775,7 @@ export async function browserNavigate(url) {
 
 export async function browserHistory(action) {
   if (!B.session || B.navigating) return;
+  hideSavedLogins();
   B.navigating = true;
   updateToolbar();
   try {
@@ -898,6 +1017,11 @@ function onViewKey(e) {
   if (e.isComposing) return;
   e.stopPropagation(); // keys typed at the remote page must not fire app shortcuts
   if (B.annotate && e.key === "Escape") { e.preventDefault(); setAnnotate(false); return; }
+  const vault = $("#browser-vault-pop");
+  if (vault && !vault.hidden) {
+    if (e.key === "Escape") { hideSavedLogins(); e.preventDefault(); return; }
+    if (e.key.length === 1 || e.key === "Backspace" || e.key === "Delete") hideSavedLogins();
+  }
   if (!canInput()) return;
   const modifiers = (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
   if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -1110,7 +1234,10 @@ export function toggleAnnotate() {
 // Escape key affordance for the global keydown chain: exits annotate mode.
 // Returns true when the key was consumed.
 export function browserEscape() {
-  if (!B.open || !B.annotate) return false;
+  if (!B.open) return false;
+  const box = $("#browser-vault-pop");
+  if (box && !box.hidden) { hideSavedLogins(); return true; }
+  if (!B.annotate) return false;
   setAnnotate(false);
   return true;
 }
@@ -1356,6 +1483,8 @@ function updateToolbar() {
   if (device) device.disabled = !active || !drive;
   const profile = $("#browser-profile");
   if (profile) profile.disabled = !active || !drive;
+  const vault = $("#browser-vault-button");
+  if (vault) vault.disabled = !live || !drive;
   const devtools = $(`[data-action="browser-devtools"]`);
   if (devtools) devtools.disabled = !active || !drive;
   const repl = $("#browser-devtools-input");

@@ -77,7 +77,7 @@ func TestCrossChannelSteerKeepsRunningDeliveryContext(t *testing.T) {
 	e.waitStatus(running.ID, "completed")
 	for _, line := range e.trace() {
 		if strings.HasPrefix(line, "steer use usb") {
-			for _, want := range []string{`"inputChannel":"whatsapp"`, `"deliveryChannel":"web"`, `"messageId":"wa-1"`, "steers the running turn"} {
+			for _, want := range []string{`Send-by: whatsapp`, `Response-output: web`, `WhatsApp messageId: "wa-1"`, "steers the running turn"} {
 				if !strings.Contains(line, want) {
 					t.Fatalf("steer missing %s: %s", want, line)
 				}

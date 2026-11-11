@@ -4,6 +4,7 @@ import { closePopover, menuItem, openPopover } from "./popover.js";
 import { autoGrow } from "./composer.js";
 import { scheduleDraftSave } from "./convmeta.js";
 import { toast } from "./toast.js";
+import { reconcileReferences } from "./references.js";
 
 /* ---------------- browser secret references ----------------
    Opaque [[env:NAME]] tags the human can paste into a prompt instead of a raw
@@ -154,8 +155,10 @@ export function insertSecretRef(name) {
   }
   if (!ta) return false;
   const r = insertAtCaret(ta.value, ta.selectionStart, ta.selectionEnd, envRefTag(name));
+  const owner = composerFor(scope.key);
+  owner.references = reconcileReferences(ta.value, r.value, owner.references, ta.selectionStart, ta.selectionEnd);
   ta.value = r.value;
-  composerFor(scope.key).draft = r.value;
+  owner.draft = r.value;
   ta.focus();
   try { ta.setSelectionRange(r.caret, r.caret); } catch {}
   autoGrow();

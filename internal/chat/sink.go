@@ -50,6 +50,10 @@ func (s *Service) SessionCreated(sess *agent.Session, configs json.RawMessage, r
 }
 
 func (s *Service) SessionUpdate(sess *agent.Session, u acp.SessionUpdate, raw json.RawMessage) {
+	if u.SessionUpdate == "available_commands_update" {
+		s.applyCommands(sess, u.AvailableCommands)
+		return
+	}
 	a := s.activeFor(sess.ConversationID())
 	if a == nil {
 		if u.SessionUpdate == "session_info_update" && strings.TrimSpace(u.Title) != "" {
@@ -92,8 +96,6 @@ func (s *Service) SessionUpdate(sess *agent.Session, u acp.SessionUpdate, raw js
 		s.applyToolUpdate(a, u)
 	case "plan":
 		s.applyPlan(a, u.Entries)
-	case "available_commands_update":
-		s.applyCommands(a, u.AvailableCommands)
 	case "current_mode_update":
 		s.emit("config.updated", a.conversationID, map[string]any{
 			"conversationId": a.conversationID, "modeId": u.CurrentModeID,
@@ -550,18 +552,23 @@ func (s *Service) applyUsage(a *activeTurn, u acp.SessionUpdate) {
 	})
 }
 
-func (s *Service) applyCommands(a *activeTurn, commands json.RawMessage) {
+func (s *Service) applyCommands(sess *agent.Session, commands json.RawMessage) {
 	if len(commands) == 0 {
 		return
 	}
-	commands = capJSON(commands, 64<<10)
+	var list []json.RawMessage
+	if json.Unmarshal(commands, &list) != nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conv, err := s.patchMeta(ctx, a.conversationID, map[string]any{"commands": commands})
+	conv, err := s.store.GetConversation(ctx, sess.ConversationID())
+	if err != nil || conv.AgentID != sess.AgentID() || conv.ACPSessionID != sess.ACPID() {
+		return
+	}
+	_, err = s.patchMeta(ctx, conv.ID, map[string]any{"commands": commands, "commandsSessionId": sess.ACPID()})
 	if err == nil {
-		a.mu.Lock()
-		a.conv = conv
-		a.mu.Unlock()
+		s.emit("commands.updated", conv.ID, map[string]any{"commands": commands, "sessionId": sess.ACPID()})
 	}
 }
 

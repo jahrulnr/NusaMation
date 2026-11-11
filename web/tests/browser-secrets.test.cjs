@@ -84,13 +84,14 @@ test('secretScopeActive requires the same room and agent', () => {
 const insertSrc = slice('export function insertSecretRef', undefined).replace(/^export /gm, '');
 
 function insertCtx(over = {}) {
-  const owners = new Map([['cv_1', { draft: '' }]]);
+  const owners = new Map([['cv_1', { draft: '', references: [] }]]);
   const saved = [];
   const ctx = {
     isValidEnvRefName, secretScopeActive, eligibleEnvRefs, insertAtCaret, envRefTag,
+    reconcileReferences: (oldText, newText, refs) => refs,
     agentById: () => ({ env: [{ name: 'TOKEN', hasValue: true }] }),
     currentAgent: () => ({ id: 'a1' }),
-    composerFor: (k) => owners.get(k) || owners.set(k, { draft: '' }).get(k),
+    composerFor: (k) => owners.get(k) || owners.set(k, { draft: '', references: [] }).get(k),
     composerKey: 'cv_1',
     $: () => null,
     autoGrow: () => {},

@@ -46,6 +46,7 @@ function draftPayload(key) {
   const owner = composerFor(key);
   return {
     text: owner.draft,
+    references: owner.references,
     attachments: owner.attachments.map((a) => (a.type === "annotation" ? { ...a, comment: a.comment || "" } : a)),
     sendDelivery: owner.sendDelivery,
     replyToChannel: owner.replyToChannel,
@@ -143,6 +144,7 @@ async function restoreDraft(key) {
   const d = meta.draft;
   if (!d || metaTouched.has(key) || owner.draft || owner.attachments.length) return;
   owner.draft = d.text || "";
+  owner.references = Array.isArray(d.references) ? d.references : [];
   owner.attachments = Array.isArray(d.attachments) ? d.attachments : [];
   if (d.sendDelivery) owner.sendDelivery = d.sendDelivery;
   owner.replyToChannel = !!d.replyToChannel;

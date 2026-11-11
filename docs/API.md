@@ -53,7 +53,7 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | `DELETE` | `/conversations/{id}` | cancels a live turn, then deletes |
 | `DELETE` | `/conversations` | `{confirm:"DELETE"}` erases all conversations |
 | `GET` | `/conversations/{id}/messages?after=&before=&limit=` | pagination by `seq`; `hasMore` indicates whether another message exists in the requested direction |
-| `POST` | `/conversations/{id}/messages` | `{text, attachments:[{uploadId}], annotations?:[{pickId, comment}], replyToChannel?, replyChannel?, delivery?: "queue" \| "after_tools" \| "steer"}` → `{message, turn}`; `delivery` defaults to `queue`, unknown values return 400 before anything is written |
+| `POST` | `/conversations/{id}/messages` | `{text, attachments:[{uploadId}], references?:[{kind,id,label,start,end}], annotations?:[{pickId, comment}], replyToChannel?, replyChannel?, delivery?: "queue" \| "after_tools" \| "steer"}` → `{message, turn}`; reference offsets are UTF-8 bytes in trimmed text; `delivery` defaults to `queue` |
 | `POST` | `/conversations/{id}/cancel` | cancels running or first queued turn |
 | `POST` | `/conversations/{id}/turns/{turnId}/cancel` | cancels that queued turn without touching the running one → `{turn}`; 404 unknown turn, 409 when it is no longer queued. Optional `{dropMessage:true}` also deletes the user message that queued it (used by "edit queued message"). |
 | `POST` | `/conversations/{id}/retry` | re-queues the last user message |
@@ -61,12 +61,14 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | `POST` | `/conversations/{id}/config` | `{configId, value}` or `{model}` |
 | `POST` | `/conversations/{id}/elicitations/{requestId}` | `{action:"accept"|"decline"|"cancel", content?}` answers a pending agent input request |
 | `POST` | `/conversations/{id}/agent` | `{agentId}`; starts a handoff recap |
-| `GET` | `/conversations/{id}/meta` | file-backed UI meta: `{title?, browser?:{lastUrl, open?}, draft?:{text, attachments, sendDelivery, replyToChannel, updatedAt}}`; missing file → `{meta:{}}` |
+| `GET` | `/conversations/{id}/meta` | file-backed UI meta: `{title?, browser?:{lastUrl, open?}, draft?:{text, attachments, references, sendDelivery, replyToChannel, updatedAt}}`; missing file → `{meta:{}}` |
 | `PUT` | `/conversations/{id}/meta` | merge patch `{title?, browser?:{lastUrl, open?}, draft?}`; `lastUrl` and `open` merge independently; `about:blank` does not replace `lastUrl`; `draft:null` clears the draft (sent after a successful message send) |
 | `POST` | `/conversations/{id}/routing` | full `Routing` object |
 | `GET` | `/conversations/{id}/export` | JSON download |
 
 Messages have `role`, `kind` (`text`, `thought`, `tool`, `system`, `error`, `notice`), `text`, `content`, `status`, `attachments`, `toolCallId`, `seq`, timestamps.
+
+`GET /references?conversationId=...&q=...` searches the conversation's roots and registered MCPs. For a new draft, pass `agentId` and optionally `projectId` instead. It returns `{items:[{kind,id,name,detail}],truncated}`; search is bounded. In Git worktrees, when `git` is available, file and folder results follow Git ignore rules while retaining tracked files. Without Git or outside a worktree, the regular filesystem search is used. References on a message are explicit selections, validated against the message text and retained in its metadata. Draft reference offsets are browser UTF-16 positions; message reference offsets are UTF-8 bytes.
 
 A conversation includes `projectId` when it belongs to a project. Chats join a project only when created with `projectId` or restored by undo while still unassigned.
 
@@ -197,7 +199,10 @@ Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser co
 | `POST` | `/browser/sessions/{id}/profile` | `{profile}` → `{session}`; migrates the tab into that profile's Chromium and reloads the current URL |
 | `GET` | `/browser/sessions/{id}/console` | `{entries}` drained from the page's console-tap buffer (devtools drawer) |
 | `POST` | `/browser/sessions/{id}/eval` | `{expression}` → `{ok, result}` or `{ok:false, error}`; same surface as `browser_evaluate` |
-| `POST` | `/browser/sessions/{id}/autofill` | `{filled}`; fills the first login form with the profile's saved credential for the page origin |
+| `GET` | `/browser/sessions/{id}/login-offer?id=...` | returns the current offer's username and password for editing in the pane |
+| `POST` | `/browser/sessions/{id}/login-offer` | `{id, save, username?, password?}` accepts, edits or dismisses the current offer |
+| `GET` | `/browser/sessions/{id}/autofill` | returns `{origin, credentials}` for the current profile and page without passwords |
+| `POST` | `/browser/sessions/{id}/autofill` | `{id, origin}` explicitly fills the selected account → `{filled}` |
 | `GET` | `/browser/history` | `?profile=&q=&limit=` → `{entries}`; per-profile visit history for address-bar suggestions |
 | `GET` | `/browser/profiles` | `{profiles}` profile names seen (default plus every profile a session/credential was created under) |
 | `GET` | `/browser/credentials` | `?profile=` → `{credentials}` with passwords masked |
@@ -208,7 +213,7 @@ Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser co
 | `POST` | `/browser/sessions/{id}/annotate/clear` | clears the painted highlight; picks/uploads persist |
 | WebSocket | `/browser/sessions/{id}/stream` | shared live view: every attached client receives the same frames; input is leased to one controller |
 
-Stream protocol: server→client binary messages are JPEG screencast frames; text messages are `{type:"meta"|"control"|"closed"|"pong"}`. `meta` carries `deviceWidth/deviceHeight/mobile/touch/dpr/pageScaleFactor/scrollOffsetX/scrollOffsetY/url/title/canGoBack/canGoForward` on change. The attach-time meta adds `viewportHeld` when other viewers already own the viewport; clients should adopt the reported viewport instead of emulating their own pane size, which avoids thrash and the transitional "mirrored" frame a mid-stream resize can leave on static pages.
+Stream protocol: server→client binary messages are JPEG screencast frames; text messages include `meta`, `control`, `login_offer`, `login_choices`, `closed` and `pong`. Login choices contain account metadata, not passwords. `meta` carries `deviceWidth/deviceHeight/mobile/touch/dpr/pageScaleFactor/scrollOffsetX/scrollOffsetY/url/title/canGoBack/canGoForward` on change. The attach-time meta adds `viewportHeld` when other viewers already own the viewport; clients should adopt the reported viewport instead of emulating their own pane size, which avoids thrash and the transitional "mirrored" frame a mid-stream resize can leave on static pages.
 
 `control` carries the input lease: `{type:"control", owner:"you"|"other"|"agent"|"none"}` — sent on attach and whenever the lease changes. `you` = this connection controls; `other` = another human viewer does; `agent` = the agent holds the lock; `none` = no controller. Only `you` may send input.
 

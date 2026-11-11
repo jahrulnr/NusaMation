@@ -294,6 +294,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Text        string                  `json:"text"`
 		Attachments []store.AttachmentInput `json:"attachments"`
+		References  []store.PromptReference `json:"references"`
 		Annotations []struct {
 			PickID     string `json:"pickId"`
 			Comment    string `json:"comment"`
@@ -325,7 +326,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	msg, turn, err := s.chat.Submit(r.Context(), chat.SubmitInput{
 		ConversationID: convID, Text: in.Text, Attachments: in.Attachments,
 		Channel: "web", ReplyToChannel: in.ReplyToChannel, ReplyChannel: in.ReplyChannel,
-		Delivery: in.Delivery, Annotations: annotations,
+		Delivery: in.Delivery, Annotations: annotations, References: in.References,
 	})
 	if err != nil {
 		status := http.StatusBadRequest

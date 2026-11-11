@@ -51,23 +51,24 @@ func (NopSink) AgentExit(string, error)     {}
 func (NopSink) SessionLost(*Session, error) {}
 
 type Session struct {
-	agentID        string
-	conversationID string
-	acpID          string
-	cwd            string
-	roots          []string
-	configOptions  json.RawMessage
-	modes          *acp.SessionModeState
-	legacyMode     bool
-	loaded         bool
-	recovered      bool
-	fresh          bool // created via session/new, not load/resume
-	prompted       bool // a prompt was dispatched on this session
-	createdAt      time.Time
-	lastUsed       time.Time
-	mu             sync.Mutex
-	ensureMu       sync.Mutex
-	replaying      atomic.Bool
+	agentID          string
+	conversationID   string
+	acpID            string
+	cwd              string
+	roots            []string
+	configOptions    json.RawMessage
+	modes            *acp.SessionModeState
+	legacyMode       bool
+	loaded           bool
+	recovered        bool
+	fresh            bool // created via session/new, not load/resume
+	prompted         bool // a prompt was dispatched on this session
+	bootstrapPending bool // the attached session needs fallback instructions
+	createdAt        time.Time
+	lastUsed         time.Time
+	mu               sync.Mutex
+	ensureMu         sync.Mutex
+	replaying        atomic.Bool
 }
 
 func (s *Session) AgentID() string        { return s.agentID }
@@ -132,6 +133,19 @@ func (m *Manager) EnableInjectedMCP(specs ...InjectedMCP) {
 	m.mu.Lock()
 	m.injected = append([]InjectedMCP(nil), specs...)
 	m.mu.Unlock()
+}
+
+// InjectedMCPNames exposes registered server names without issuing grants.
+func (m *Manager) InjectedMCPNames() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var names []string
+	for _, spec := range m.injected {
+		if spec.Name != "" && spec.Command != "" && spec.Env != nil {
+			names = append(names, spec.Name)
+		}
+	}
+	return names
 }
 
 func (m *Manager) injectedServers(conversationID string) []acp.MCPServerConfig {

@@ -66,6 +66,28 @@ func TestOrchestratorApprovalFlow(t *testing.T) {
 	if agentMgr.Session(conv.ID) == nil {
 		t.Fatal("prepared session was not registered")
 	}
+	// Commands can arrive during session/new, before any prompt is active.
+	commandDeadline := time.Now().Add(5 * time.Second)
+	for {
+		stored, err := st.GetConversation(context.Background(), conv.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var meta struct {
+			Commands []struct {
+				Name string `json:"name"`
+			} `json:"commands"`
+			SessionID string `json:"commandsSessionId"`
+		}
+		_ = json.Unmarshal(stored.Metadata, &meta)
+		if len(meta.Commands) > 0 && meta.Commands[0].Name == "compact" && meta.SessionID == stored.ACPSessionID {
+			break
+		}
+		if time.Now().After(commandDeadline) {
+			t.Fatalf("session commands not saved: %s", stored.Metadata)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	updated, err := svc.SetConfig(context.Background(), conv.ID, "model", "fake-smart")
 	if err != nil {
 		t.Fatal(err)

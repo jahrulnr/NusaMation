@@ -98,6 +98,17 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusRequestTimeout, "wait_timeout", err.Error())
 			return
 		}
+	case "vault_fill":
+		filled, err := sess.AutofillForUsername(r.Context(), in.Username)
+		if err != nil {
+			s.browserError(w, err, false)
+			return
+		}
+		if filled {
+			detail = "Saved login filled."
+		} else {
+			detail = "No saved login was filled for this page and profile."
+		}
 	case "profile":
 		if err := s.browser.MigrateProfile(r.Context(), sess, in.Profile); err != nil {
 			s.browserError(w, err, false)
@@ -314,6 +325,7 @@ type browserUseRequest struct {
 	DeltaY      float64              `json:"deltaY"`
 	Preset      string               `json:"preset"`
 	Profile     string               `json:"profile"`
+	Username    *string              `json:"username"`
 	Expression  string               `json:"expression"`
 	Function    string               `json:"function"`
 	Ref         string               `json:"ref"`
@@ -360,6 +372,8 @@ func normalizeBrowserUseTool(name string) string {
 		return "press"
 	case "browser_wait_for":
 		return "wait"
+	case "browser_vault_fill":
+		return "vault_fill"
 	case "browser_profile":
 		return "profile"
 	case "browser_evaluate":
@@ -387,7 +401,7 @@ func knownBrowserUseTool(name string) bool {
 	switch name {
 	case "navigate", "navigate_back", "navigate_forward", "snapshot", "tree",
 		"console", "wait", "move", "hover", "click", "type", "press", "scroll",
-		"emulate", "eval", "select", "fill", "lock", "profile":
+		"emulate", "eval", "select", "fill", "lock", "profile", "vault_fill":
 		return true
 	default:
 		return false

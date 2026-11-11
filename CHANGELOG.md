@@ -4,6 +4,19 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+- Browser vault offers account selection instead of filling automatically, supports editing submitted logins before saving, and lets agents choose a saved username when filling.
+- Reference search respects Git ignore rules and skips ignored directories when Git is available, while retaining tracked files.
+- The composer searches files, folders, local skills, MCP servers and advertised agent commands with `/`, `@` or `#`. Only an item selected with Tab or a click becomes a reference; ordinary typed text stays text. Selected references survive draft restoration and queue editing.
+- Show the active ACP session's advertised slash commands in the chat composer and forward slash-prefixed prompts without added context blocks so agents can recognize them.
+
+### Changed
+
+- Agent input context now uses concise text labels for the source, response format, and workspace instructions, with WhatsApp and automation details only when applicable.
+
+- ACP agents advertising system prompts receive stable NusaMation session instructions in append mode on new, load, and resume. Other agents receive user-role bootstrap instructions with the first input after session attachment; delivery context stays per input. Empty-object resume capabilities are recognized.
+
+- The browser asks before saving submitted logins to the profile vault. The `browser_vault_fill` agent tool fills a saved login for the current origin without returning its password.
+
 ## [0.2.6] - 2026-11-11
 
 ### Removed

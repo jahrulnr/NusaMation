@@ -47,6 +47,7 @@ function world() {
     esc: (s) => String(s),
     icon: () => '',
     applyMeta() {},
+    hideSavedLogins() {},
     setStatus() {},
     placeAgentPointer() {},
     sendCtl(msg) { sent.push(JSON.stringify(msg)); },

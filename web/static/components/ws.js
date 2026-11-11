@@ -1,11 +1,11 @@
-import { agentById, parseConfigs } from "./util.js";
+import { agentById, parseConfigs, parseJSON } from "./util.js";
 import { S, composers, composerKey, switchComposer } from "./state.js";
 import { ApiError } from "./api.js";
 import { toast } from "./toast.js";
 import { closeModal } from "./modal.js";
 import { applyStreamDelta, currentApprovals, renderChat, scheduleChatRender, scheduleStreamRender, scheduleStreamResync } from "./chat.js";
 import { refreshApprovalModal, renderApprovalsModal, showAgentBlocker, showPendingRequest, showSlowAgent } from "./requests.js";
-import { renderComposer, upsertTurn } from "./composer.js";
+import { renderCommands, renderComposer, upsertTurn } from "./composer.js";
 import { loadConversation, normalizeMessage, setRoute, touchConversationFromMessage, upsertConversation, upsertMessage } from "./conversations.js";
 import { renderOffline } from "./shell.js";
 import { renderSidebar } from "./sidebar.js";
@@ -192,10 +192,18 @@ export function handleEvent(ev) {
       break;
     }
     case "agent.session": {
-      if (S.current && convId === S.current.id) {
+      if (S.current && convId === S.current.id && (!data.agentId || S.current.agentId === data.agentId)) {
+        S.current.acpSessionId = data.acpSessionId;
         if (data.configOptions) { S.configs = parseConfigs(data.configOptions); S.current.configOptions = data.configOptions; }
         renderTopbar(); renderComposer();
       }
+      break;
+    }
+    case "commands.updated": {
+      if (!S.current || composerKey !== convId || S.current.id !== convId || S.current.acpSessionId !== data.sessionId) break;
+      const meta = parseJSON(S.current.metadata, {}) || {};
+      S.current.metadata = { ...meta, commands: data.commands, commandsSessionId: data.sessionId };
+      renderCommands();
       break;
     }
     case "config.updated": {

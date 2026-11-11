@@ -460,14 +460,71 @@ func (s *Server) handleBrowserEval(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"ok":true,"result":` + string(val) + `}`))
 }
 
-// handleBrowserAutofill manually retriggers the password-manager fill for
-// pages where the on-load fill missed (late-rendered forms, SPA timing).
+// handleBrowserLoginOffer resolves the current submitted-login offer.
+func (s *Server) handleBrowserLoginOffer(w http.ResponseWriter, r *http.Request) {
+	sess := s.browserSession(w, r)
+	if sess == nil {
+		return
+	}
+	var in struct {
+		ID       string  `json:"id"`
+		Save     bool    `json:"save"`
+		Username *string `json:"username"`
+		Password *string `json:"password"`
+	}
+	if err := readJSON(w, r, &in, 64<<10); err != nil || in.ID == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "An offer id is required.")
+		return
+	}
+	if err := sess.DecideLoginOfferEdited(r.Context(), in.ID, in.Save, in.Username, in.Password); err != nil {
+		s.browserError(w, err, false)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleBrowserLoginOfferDetails(w http.ResponseWriter, r *http.Request) {
+	sess := s.browserSession(w, r)
+	if sess == nil {
+		return
+	}
+	username, password, err := sess.LoginOfferDetails(r.URL.Query().Get("id"))
+	if err != nil {
+		s.browserError(w, err, false)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"username": username, "password": password})
+}
+
+func (s *Server) handleBrowserAutofillChoices(w http.ResponseWriter, r *http.Request) {
+	sess := s.browserSession(w, r)
+	if sess == nil {
+		return
+	}
+	origin, choices, err := sess.SavedLogins(r.Context())
+	if err != nil {
+		s.browserError(w, err, false)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"origin": origin, "credentials": choices})
+}
+
+// handleBrowserAutofill fills only the account explicitly selected by the user.
 func (s *Server) handleBrowserAutofill(w http.ResponseWriter, r *http.Request) {
 	sess := s.browserSession(w, r)
 	if sess == nil {
 		return
 	}
-	filled, err := sess.Autofill(r.Context())
+	var in struct {
+		ID     string `json:"id"`
+		Origin string `json:"origin"`
+	}
+	if err := readJSON(w, r, &in, 4096); err != nil || in.ID == "" || in.Origin == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "A credential id and origin are required.")
+		return
+	}
+	filled, err := sess.FillSavedLogin(r.Context(), in.ID, in.Origin)
 	if err != nil {
 		s.browserError(w, err, false)
 		return

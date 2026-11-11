@@ -134,7 +134,8 @@ func (s *Service) runPrompt(a *activeTurn) (status, stopReason string, runErr er
 	if v, _ := meta["handoff"].(bool); v {
 		needsRecap = true
 	}
-	if needsRecap {
+	command := promptIsCommand(a.user.Text, referencesFromMessage(a.user))
+	if needsRecap && !command {
 		recap = s.buildRecap(a)
 		a.recapApplied = recap != ""
 		session.ClearRecovered()
@@ -149,7 +150,9 @@ func (s *Service) runPrompt(a *activeTurn) (status, stopReason string, runErr er
 	if len(blocks) == 0 {
 		return "error", "", errors.New("nothing to send to the agent")
 	}
-	blocks = s.withTurnContext(a, blocks)
+	if !command {
+		blocks = s.withTurnContext(a, blocks)
+	}
 	if !a.beginPrompt() {
 		return "cancelled", "cancelled", nil
 	}
@@ -294,11 +297,12 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 	if strings.TrimSpace(recap) != "" {
 		blocks = append(blocks, acp.ContentBlock{Type: "text", Text: recap})
 	}
-	text := strings.TrimSpace(a.user.Text)
+	text, referenceBlocks, _ := promptReferences(strings.TrimSpace(a.user.Text), referencesFromMessage(a.user))
 	if text == "" {
 		text = "Please review the attachment(s) and continue."
 	}
 	blocks = append(blocks, acp.ContentBlock{Type: "text", Text: text})
+	blocks = append(blocks, referenceBlocks...)
 	if block := annotationBlock(a.user.Metadata); block != "" {
 		blocks = append(blocks, acp.ContentBlock{Type: "text", Text: block})
 	}

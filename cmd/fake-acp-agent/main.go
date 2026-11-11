@@ -159,6 +159,12 @@ func (s *server) handle(msg message) {
 			},
 			"auth": map[string]any{},
 		}
+		if os.Getenv("FAKE_ACP_SYSTEM_PROMPT") == "1" {
+			caps["sessionCapabilities"].(map[string]any)["systemPrompt"] = map[string]any{}
+		}
+		if os.Getenv("FAKE_ACP_RESUME") == "1" {
+			caps["sessionCapabilities"].(map[string]any)["resume"] = map[string]any{}
+		}
 		meta := map[string]any{}
 		if os.Getenv("FAKE_ACP_MIDTURN") == "1" {
 			meta["cognition.ai/midTurnPrompts"] = true
@@ -176,6 +182,7 @@ func (s *server) handle(msg message) {
 			"agentInfo":         map[string]any{"name": "fake-acp", "title": "Fake ACP Agent", "version": "0.1.0"},
 		})
 	case "session/new":
+		traceSessionPrompt(msg.Method, msg.Params)
 		trace("session_new")
 		var request struct {
 			MCPServers []struct {
@@ -203,6 +210,11 @@ func (s *server) handle(msg message) {
 		})
 		s.respond(msg.ID, s.sessionResult())
 	case "session/load", "session/resume":
+		traceSessionPrompt(msg.Method, msg.Params)
+		if os.Getenv("FAKE_ACP_REJECT_LOAD") == "1" {
+			s.write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32602, "message": "invalid system prompt"}})
+			return
+		}
 		s.respond(msg.ID, s.sessionResult())
 	case "session/set_config_option":
 		var req struct {
@@ -535,6 +547,13 @@ func (s *server) permissionDemo(id json.RawMessage, sessionID string, cancel cha
 		s.respond(id, map[string]any{"stopReason": "cancelled"})
 	default:
 		s.respond(id, map[string]any{"stopReason": "end_turn"})
+	}
+}
+
+// traceSessionPrompt records the structured lifecycle request for protocol tests.
+func traceSessionPrompt(method string, params json.RawMessage) {
+	if os.Getenv("FAKE_ACP_TRACE_SESSION_PROMPT") == "1" {
+		trace("lifecycle " + method + " " + string(params))
 	}
 }
 

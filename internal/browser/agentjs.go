@@ -209,28 +209,40 @@ const loginTapJS = `(function(){
   if (window.__nusaLoginTap) return;
   window.__nusaLoginTap = true;
   window.__nusaLogins = window.__nusaLogins || [];
-  const report = () => {
+  const report = (target) => {
     try {
-      const pw = [...document.querySelectorAll('input[type=password]')].find(i => i.value && !i.disabled);
+      const scope = target && (target.tagName === 'FORM' ? target : target.form) || document;
+      const pw = [...scope.querySelectorAll('input[type=password]')].find(i => i.value && !i.disabled);
       if (!pw) return;
-      const scope = pw.form || document;
-      const user = scope.querySelector('input[type=email],input[name*=user i],input[name*=email i],input[name*=login i],input[autocomplete*=username i]')
-        || [...scope.querySelectorAll('input[type=text],input:not([type])')].find(i => i.value && !i.disabled);
+      const form = pw.form || scope;
+      const user = form.querySelector('input[type=email],input[name*=user i],input[name*=email i],input[name*=login i],input[autocomplete*=username i]')
+        || [...form.querySelectorAll('input[type=text],input:not([type])')].find(i => i.value && !i.disabled);
       const payload = JSON.stringify({origin: location.origin, username: user ? user.value : '', password: pw.value});
-      window.__nusaLogins.push(payload);
-      if (window.__nusaLogins.length > 20) window.__nusaLogins.shift();
       if (typeof window.__nusaReportLogin === 'function') window.__nusaReportLogin(payload);
+      else { window.__nusaLogins.push(payload); if (window.__nusaLogins.length > 20) window.__nusaLogins.shift(); }
     } catch (e) {}
   };
-  document.addEventListener('submit', report, true);
+  document.addEventListener('submit', e => report(e.target), true);
   // SPAs often fake-submit with Enter or a plain button click.
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT' && e.target.type === 'password') report();
+    if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT' && e.target.type === 'password') report(e.target);
   }, true);
   document.addEventListener('click', (e) => {
     const t = e.target && e.target.closest ? e.target.closest('button,[type=submit],input[type=submit]') : null;
-    if (t && t.form && t.form.querySelector('input[type=password]')) report();
+    if (t && t.form && t.form.querySelector('input[type=password]')) report(t);
   }, true);
+  const offer = e => {
+    const input = e.target;
+    if (!input || input.tagName !== 'INPUT' || input.disabled || input.readOnly) return;
+    const form = input.form || document;
+    const password = form.querySelector('input[type=password]:not([disabled]):not([readonly])');
+    if (!password || !['password', 'text', 'email'].includes(input.type || 'text')) return;
+    window.__nusaLoginTarget = input;
+    if (typeof window.__nusaReportLogin === 'function') window.__nusaReportLogin(JSON.stringify({kind:'focus', origin:location.origin}));
+  };
+  let lastFocusTarget = null, lastFocusAt = 0;
+  document.addEventListener('focusin', e => { lastFocusTarget = e.target; lastFocusAt = Date.now(); offer(e); }, true);
+  document.addEventListener('click', e => { if (e.target !== lastFocusTarget || Date.now() - lastFocusAt > 300) offer(e); }, true);
 })()`
 
 // snapshotJS serializes the visible DOM into a compact tree. Interactive

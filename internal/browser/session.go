@@ -20,6 +20,7 @@ import (
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
+	"github.com/jahrulnr/nusamation/internal/ids"
 	"github.com/jahrulnr/nusamation/internal/store"
 )
 
@@ -177,10 +178,11 @@ type Session struct {
 
 	busy atomic.Bool
 
-	profile    string
-	tabCtx     context.Context
-	tabCancel  context.CancelFunc
-	browserCtx context.Context
+	pendingLogin *loginOffer
+	profile      string
+	tabCtx       context.Context
+	tabCancel    context.CancelFunc
+	browserCtx   context.Context
 
 	ackCh   chan int64
 	maintCh chan func()
@@ -277,9 +279,7 @@ func (s *Session) refreshNavState() {
 	s.afterLoadHooks(url, title, profile)
 }
 
-// afterLoadHooks runs once per committed navigation: record the visit, drain
-// any buffered login reports the injected tap could not hand to the binding,
-// and offer the page the profile's saved credentials for this origin.
+// afterLoadHooks records the visit and drains buffered login reports.
 func (s *Session) afterLoadHooks(url, title, profile string) {
 	if s.m.rec == nil || url == "" {
 		return
@@ -295,61 +295,223 @@ func (s *Session) afterLoadHooks(url, title, profile string) {
 			}
 		}
 	}
-	if u, err := urlpkg.Parse(url); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
-		origin := u.Scheme + "://" + u.Host
-		creds, err := s.m.rec.BrowserCredentials(context.Background(), profile, origin)
-		if err == nil && len(creds) > 0 {
-			s.fillLogin(creds[0])
-		}
-	}
 }
 
-// saveLoginPayload persists one credential report from loginTapJS.
+// loginOffer keeps a submitted password in memory until the user decides.
+type loginOffer struct {
+	ID       string `json:"id"`
+	Origin   string `json:"origin"`
+	Username string `json:"username"`
+	Profile  string `json:"profile"`
+	Password string `json:"-"`
+}
+
+func (s *Session) loginOfferMessageLocked() []byte {
+	b, _ := json.Marshal(map[string]any{"type": "login_offer", "offer": s.pendingLogin})
+	return b
+}
+
 func (s *Session) saveLoginPayload(payload string) {
 	if s.m.rec == nil {
 		return
 	}
-	var p struct {
+	var input struct {
 		Origin   string `json:"origin"`
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	if json.Unmarshal([]byte(payload), &p) != nil || p.Password == "" {
+	if json.Unmarshal([]byte(payload), &input) != nil || input.Password == "" {
 		return
 	}
+	p := loginOffer{Origin: input.Origin, Username: input.Username, Password: input.Password}
 	u, err := urlpkg.Parse(p.Origin)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return
 	}
-	if err := s.m.rec.SaveBrowserCredential(context.Background(), s.Profile(), p.Origin, p.Username, p.Password); err != nil {
-		s.m.log.Warn("save browser credential failed", "error", err)
+	p.Origin = u.Scheme + "://" + u.Host
+	p.Profile = s.Profile()
+	creds, err := s.m.rec.BrowserCredentials(context.Background(), p.Profile, p.Origin)
+	if err != nil {
+		s.m.log.Warn("read browser credentials failed", "error", err)
+		return
 	}
+	for _, c := range creds {
+		if c.Username == p.Username && c.Password == p.Password {
+			return
+		}
+	}
+	s.mu.Lock()
+	if old := s.pendingLogin; old != nil && old.Profile == p.Profile && old.Origin == p.Origin && old.Username == p.Username && old.Password == p.Password {
+		s.mu.Unlock()
+		return
+	}
+	p.ID = ids.New("offer")
+	s.pendingLogin = &p
+	msg := s.loginOfferMessageLocked()
+	subs := append([]*Stream(nil), s.streams...)
+	s.mu.Unlock()
+	for _, sub := range subs {
+		sub.sendCtrl(msg)
+	}
+}
+
+// DecideLoginOffer saves or dismisses exactly the offer shown to the user.
+func (s *Session) DecideLoginOffer(ctx context.Context, id string, save bool) error {
+	return s.DecideLoginOfferEdited(ctx, id, save, nil, nil)
+}
+
+// LoginOfferDetails returns the pending values only for the pane's edit form.
+func (s *Session) LoginOfferDetails(id string) (string, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pendingLogin == nil || s.pendingLogin.ID != id {
+		return "", "", ErrNotFound
+	}
+	return s.pendingLogin.Username, s.pendingLogin.Password, nil
+}
+
+// DecideLoginOfferEdited resolves the current offer, optionally saving edits.
+func (s *Session) DecideLoginOfferEdited(ctx context.Context, id string, save bool, username, password *string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pendingLogin
+	if p == nil || p.ID != id {
+		return ErrNotFound
+	}
+	if save {
+		user, pass := p.Username, p.Password
+		if username != nil {
+			user = *username
+		}
+		if password != nil {
+			pass = *password
+		}
+		if pass == "" {
+			return fmt.Errorf("%w: password is required", ErrInvalidAction)
+		}
+		if err := s.m.rec.SaveBrowserCredential(ctx, p.Profile, p.Origin, user, pass); err != nil {
+			return err
+		}
+	}
+	s.pendingLogin = nil
+	msg := s.loginOfferMessageLocked()
+	for _, sub := range s.streams {
+		sub.sendCtrl(msg)
+	}
+	return nil
 }
 
 // fillLogin fills the page's first password field (and its username sibling)
 // with a saved credential, through the native setters frameworks listen to.
-func (s *Session) fillLogin(c store.BrowserCredential) {
+func (s *Session) fillLogin(c store.BrowserCredential) bool {
+	return s.fillLoginMode(c, false)
+}
+
+func (s *Session) fillLoginMode(c store.BrowserCredential, replace bool) bool {
+	if c.Password == "" {
+		return false
+	}
+	s.RegisterSecrets(map[string]string{c.Password: "[[vault:password]]"})
 	user, _ := json.Marshal(c.Username)
 	pass, _ := json.Marshal(c.Password)
+	origin, _ := json.Marshal(c.Origin)
 	expr := `(() => {
-	  const pw = [...document.querySelectorAll('input[type=password]')].find(i => !i.disabled && !i.readOnly);
-	  if (!pw || pw.value) return 'no-field';
+	  if (` + string(origin) + ` && location.origin !== ` + string(origin) + `) return 'no-field';
+	  const target = window.__nusaLoginTarget;
+	  const scope = target && target.isConnected ? (target.form || document) : document;
+	  const pw = [...scope.querySelectorAll('input[type=password]')].find(i => !i.disabled && !i.readOnly);
+	  if (!pw) return 'no-field';
+	  if (!` + fmt.Sprint(replace) + ` && pw.value && pw.value !== ` + string(pass) + `) return 'no-field';
 	  const put = (el, v) => { const d = Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value'); d.set.call(el, v); el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true})); };
-	  const scope = pw.form || document;
-	  const user = scope.querySelector('input[type=email],input[name*=user i],input[name*=email i],input[name*=login i],input[autocomplete*=username i]')
-	    || [...scope.querySelectorAll('input[type=text],input:not([type])')].find(i => !i.disabled && !i.readOnly);
-	  if (user && !user.value) put(user, ` + string(user) + `);
-	  put(pw, ` + string(pass) + `);
+	  const form = pw.form || scope;
+	  const user = form.querySelector('input[type=email],input[name*=user i],input[name*=email i],input[name*=login i],input[autocomplete*=username i]')
+	    || [...form.querySelectorAll('input[type=text],input:not([type])')].find(i => !i.disabled && !i.readOnly);
+	  if (!` + fmt.Sprint(replace) + ` && user && user.value && user.value !== ` + string(user) + `) return 'no-field';
+	  if (user && (` + fmt.Sprint(replace) + ` || !user.value)) put(user, ` + string(user) + `);
+	  if (` + fmt.Sprint(replace) + ` || !pw.value) put(pw, ` + string(pass) + `);
 	  return 'filled';
 	})()`
-	if got, err := s.evalQuiet(expr); err != nil || string(got) != `"filled"` {
+	got, err := s.evalQuiet(expr)
+	return err == nil && string(got) == `"filled"`
+}
+
+// SavedLogins returns account choices for the current profile and origin.
+func (s *Session) SavedLogins(ctx context.Context) (string, []store.BrowserCredential, error) {
+	s.mu.Lock()
+	rawURL, profile := s.url, s.profile
+	s.mu.Unlock()
+	u, err := urlpkg.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || s.m.rec == nil {
+		return "", []store.BrowserCredential{}, nil
+	}
+	origin := u.Scheme + "://" + u.Host
+	creds, err := s.m.rec.ListBrowserCredentials(ctx, profile)
+	if err != nil {
+		return "", nil, err
+	}
+	out := []store.BrowserCredential{}
+	for _, c := range creds {
+		if c.Origin == origin {
+			out = append(out, c)
+		}
+	}
+	return origin, out, nil
+}
+
+// FillSavedLogin fills only an explicitly chosen account for this page.
+func (s *Session) FillSavedLogin(ctx context.Context, id, origin string) (bool, error) {
+	current, choices, err := s.SavedLogins(ctx)
+	if err != nil {
+		return false, err
+	}
+	if current == "" || current != origin {
+		return false, ErrNotFound
+	}
+	for _, choice := range choices {
+		if choice.ID != id {
+			continue
+		}
+		creds, err := s.m.rec.BrowserCredentials(ctx, choice.Profile, current)
+		if err != nil {
+			return false, err
+		}
+		for _, c := range creds {
+			if c.ID == id {
+				// Check the actual tab origin immediately before using the secret.
+				raw, err := s.evalQuiet(`location.origin`)
+				var live string
+				if err != nil || json.Unmarshal(raw, &live) != nil || live != current {
+					return false, ErrNotFound
+				}
+				return s.fillLoginMode(c, true), nil
+			}
+		}
+	}
+	return false, ErrNotFound
+}
+
+func (s *Session) offerSavedLogins(origin string) {
+	current, choices, err := s.SavedLogins(context.Background())
+	if err != nil || current != origin || len(choices) == 0 {
 		return
+	}
+	msg, _ := json.Marshal(map[string]any{"type": "login_choices", "origin": current, "credentials": choices})
+	s.mu.Lock()
+	subs := append([]*Stream(nil), s.streams...)
+	s.mu.Unlock()
+	for _, sub := range subs {
+		sub.sendCtrl(msg)
 	}
 }
 
 // Autofill manually fills the page's login form from the profile's saved
 // credential for the current origin; reports whether a field was filled.
 func (s *Session) Autofill(ctx context.Context) (bool, error) {
+	return s.AutofillForUsername(ctx, nil)
+}
+
+// AutofillForUsername lets an agent request an account without receiving its password.
+func (s *Session) AutofillForUsername(ctx context.Context, username *string) (bool, error) {
 	if s.m.rec == nil {
 		return false, nil
 	}
@@ -364,9 +526,12 @@ func (s *Session) Autofill(ctx context.Context) (bool, error) {
 	if err != nil || len(creds) == 0 {
 		return false, err
 	}
-	s.fillLogin(creds[0])
-	raw, err := s.evalQuiet(`!![...document.querySelectorAll('input[type=password]')].find(i => i.value)`)
-	return string(raw) == "true", err
+	for _, c := range creds {
+		if username == nil || c.Username == *username {
+			return s.fillLogin(c), nil
+		}
+	}
+	return false, nil
 }
 
 // evalQuiet evaluates an expression on the live tab without touching the busy
@@ -877,7 +1042,16 @@ func (s *Session) watchLoginBindings() {
 			return
 		}
 		if ev.Name == "__nusaReportLogin" {
-			s.saveLoginPayload(ev.Payload)
+			var event struct {
+				Kind   string `json:"kind"`
+				Origin string `json:"origin"`
+			}
+			_ = json.Unmarshal([]byte(ev.Payload), &event)
+			if event.Kind == "focus" {
+				s.offerSavedLogins(event.Origin)
+			} else {
+				s.saveLoginPayload(ev.Payload)
+			}
 		}
 	}
 }
@@ -1175,6 +1349,7 @@ func (s *Session) Attach() (*Stream, error) {
 	s.lastMeta = meta
 	mark := s.pointer
 	ctrl := s.controlForLocked(sub)
+	offer := s.loginOfferMessageLocked()
 	startCast := s.castCancel == nil
 	if startCast {
 		s.castCtx, s.castCancel = context.WithCancel(s.tabCtx)
@@ -1185,6 +1360,7 @@ func (s *Session) Attach() (*Stream, error) {
 	b, _ := json.Marshal(meta)
 	sub.sendCtrl(b)
 	sub.sendCtrl(ctrl)
+	sub.sendCtrl(offer)
 	if mark.on {
 		sub.Send(mark.json())
 	}

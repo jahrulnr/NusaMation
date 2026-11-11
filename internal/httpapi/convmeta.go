@@ -26,6 +26,7 @@ type convMetaBrowser struct {
 type convMetaDraft struct {
 	Text           string            `json:"text"`
 	Attachments    []json.RawMessage `json:"attachments,omitempty"`
+	References     []json.RawMessage `json:"references,omitempty"`
 	SendDelivery   string            `json:"sendDelivery,omitempty"`
 	ReplyToChannel bool              `json:"replyToChannel,omitempty"`
 	UpdatedAt      int64             `json:"updatedAt"`

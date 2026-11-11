@@ -1,4 +1,5 @@
 import { previewResource } from "./file-preview.js";
+import { referencesFromStored } from "./references.js";
 import { $, $$, agentById, isMobile, parseJSON } from "./util.js";
 import { S, composerFor, composerKey, saveActivityState, setSelectedProject, setUiFont, setUiFontSize, switchComposer } from "./state.js";
 import { api } from "./api.js";
@@ -366,7 +367,7 @@ export function bindEvents() {
       case "toggle-routing": await toggleRouting(target.dataset.key); break;
       case "suggestion": {
         const ta = $("#prompt");
-        if (ta) { ta.value = target.dataset.prompt || ""; autoGrow(); ta.focus(); }
+        if (ta) { ta.value = target.dataset.prompt || ""; S.draft = ta.value; composerFor(composerKey).references = []; scheduleDraftSave(); autoGrow(); ta.focus(); }
         break;
       }
       case "send": await sendMessage(); break;
@@ -402,6 +403,7 @@ export function bindEvents() {
           owner.draft = m.channel && m.channel !== "web"
             ? (m.text || "").replace(/^(?:[^\r\n]*?: )?\[In reply to: [^\r\n]*\](?:\r?\n|$)/, "")
             : (m.text || "");
+          owner.references = referencesFromStored(owner.draft, meta.references);
           owner.attachments = (m.attachments || []).filter((a) => !pinUploadIds.has(a.id)).map((a) => ({ upload: a }))
             .concat(anns.map((a) => ({
               type: "annotation", id: a.pickId, pickId: a.pickId, comment: a.comment || "",

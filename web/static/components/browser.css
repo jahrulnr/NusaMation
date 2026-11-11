@@ -221,3 +221,26 @@ button.annot-chip { text-align: left; cursor: zoom-in; }
 }
 .browser-profile-row:hover { background: var(--accent-soft, rgba(245,181,68,.12)); }
 .browser-profile-row.active { color: var(--accent, #f5b544); }
+
+.browser-login-offer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; max-height: min(45vh, 360px); overflow-y: auto; border-bottom: 1px solid var(--border); background: var(--sidebar); font-size: 12px; }
+.browser-login-offer[hidden] { display: none; }
+.browser-login-offer [hidden] { display: none; }
+.browser-login-summary { flex: 1 1 180px; min-width: 0; }
+.browser-login-offer span { display: block; color: var(--muted); overflow-wrap: anywhere; margin-top: 3px; }
+.browser-login-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.browser-login-fields { flex: 1 0 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 8px; }
+.browser-login-fields[hidden] { display: none; }
+.browser-login-fields label { display: grid; gap: 4px; min-width: 0; color: var(--muted); }
+.browser-login-fields .input { width: 100%; min-width: 0; }
+.browser-login-password { display: flex; gap: 5px; min-width: 0; }
+.browser-login-password .input { flex: 1; }
+.browser-vault-pop { position: absolute; z-index: 30; top: 54px; right: 10px; width: min(320px, calc(100% - 20px)); max-height: min(55vh, 360px); overflow: auto; padding: 8px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--sidebar); box-shadow: 0 12px 40px rgba(0,0,0,.38); }
+.browser-vault-pop[hidden] { display: none; }
+.browser-vault-heading { display: flex; align-items: center; justify-content: space-between; padding-left: 6px; font-size: 12px; }
+.browser-vault-origin { padding: 0 6px 7px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.browser-vault-list { display: grid; gap: 2px; }
+.browser-vault-account { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; padding: 9px 7px; border-radius: 6px; text-align: left; color: var(--text); }
+.browser-vault-account:hover, .browser-vault-account:focus-visible { background: var(--panel-2); }
+.browser-vault-account .icon { color: var(--accent); flex: none; }
+.browser-vault-account span { overflow-wrap: anywhere; min-width: 0; }
+.browser-vault-empty { padding: 9px 7px; color: var(--muted); font-size: 12px; }
