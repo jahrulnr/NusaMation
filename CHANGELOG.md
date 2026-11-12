@@ -4,6 +4,15 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-11-12
+
+- Show Windows notifications under the NusaMation name and icon instead of the PowerShell identity.
+- Show an update shortcut in the web top bar whenever a newer release is available.
+- Install branded application shortcuts on Linux and Windows, use the app icon for Linux desktop notifications, and allow extra startup time for Windows notifications.
+- Show when host notifications are unavailable, prevent overlapping notification setting changes, and keep all control center tabs in one scrollable row on mobile.
+- Keep the mobile composer usable with project scope and attachments, preserve annotation editing when the keyboard opens, and forward mobile keyboard input to browser page forms.
+- The browser pane has Browser and Chrome Dev tabs, with Chrome's built-in DevTools inspecting the current page and using the full tab by default.
+- Browser history suggestions respond to touch selection, and single-finger gestures are forwarded to the page for tapping and scrolling.
 - Browser vault offers account selection instead of filling automatically, supports editing submitted logins before saving, and lets agents choose a saved username when filling.
 - Reference search respects Git ignore rules and skips ignored directories when Git is available, while retaining tracked files.
 - The composer searches files, folders, local skills, MCP servers and advertised agent commands with `/`, `@` or `#`. Only an item selected with Tab or a click becomes a reference; ordinary typed text stays text. Selected references survive draft restoration and queue editing.

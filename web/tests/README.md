@@ -1,5 +1,10 @@
 # Web rendering checks
 
+For the update shortcut, run `make build`, then
+`NUSAMATION_PLAYWRIGHT=/tmp/nusamation-stress/node_modules/playwright CHROME=/usr/bin/google-chrome node web/tests/browser-update.cjs`.
+The isolated server fixture checks initial and live update status, navigation,
+and desktop/mobile rendering. Screenshots go to `/tmp`.
+
 Run the self-contained logic tests with `node --test web/tests/*.test.cjs`.
 
 For the browser stress test, install Playwright outside the checkout and point it

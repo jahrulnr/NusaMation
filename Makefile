@@ -8,6 +8,8 @@ CONFIG_DIR ?= $(HOME)/.config/nusamation
 ENV_FILE := $(CONFIG_DIR)/env
 UNIT_DIR ?= $(HOME)/.config/systemd/user
 UNIT_FILE := $(UNIT_DIR)/nusamation.service
+APP_DIR ?= $(HOME)/.local/share/applications
+ICON_DIR ?= $(HOME)/.local/share/icons/hicolor/512x512/apps
 SERVICE := nusamation.service
 
 .PHONY: all build fake run test vet fmt check clean \
@@ -70,6 +72,9 @@ check-home:
 install-bin: check-home build
 	@install -d "$(BIN_DIR)"
 	@install -m 0755 "$(BINARY)" "$(BIN_DIR)/nusamation"
+	@install -d "$(APP_DIR)" "$(ICON_DIR)"
+	@install -m 0644 web/static/mark.png "$(ICON_DIR)/nusamation.png"
+	@printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=NusaMation' 'Comment=Open the NusaMation control center' 'Exec=xdg-open http://127.0.0.1:8787' 'Icon=nusamation' 'Terminal=false' 'Categories=Network;' > "$(APP_DIR)/nusamation.desktop"
 	@printf 'Installed binary: %s\n' "$(BIN_DIR)/nusamation"
 
 install-service: install-bin prepare
@@ -192,7 +197,7 @@ uninstall:
 	@if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then \
 		systemctl --user disable --now "$(SERVICE)" >/dev/null 2>&1 || true; \
 	fi
-	@rm -f "$(UNIT_FILE)" "$(BIN_DIR)/nusamation"
+	@rm -f "$(UNIT_FILE)" "$(BIN_DIR)/nusamation" "$(APP_DIR)/nusamation.desktop" "$(ICON_DIR)/nusamation.png"
 	@if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then \
 		systemctl --user daemon-reload >/dev/null 2>&1 || true; \
 	fi

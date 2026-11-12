@@ -116,7 +116,7 @@ func conversationsExport(args []string) error {
 
 func splitCSV(raw string) []string {
 	out := []string{}
-	for _, part := range strings.Split(raw, ",") {
+	for part := range strings.SplitSeq(raw, ",") {
 		if part = strings.TrimSpace(part); part != "" {
 			out = append(out, part)
 		}

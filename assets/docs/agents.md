@@ -45,6 +45,8 @@ session options. The HTTP preview and save endpoints are listed in [api.md](api.
 
 The browser pane offers to save submitted logins to its profile vault; choose Edit to adjust the username and password before saving. Saved logins appear as a choice when a login field is focused, or from the key button; the page is filled only after an account is chosen. An agent can call `browser_vault_fill`, optionally with an exact `username`, for the current profile and origin without returning the password. Exact password text is masked in browser-use JSON; transformed results and screenshots are not masked. Local execution access is unchanged.
 
+The pane's **Chrome Dev** tab opens Chrome's built-in DevTools for the current page. Select **Browser** to return to the page.
+
 ## Session instructions
 
 Type `/`, `@`, or `#` in the composer to search files, folders, skills, MCP servers, and commands advertised by the active session. Use arrow keys and Tab or click to select; Escape closes the menu. Without selection, the typed text is sent normally. Selected items keep their identities in drafts and queued messages; editing inside one removes its selection. Workspace and home skill directories are searched; the bounded search may not visit every file in a large workspace. MCP results name registered enabled servers; agent tool availability can vary. Drafts for new conversations have no session command list yet.

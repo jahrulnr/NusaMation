@@ -66,7 +66,7 @@
   .settings-modal .settings-layout { flex: 1; min-height: 0; }
   .settings-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
   .settings-tabs {
-    display: grid; grid-template-columns: repeat(7, minmax(4.5rem, 1fr)); overflow-x: auto;
+    display: grid; grid-auto-flow: column; grid-auto-columns: minmax(4.5rem, 1fr); overflow-x: auto;
     align-items: stretch; align-self: start; gap: 2px;
     border-right: 0; border-bottom: 1px solid var(--border); padding: 7px 6px;
   }

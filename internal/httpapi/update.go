@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"github.com/jahrulnr/nusamation/internal/notify"
 )
 
 // ---------- software update ----------
@@ -48,7 +50,7 @@ func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) 
 			"No desktop notification backend on this host (notify-send on Linux, PowerShell on Windows).")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), notify.DeliveryTimeout)
 	defer cancel()
 	if err := s.notifier.Test(ctx); err != nil {
 		writeError(w, http.StatusBadGateway, "notify", err.Error())

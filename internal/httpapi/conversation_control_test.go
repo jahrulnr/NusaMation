@@ -353,7 +353,7 @@ func TestConversationControlSendRejects(t *testing.T) {
 	if status != http.StatusConflict || out["code"] != "target_archived" {
 		t.Fatalf("archived status=%d body=%v", status, out)
 	}
-	if _, err := f.store.UpdateConversation(ctx, f.target.ID, store.ConversationUpdate{Archived: boolPtr(false)}); err != nil {
+	if _, err := f.store.UpdateConversation(ctx, f.target.ID, store.ConversationUpdate{Archived: new(false)}); err != nil {
 		t.Fatal(err)
 	}
 	ap := store.Approval{ConversationID: f.target.ID, Title: "Approve", Kind: "execute"}
@@ -454,7 +454,8 @@ func TestConversationControlSpawn(t *testing.T) {
 	}
 }
 
-func boolPtr(v bool) *bool { return &v }
+//go:fix inline
+func boolPtr(v bool) *bool { return new(v) }
 
 func TestConversationControlActivity(t *testing.T) {
 	f := newControlFixture(t)

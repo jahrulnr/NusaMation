@@ -195,6 +195,8 @@ On those same session calls NusaMation also injects a stdio server named `browse
 
 Ref-based actions verify the target before acting: disabled, read-only, `pointer-events:none`, off-viewport, and covered elements return `not_actionable` instead of clicking through. Coordinate actions (`browser_mouse_click_xy`, `browser_scroll`) act on whatever is at the point. Page dialogs (`alert`/`confirm`/`prompt`/`beforeunload`) are auto-dismissed so they cannot stall the pane. The earlier short names (`navigate`, `snapshot`, `click`, `type`, `press`, `scroll`, `move`, `emulate`, `eval`) remain accepted by the HTTP bridge, but MCP clients only see the `browser_*` names in `tools/list`. The pane's second toolbar row gives the human the same device control: **Relative** follows the pane size with the plain profile, the presets pin a fixed device, and the readout shows the active viewport. While the agent is driving, the pane letterboxes that viewport instead of resizing the page. A user-configured server already named `browser_use` is replaced by this one.
 
+The pane's **Chrome Dev** tab opens the running Chrome's built-in DevTools for the current page; use the **Browser** tab to return to the page.
+
 ### Conversation control
 
 NusaMation also injects a stdio server named `nusamation_conversation` (`nusamation mcp run --conversation`). Every conversation can use every tool; there is no per-conversation or global opt-in. The MCP child receives a token scoped to that conversation; an argument cannot retarget the caller. A turn that was itself started by another conversation has no control access, so workers cannot form a chain.

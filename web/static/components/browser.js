@@ -85,6 +85,7 @@ export function toggleBrowserPane() {
 // The shell re-rendered (login/logout, boot): drop local state. The server-side
 // session, if any, stays alive and re-attaches on next open.
 export function resetBrowserPane() {
+  closeDevToolsFrame();
   disconnectStream();
   hideSavedLogins();
   stopResizeWatch();
@@ -164,6 +165,7 @@ export function openBrowserPane(initialURL, opts = {}) {
 
 export function closeBrowserPane(opts = {}) {
   if (!B.open) return;
+  closeDevToolsFrame();
   const key = B.conversationId;
   const persist = opts.persist !== false;
   if (B.pendingPick && !B.annotate) postClearHighlight();
@@ -238,6 +240,11 @@ function buildPane(pane) {
   pane.dataset.built = "1";
   pane.innerHTML = `
     <div class="browser-resize" id="browser-resize" title="Drag to resize"></div>
+    <div class="browser-tabs" role="tablist" aria-label="Browser views">
+      <button class="browser-tab active" role="tab" aria-selected="true" data-action="browser-tab">Browser</button>
+      <button class="browser-tab" role="tab" aria-selected="false" data-action="browser-devtools">Chrome Dev</button>
+      <button class="icon-btn sm browser-tabs-close" data-action="browser-close" title="Close pane" aria-label="Close pane">${icon("x", "sm")}</button>
+    </div>
     <div class="browser-toolbar">
       <button class="icon-btn sm" data-action="browser-back" title="Back" aria-label="Back">${icon("chevron-left", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-forward" title="Forward" aria-label="Forward">${icon("chevron-right", "sm")}</button>
@@ -247,8 +254,6 @@ function buildPane(pane) {
       <button class="icon-btn sm" data-action="browser-annotate" title="Annotate an element" aria-label="Annotate an element" aria-pressed="false">${icon("pin", "sm")}</button>
       <button class="icon-btn sm" data-action="browser-device" title="Device emulation" aria-label="Device emulation" aria-pressed="true">${icon("smartphone", "sm")}</button>
       <span class="browser-profile-wrap" title="Persistent browser profile"><button class="device-chip browser-profile" id="browser-profile" data-action="browser-profile-picker" aria-label="Browser profile">default</button></span>
-      <button class="icon-btn sm" data-action="browser-devtools" title="Developer tools" aria-label="Developer tools" aria-pressed="false">${icon("terminal", "sm")}</button>
-      <button class="icon-btn sm" data-action="browser-close" title="Close pane" aria-label="Close pane">${icon("x", "sm")}</button>
     </div>
     <div class="browser-login-offer" id="browser-login-offer" hidden></div>
     <div class="browser-vault-pop" id="browser-vault-pop" hidden></div>
@@ -259,15 +264,10 @@ function buildPane(pane) {
       <button class="device-chip" data-action="browser-device-mode" data-device="tablet" title="Fixed 768×1024 tablet profile with a touch UA">Tablet</button>
       <span class="browser-device-readout" id="browser-device-readout"></span>
     </div>
-    <div class="browser-devtools" id="browser-devtools" hidden>
-      <div class="browser-devtools-log" id="browser-devtools-log" aria-label="Console output"></div>
-      <div class="browser-devtools-repl">
-        <input class="input" id="browser-devtools-input" placeholder="Evaluate JavaScript" spellcheck="false" autocomplete="off" aria-label="Evaluate JavaScript">
-        <button class="btn btn-sm" data-action="browser-devtools-run">Run</button>
-      </div>
-    </div>
+    <iframe class="browser-devtools-frame" id="browser-devtools-frame" title="Chrome DevTools" hidden></iframe>
     <div class="browser-view" id="browser-view" tabindex="0" aria-label="Remote browser view">
       <img class="browser-frame" id="browser-frame" alt="Remote page" draggable="false">
+      <textarea id="browser-touch-input" class="browser-touch-input" tabindex="-1" aria-label="Remote browser keyboard" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
       <div class="browser-state" id="browser-state"></div>
       <div class="browser-watch" id="browser-watch"></div>
     </div>`;
@@ -357,18 +357,29 @@ function bindPane(pane) {
   url.addEventListener("focus", () => { url.select(); querySuggest(""); });
   url.addEventListener("input", () => querySuggest(url.value));
   url.addEventListener("blur", () => setTimeout(hideSuggest, 150));
-  const devInput = $("#browser-devtools-input", pane);
-  devInput.addEventListener("keydown", (e) => {
-    e.stopPropagation();
-    if (e.key === "Enter") { e.preventDefault(); runDevEval(devInput.value); devInput.value = ""; }
-  });
-  view.addEventListener("pointerdown", () => view.focus());
+  view.addEventListener("pointerdown", (e) => { if (e.pointerType !== "touch") view.focus(); });
   view.addEventListener("pointermove", onViewMove);
+  for (const type of ["touchstart", "touchmove", "touchend", "touchcancel"]) {
+    view.addEventListener(type, onViewTouch, { passive: false });
+  }
   view.addEventListener("click", onViewClick);
   view.addEventListener("auxclick", onViewAuxClick);
   view.addEventListener("contextmenu", (e) => e.preventDefault());
   view.addEventListener("wheel", onViewWheel, { passive: false });
   view.addEventListener("keydown", onViewKey);
+  const touchInput = $("#browser-touch-input", pane);
+  touchInput.addEventListener("input", onTouchInput);
+  touchInput.addEventListener("compositionend", onTouchInput);
+  touchInput.addEventListener("beforeinput", (e) => {
+    if (!canInput() || e.isComposing) return;
+    if (e.inputType === "deleteContentBackward" || e.inputType === "deleteContentForward") {
+      sendCtl({ type: "key", key: e.inputType === "deleteContentBackward" ? "Backspace" : "Delete", modifiers: 0 });
+      e.preventDefault();
+    } else if (e.inputType === "insertLineBreak" || e.inputType === "insertParagraph") {
+      sendCtl({ type: "key", key: "Enter", modifiers: 0 });
+      e.preventDefault();
+    }
+  });
   view.addEventListener("pointerleave", () => { if (B.annotate && !B.pendingPick) hideHover(); });
   const profileBtn = $("#browser-profile", pane);
   if (profileBtn) profileBtn.addEventListener("keydown", (e) => e.stopPropagation());
@@ -465,6 +476,7 @@ async function createSession(gen, key) {
 
 function attach(session) {
   B.session = session;
+  if (B.devtools) selectBrowserTab(true);
   B.meta = null;
   B.gotFrame = false;
   B.viewportGuest = false;
@@ -558,6 +570,7 @@ function connectStream() {
   ws.onclose = () => {
     if (B.socket !== ws) return;
     B.socket = null;
+    if (B.devtools) closeDevToolsFrame();
     stopResizeWatch();
     if (!B.open || B.status === "closed") return;
     // Dropped without a `closed` message — the session survives server-side.
@@ -579,6 +592,13 @@ function disconnectStream() {
 
 function handleStreamMessage(msg) {
   switch (msg.type) {
+    case "keyboard_focus": {
+      if (msg.request !== keyboardRequest || !canInput()) break;
+      const input = $("#browser-touch-input");
+      if (msg.editable) input?.focus({ preventScroll: true });
+      else if (document.activeElement === input) input.blur();
+      break;
+    }
     case "meta":
       B.meta = msg;
       if (!B.sawMeta) {
@@ -598,6 +618,7 @@ function handleStreamMessage(msg) {
       B.inputOwner = msg.owner === "you";
       B.agentLock = msg.owner === "agent";
       if (!B.inputOwner) {
+        if (B.devtools) closeDevToolsFrame();
         hideSavedLogins();
         // An ex-controller stops resizing the shared viewport; its pane
         // resizes would otherwise spam the socket and stretch the frame.
@@ -832,11 +853,19 @@ function renderSuggest() {
       <span class="browser-suggest-url">${esc(e.url || "")}</span>
     </div>`).join("");
   for (const row of $$(".browser-suggest-row", box)) {
-    row.addEventListener("mousedown", (e) => e.preventDefault()); // keep the input focused until click
+    row.addEventListener("pointerdown", (e) => e.preventDefault());
+    row.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const url = row.dataset.url;
+      hideSuggest();
+      browserNavigate(url);
+    });
   }
 }
 
 function hideSuggest() {
+  ++suggestSeq;
+  clearTimeout(suggestTimer);
   const box = $("#browser-suggest");
   const was = box && !box.hidden;
   if (box) box.hidden = true;
@@ -848,54 +877,38 @@ function hideSuggest() {
 /* ---------------- developer tools drawer ---------------- */
 
 export function toggleDevtools() {
-  B.devtools = !B.devtools;
-  const drawer = $("#browser-devtools");
-  if (drawer) drawer.hidden = !B.devtools;
-  $(`[data-action="browser-devtools"]`)?.setAttribute("aria-pressed", String(B.devtools));
-  if (B.devtools) {
-    $("#browser-devtools-input")?.focus();
-    drainDevConsole();
-  }
+  selectBrowserTab(true);
 }
 
-function devLog(html, cls = "") {
-  const log = $("#browser-devtools-log");
-  if (!log) return;
-  const row = document.createElement("div");
-  row.className = `browser-devtools-line ${cls}`.trim();
-  row.innerHTML = html;
-  log.appendChild(row);
-  log.scrollTop = log.scrollHeight;
+function closeDevToolsFrame() {
+  selectBrowserTab(false);
+  const frame = $("#browser-devtools-frame");
+  if (frame) { frame.removeAttribute("src"); delete frame.dataset.session; }
 }
 
-async function drainDevConsole() {
-  const log = $("#browser-devtools-log");
-  // The eval REPL shares this log — a late console drain must not wipe lines
-  // the user already saw, so draining only fills an untouched log.
-  if (!B.devtools || !B.session?.id || !log || log.querySelector(".is-in")) return;
-  try {
-    const d = await api(`/browser/sessions/${encodeURIComponent(B.session.id)}/console`);
-    if (!B.devtools || log.querySelector(".is-in")) return;
-    log.innerHTML = "";
-    for (const e of d.entries || []) {
-      devLog(`<span class="browser-devtools-type">${esc(e.type || e.level || "log")}</span> ${esc(String(e.text ?? e.value ?? ""))}`, `is-${e.type || e.level || "log"}`);
+export function selectBrowserTab(devtools = false) {
+  B.devtools = devtools;
+  const pane = $("#browser-pane");
+  pane?.classList.toggle("devtools-active", devtools);
+  const frame = $("#browser-devtools-frame");
+  if (frame) {
+    frame.hidden = !devtools;
+    if (devtools && B.session?.id && frame.dataset.session !== B.session.id) {
+      frame.dataset.session = B.session.id;
+      // Chrome's remote inspector enables its own page screencast by default.
+      // The Browser tab already supplies the page, so start with the inspector
+      // filling this tab. DevTools can still toggle its screencast manually.
+      try { localStorage.setItem("screencast-enabled", "false"); } catch {}
+      const base = `/api/browser/sessions/${encodeURIComponent(B.session.id)}/devtools/`;
+      const scheme = location.protocol === "https:" ? "wss" : "ws";
+      frame.src = `${base}inspector.html?${scheme}=${encodeURIComponent(location.host + base + "socket")}`;
     }
-    if (!d.entries?.length) devLog('<span class="muted">No console output captured for this page.</span>', "muted");
-  } catch { devLog('<span class="muted">Console unavailable.</span>', "muted"); }
-}
-
-export async function runDevEval(expr) {
-  const input = $("#browser-devtools-input");
-  const expression = expr ?? input?.value ?? "";
-  if (!expression.trim() || !B.session?.id) return;
-  if (expr === undefined && input) input.value = "";
-  devLog(`<span class="browser-devtools-type">&gt;</span> ${esc(expression)}`, "is-in");
-  try {
-    const d = await api(`/browser/sessions/${encodeURIComponent(B.session.id)}/eval`, { method: "POST", body: { expression } });
-    if (!d.ok) { devLog(esc(d.error || "Evaluation failed"), "is-error"); return; }
-    devLog(esc(typeof d.result === "string" ? d.result : JSON.stringify(d.result)), "is-out");
-  } catch (e) { devLog(esc(e.message || "Evaluation failed"), "is-error"); }
-  drainDevConsole();
+  }
+  for (const [action, active] of [["browser-tab", !devtools], ["browser-devtools", devtools]]) {
+    const tab = $(`[data-action="${action}"]`);
+    tab?.classList.toggle("active", active);
+    tab?.setAttribute("aria-selected", String(active));
+  }
 }
 
 /* ---------------- profile picker ---------------- */
@@ -928,6 +941,7 @@ async function switchProfile(name) {
   if (!B.session?.id || !name || !knownProfiles.includes(name) || name === browserProfile()) return;
   try {
     const d = await api(`/browser/sessions/${encodeURIComponent(B.session.id)}/profile`, { method: "POST", body: { profile: name } });
+    closeDevToolsFrame();
     B.session = d.session || B.session;
     refreshProfiles();
     toast("Profile switched", `Now browsing as "${name}".`, "info");
@@ -961,6 +975,7 @@ function viewportPoint(e) {
 }
 
 function onViewMove(e) {
+  if (e.pointerType === "touch") return;
   if (e.target.id !== "browser-frame") { if (B.annotate && !B.pendingPick) hideHover(); return; }
   if (B.annotate) { onAnnotateMove(e); return; }
   if (!canInput()) return;
@@ -970,6 +985,36 @@ function onViewMove(e) {
   const wait = MOVE_INTERVAL_MS - (now - B.lastMoveSent);
   if (wait <= 0) flushMove();
   else if (!B.moveTimer) B.moveTimer = setTimeout(flushMove, wait);
+}
+
+let viewTouch = null;
+let viewTouchStart = null;
+let keyboardRequest = 0;
+function onViewTouch(e) {
+  if (B.annotate || !canInput()) { viewTouch = null; return; }
+  if (e.type === "touchstart" && viewTouch === null && e.target.id === "browser-frame") {
+    ++keyboardRequest;
+    viewTouch = e.changedTouches[0].identifier;
+    viewTouchStart = { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+  }
+  if (viewTouch === null) return;
+  const touch = Array.from(e.changedTouches).find((t) => t.identifier === viewTouch);
+  e.preventDefault();
+  if (!touch) return;
+  const p = viewportPoint(touch);
+  if (!p) return;
+  const type = { touchstart: "touchStart", touchmove: "touchMove", touchend: "touchEnd", touchcancel: "touchCancel" }[e.type];
+  const tap = e.type === "touchend" && viewTouchStart && Math.hypot(touch.clientX - viewTouchStart.x, touch.clientY - viewTouchStart.y) < 10;
+  sendCtl({ type: "touch", phase: type, x: p.x, y: p.y, ...(tap ? { keyboardRequest } : {}) });
+  if (e.type === "touchend" || e.type === "touchcancel") viewTouch = null;
+}
+
+function onTouchInput(e) {
+  if (e.isComposing || !canInput()) return;
+  const input = e.currentTarget;
+  const text = input.value;
+  if (text) sendCtl({ type: "text", text });
+  input.value = "";
 }
 
 function flushMove() {
@@ -1016,6 +1061,7 @@ function onViewWheel(e) {
 function onViewKey(e) {
   if (e.isComposing) return;
   e.stopPropagation(); // keys typed at the remote page must not fire app shortcuts
+  if (e.target.id === "browser-touch-input" && ((e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) || e.key === "Unidentified" || e.key === "Process")) return;
   if (B.annotate && e.key === "Escape") { e.preventDefault(); setAnnotate(false); return; }
   const vault = $("#browser-vault-pop");
   if (vault && !vault.hidden) {

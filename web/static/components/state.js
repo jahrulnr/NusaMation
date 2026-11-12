@@ -85,8 +85,12 @@ export const S = {
   authTerminal: null,
   lastNotice: "",
   updateInfo: null,
+  updateSeq: 0,
   updateBusy: "",
-  notifySettings: { enabled: true, available: false, backend: "" },
+  notifySettings: null,
+  notifyBusy: false,
+  notifyError: "",
+  notifySeq: 0,
 };
 
 // Composer state belongs to a conversation; the empty key is the welcome draft.

@@ -52,6 +52,13 @@ export function renderSettings() {
     $$(".settings-tab", layout).forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === S.settingsTab));
     $("#settings-content", layout).innerHTML = body;
   } else openModal(`${modalHead("Control center", "Agents, channels, routing and account")}${content}`, { size: "settings-modal" });
+  const tabsEl = $("#modal-root .settings-tabs");
+  const activeTab = tabsEl?.querySelector(".settings-tab.active");
+  if (tabsEl && activeTab && tabsEl.scrollWidth > tabsEl.clientWidth) {
+    const bounds = tabsEl.getBoundingClientRect(), active = activeTab.getBoundingClientRect();
+    if (active.left < bounds.left) tabsEl.scrollLeft += active.left - bounds.left;
+    else if (active.right > bounds.right) tabsEl.scrollLeft += active.right - bounds.right;
+  }
   if (S.settingsTab === "channels") startQRTimer();
 }
 
@@ -260,10 +267,10 @@ export function accountSettings() {
       <div class="field" style="max-width:320px"><label for="ui-font">Interface font</label><select id="ui-font" class="select" data-change="ui-font">${UI_FONTS.map((f) => `<option value="${esc(f.id)}" ${uiFont() === f.id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select><div class="settings-desc">Changes the app font in this browser only.</div></div>
       <div class="field" style="max-width:320px"><label for="ui-font-size">Interface text size</label><select id="ui-font-size" class="select" data-change="ui-font-size"><option value="" ${uiFontSize() === "" ? "selected" : ""}>System default</option>${UI_FONT_SIZES.map((s) => `<option value="${s}" ${uiFontSize() === String(s) ? "selected" : ""}>${s}px</option>`).join("")}</select><div class="settings-desc">Scales the whole interface proportionally (9–20px base text).</div></div>
     </div>
-    ${(S.notifySettings || {}).available ? `<div class="settings-section">
+    <div class="settings-section">
       <div class="settings-title">Desktop notifications</div>
       ${notificationsSection()}
-    </div>` : ""}
+    </div>
     <div class="settings-section">
       <div class="settings-title">Change password</div>
       <form data-form="password" style="max-width:420px">
@@ -311,19 +318,29 @@ function updateSection() {
 }
 
 function notificationsSection() {
+  if (S.notifyError) return `<div class="settings-desc" role="alert">Could not load notification settings. <button class="btn btn-secondary btn-sm" data-action="notify-retry">Retry</button></div>`;
+  if (!S.notifySettings) return `<div class="settings-desc">Loading notification settings…</div>`;
   const n = S.notifySettings || {};
   const backend = n.backend ? ` · via ${esc(n.backend)}` : "";
-  let rows = `<div class="settings-row"><div><div class="label">Host notifications</div><div class="desc">Approval requests, finished turns and agent errors as OS notifications${backend}.</div></div><button role="switch" aria-checked="${!!n.enabled}" class="switch ${n.enabled ? "on" : ""}" data-action="notify-toggle" ${n.available ? "" : "disabled"}></button></div>`;
-  rows += `<div class="form-actions" style="justify-content:flex-start;margin-top:10px"><button class="btn btn-secondary btn-sm" data-action="notify-test">Send test notification</button></div>`;
+  let rows = `<div class="settings-row"><div><div class="label">Host notifications</div><div class="desc">Approval requests, finished turns and agent errors as OS notifications${backend}.</div></div><button role="switch" aria-label="Host notifications" aria-checked="${!!n.enabled}" class="switch ${n.enabled ? "on" : ""}" data-action="notify-toggle" ${n.available && !S.notifyBusy ? "" : "disabled"}></button></div>`;
+  if (!n.available) rows += `<div class="settings-desc">Desktop notifications are unavailable on the host. Check its desktop session and notification service.</div>`;
+  rows += `<div class="form-actions" style="justify-content:flex-start;margin-top:10px"><button class="btn btn-secondary btn-sm" data-action="notify-test" ${n.available ? "" : "disabled"}>Send test notification</button></div>`;
   return rows;
 }
 
 export function loadUpdateInfo() {
+  const seq = ++S.notifySeq;
+  const updateSeq = S.updateSeq;
+  S.notifyError = "";
   api("/settings").then((d) => {
-    S.notifySettings = d.notifications || S.notifySettings;
-    S.updateInfo = d.update || S.updateInfo;
+    if (seq === S.notifySeq && !S.notifyBusy) S.notifySettings = d.notifications || S.notifySettings;
+    if (updateSeq === S.updateSeq) S.updateInfo = d.update || S.updateInfo;
     if (S.modal?.type === "settings" && (S.settingsTab === "account" || S.settingsTab === "about")) renderSettings();
-  }).catch(() => {});
+  }).catch(() => {
+    if (seq !== S.notifySeq) return;
+    S.notifyError = "Could not load notification settings.";
+    if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
+  });
 }
 
 export async function checkUpdate() {
@@ -360,8 +377,11 @@ export function applyUpdate() {
 }
 
 export async function toggleNotifications() {
+  if (S.notifyBusy || !S.notifySettings?.available) return;
   const prev = S.notifySettings || {};
   const next = !prev.enabled;
+  S.notifySeq++;
+  S.notifyBusy = true;
   S.notifySettings = { ...prev, enabled: next };
   renderSettings();
   try {
@@ -371,6 +391,7 @@ export async function toggleNotifications() {
     S.notifySettings = prev;
     toast("Could not save notification setting", e.message, "error");
   }
+  S.notifyBusy = false;
   if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
 }
 

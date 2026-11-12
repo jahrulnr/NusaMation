@@ -76,7 +76,7 @@ func TestCountSpawnedConversations(t *testing.T) {
 	if n, err := st.CountSpawnedConversations(ctx, parent.ID); err != nil || n != 1 {
 		t.Fatalf("count = %d err=%v", n, err)
 	}
-	if _, err := st.UpdateConversation(ctx, child.ID, ConversationUpdate{Archived: boolPtr(true)}); err != nil {
+	if _, err := st.UpdateConversation(ctx, child.ID, ConversationUpdate{Archived: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := st.CountSpawnedConversations(ctx, parent.ID); err != nil || n != 0 {
@@ -84,7 +84,8 @@ func TestCountSpawnedConversations(t *testing.T) {
 	}
 }
 
-func boolPtr(v bool) *bool { return &v }
+//go:fix inline
+func boolPtr(v bool) *bool { return new(v) }
 
 func TestConversationProgress(t *testing.T) {
 	st := testStore(t)

@@ -84,7 +84,7 @@ func TestReferenceSearchSkipsIgnoredTreeBeforeLimit(t *testing.T) {
 	if err := os.MkdirAll(ignored, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		if err := os.WriteFile(filepath.Join(ignored, fmt.Sprintf("junk-%04d", i)), nil, 0600); err != nil {
 			t.Fatal(err)
 		}

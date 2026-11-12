@@ -91,23 +91,25 @@ func (s *Server) handleBrowserStream(w http.ResponseWriter, r *http.Request) {
 }
 
 type browserInput struct {
-	Type       string  `json:"type"`
-	X          float64 `json:"x"`
-	Y          float64 `json:"y"`
-	Button     string  `json:"button"`
-	ClickCount int64   `json:"clickCount"`
-	DeltaX     float64 `json:"deltaX"`
-	DeltaY     float64 `json:"deltaY"`
-	Text       string  `json:"text"`
-	Key        string  `json:"key"`
-	Modifiers  int64   `json:"modifiers"`
-	Width      int64   `json:"width"`
-	Height     int64   `json:"height"`
-	Preset     string  `json:"preset"`
-	DPR        float64 `json:"dpr"`
-	Mobile     *bool   `json:"mobile"`
-	UA         *string `json:"ua"`
-	Touch      *bool   `json:"touch"`
+	Type            string  `json:"type"`
+	Phase           string  `json:"phase"`
+	X               float64 `json:"x"`
+	Y               float64 `json:"y"`
+	Button          string  `json:"button"`
+	ClickCount      int64   `json:"clickCount"`
+	DeltaX          float64 `json:"deltaX"`
+	DeltaY          float64 `json:"deltaY"`
+	Text            string  `json:"text"`
+	Key             string  `json:"key"`
+	Modifiers       int64   `json:"modifiers"`
+	Width           int64   `json:"width"`
+	Height          int64   `json:"height"`
+	Preset          string  `json:"preset"`
+	DPR             float64 `json:"dpr"`
+	Mobile          *bool   `json:"mobile"`
+	UA              *string `json:"ua"`
+	Touch           *bool   `json:"touch"`
+	KeyboardRequest int64   `json:"keyboardRequest"`
 }
 
 func (s *Server) browserInput(sess *browser.Session, sub *browser.Stream, msg browserInput) {
@@ -133,6 +135,16 @@ func (s *Server) browserInput(sess *browser.Session, sub *browser.Stream, msg br
 		err = sess.MouseMove(msg.X, msg.Y)
 	case "click":
 		err = sess.Click(msg.X, msg.Y, msg.Button, msg.ClickCount)
+	case "touch":
+		err = sess.Touch(msg.Phase, msg.X, msg.Y)
+		if err == nil && msg.Phase == "touchEnd" && msg.KeyboardRequest != 0 {
+			var editable bool
+			editable, err = sess.FocusedEditable()
+			if err == nil {
+				b, _ := json.Marshal(map[string]any{"type": "keyboard_focus", "request": msg.KeyboardRequest, "editable": editable})
+				sub.Send(b)
+			}
+		}
 	case "wheel":
 		err = sess.Wheel(msg.X, msg.Y, msg.DeltaX, msg.DeltaY)
 	case "text":

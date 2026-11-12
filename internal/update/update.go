@@ -283,7 +283,7 @@ func (m *Manager) notifyRelease(tag string) {
 		return
 	}
 	st := m.Status()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), notify.DeliveryTimeout)
 	defer cancel()
 	m.notifier.Send(ctx, notify.Notification{
 		Title:   "NusaMation update available",

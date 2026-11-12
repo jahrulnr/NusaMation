@@ -125,7 +125,10 @@ jobs:
           merge-multiple: true
       - name: Add installers
         if: steps.check.outputs.skipped != 'true'
-        run: cp scripts/install.sh scripts/install.ps1 dist/
+        run: |
+          cp scripts/install.sh scripts/install.ps1 dist/
+          cp web/static/mark.png dist/nusamation-icon.png
+          cp web/static/mark.ico dist/nusamation-icon.ico
       # Only binaries are checksummed; the installers are small text scripts
       # covered by git history.
       - name: Generate checksums

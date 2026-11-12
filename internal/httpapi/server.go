@@ -202,6 +202,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/browser/sessions/{id}/annotate/preview", s.protected(s.handleBrowserAnnotatePreview))
 	mux.HandleFunc("POST /api/browser/sessions/{id}/annotate/clear", s.protected(s.handleBrowserAnnotateClear))
 	mux.HandleFunc("GET /api/browser/sessions/{id}/stream", s.protected(s.handleBrowserStream))
+	mux.HandleFunc("GET /api/browser/sessions/{id}/devtools/{path...}", s.protected(s.handleBrowserDevTools))
 	mux.HandleFunc("POST /api/browser/sessions/{id}/profile", s.protected(s.handleBrowserProfile))
 	mux.HandleFunc("GET /api/browser/sessions/{id}/console", s.protected(s.handleBrowserConsole))
 	mux.HandleFunc("POST /api/browser/sessions/{id}/eval", s.protected(s.handleBrowserEval))

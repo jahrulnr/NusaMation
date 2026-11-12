@@ -46,6 +46,10 @@ $installDir = Join-Path $env:LOCALAPPDATA 'NusaMation\bin'
 $binary = Join-Path $installDir 'nusamation.exe'
 $dataDir = Join-Path $env:USERPROFILE '.nusamation'
 $taskName = 'NusaMation'
+$iconFile = Join-Path $env:LOCALAPPDATA 'NusaMation\nusamation.ico'
+$notificationIcon = Join-Path $env:LOCALAPPDATA 'NusaMation\notification-icon.png'
+$notificationKey = 'HKCU:\Software\Classes\AppUserModelId\NusaMation.Desktop'
+$shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\NusaMation.url'
 
 function Get-ReleaseUrl([string]$Asset) {
     if ([string]::IsNullOrWhiteSpace($Version) -or $Version -eq 'latest') {
@@ -75,6 +79,9 @@ if ($Uninstall) {
         Write-Host "Removed $binary"
     }
     Remove-FromUserPath $installDir
+    $registeredIcon = (Get-ItemProperty -LiteralPath $notificationKey -Name IconUri -ErrorAction SilentlyContinue).IconUri
+    if ($registeredIcon -eq $notificationIcon) { Remove-Item -LiteralPath $notificationKey -Force -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath $shortcut, $iconFile, $notificationIcon -Force -ErrorAction SilentlyContinue
     Write-Host "Data was kept at $dataDir"
     Write-Host 'Delete it manually to purge.'
     # return instead of exit: exit would terminate the caller's session when
@@ -101,6 +108,7 @@ try {
     Write-Host "Downloading $binUrl"
     Invoke-WebRequest -Uri $binUrl -OutFile (Join-Path $tmp $assetName) -UseBasicParsing
     Invoke-WebRequest -Uri $sumUrl -OutFile (Join-Path $tmp 'SHA256SUMS') -UseBasicParsing
+    Invoke-WebRequest -Uri (Get-ReleaseUrl 'nusamation-icon.ico') -OutFile (Join-Path $tmp 'nusamation-icon.ico') -UseBasicParsing
 
     $expected = Get-Content (Join-Path $tmp 'SHA256SUMS') |
         Where-Object { $_ -like "*$assetName" } |
@@ -109,6 +117,8 @@ try {
     if (-not $expected) { throw "no checksum found for $assetName in SHA256SUMS" }
     $actual = (Get-FileHash (Join-Path $tmp $assetName) -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $expected.ToLowerInvariant()) { throw "checksum mismatch for $assetName" }
+    $iconExpected = Get-Content (Join-Path $tmp 'SHA256SUMS') | Where-Object { $_ -match '\s+nusamation-icon\.ico$' } | ForEach-Object { ($_ -split '\s+')[0] } | Select-Object -First 1
+    if (-not $iconExpected -or (Get-FileHash (Join-Path $tmp 'nusamation-icon.ico') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $iconExpected.ToLowerInvariant()) { throw 'checksum mismatch for nusamation-icon.ico' }
     Write-Host 'Checksum verified (SHA-256).'
 
     # A running exe is locked and cannot be overwritten: stop the scheduled
@@ -119,6 +129,9 @@ try {
 
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $tmp $assetName) -Destination $binary -Force
+    Copy-Item -LiteralPath (Join-Path $tmp 'nusamation-icon.ico') -Destination $iconFile -Force
+    New-Item -ItemType Directory -Path (Split-Path -Parent $shortcut) -Force | Out-Null
+    Set-Content -LiteralPath $shortcut -Encoding ASCII -Value "[InternetShortcut]`r`nURL=http://127.0.0.1:8787`r`nIconFile=$iconFile`r`nIconIndex=0"
     Write-Host "Installed $binary"
 }
 finally {

@@ -3,23 +3,53 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"unicode/utf16"
+
+	"github.com/jahrulnr/nusamation/web"
 )
 
-// On Windows the notification is raised through a temporary
-// System.Windows.Forms.NotifyIcon balloon — the only toast mechanism that
-// works from an unpackaged app without installing modules (BurntToast) or
-// registering a start-menu shortcut with an AppUserModelID. On Windows 10+
-// balloons surface as native toasts.
+// Windows identifies unpackaged toast senders using a per-user AppUserModelId.
 type windowsSender struct{ bin string }
+
+const windowsAppID = "NusaMation.Desktop"
+
+var windowsIconMu sync.Mutex
+
+func windowsIcon() (string, error) {
+	windowsIconMu.Lock()
+	defer windowsIconMu.Unlock()
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(base, "NusaMation")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	data, err := fs.ReadFile(web.FS(), "mark.png")
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "notification-icon.png")
+	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, data) {
+		return path, nil
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
 
 func platformSender() Sender {
 	if bin, err := exec.LookPath("powershell.exe"); err == nil {
@@ -43,27 +73,26 @@ func (s windowsSender) Notify(ctx context.Context, n Notification) error {
 	if strings.TrimSpace(title) == "" {
 		title = "NusaMation"
 	}
-	tip := "Info"
-	switch n.Icon {
-	case "dialog-error":
-		tip = "Error"
-	case "dialog-question", "dialog-warning":
-		tip = "Warning"
+	iconPath, err := windowsIcon()
+	if err != nil {
+		return fmt.Errorf("notification icon: %w", err)
 	}
-	hold := 6000
-	if n.Urgency == UrgencyCritical {
-		// Longer dwell, but the PowerShell process must finish inside the
-		// caller's ~10s context or it is killed mid-balloon.
-		hold = 8000
-	}
-	script := fmt.Sprintf(`Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-$ni = New-Object System.Windows.Forms.NotifyIcon
-$ni.Icon = [System.Drawing.SystemIcons]::Information
-$ni.Visible = $true
-$ni.ShowBalloonTip(%d, %s, %s, [System.Windows.Forms.ToolTipIcon]::%s)
-Start-Sleep -Milliseconds %d
-$ni.Dispose()`, hold, psQuote(title), psQuote(n.Body), tip, hold+1500)
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$appId = %s
+$key = 'HKCU:\Software\Classes\AppUserModelId\' + $appId
+New-Item -Path $key -Force | Out-Null
+New-ItemProperty -Path $key -Name DisplayName -Value 'NusaMation' -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $key -Name IconUri -Value %s -PropertyType String -Force | Out-Null
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null
+[Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType=WindowsRuntime] | Out-Null
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text></text><text></text></binding></visual></toast>')
+$nodes = $xml.GetElementsByTagName('text')
+$nodes.Item(0).InnerText = %s
+$nodes.Item(1).InnerText = %s
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)`, psQuote(windowsAppID), psQuote(iconPath), psQuote(title), psQuote(n.Body))
 	cmd := exec.CommandContext(ctx, s.bin,
 		"-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16(script))
 	// The app often runs without a console (hidden logon task): prevent a

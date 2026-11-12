@@ -125,21 +125,19 @@ func TestInputLease(t *testing.T) {
 // -race — the old in-place delete wrote the same array a snapshot reads.
 func TestStreamFanOutDetach(t *testing.T) {
 	s := &Session{status: "active"}
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		s.streams = append(s.streams, newStream())
 	}
 	s.controller = s.streams[0]
 	subs := append([]*Stream(nil), s.streams...)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 50; j++ {
+	for range 4 {
+		wg.Go(func() {
+			for range 50 {
 				s.broadcastControl()
 			}
-		}()
+		})
 	}
 	for _, sub := range subs {
 		wg.Add(1)

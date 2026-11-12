@@ -49,7 +49,7 @@ func filterTools(tools []stdio.Tool, raw string) []stdio.Tool {
 		return tools
 	}
 	allowed := map[string]bool{}
-	for _, name := range strings.Split(raw, ",") {
+	for name := range strings.SplitSeq(raw, ",") {
 		if name = strings.TrimSpace(name); name != "" {
 			allowed[name] = true
 		}

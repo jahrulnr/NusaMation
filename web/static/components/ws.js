@@ -1,6 +1,6 @@
 import { agentById, parseConfigs, parseJSON } from "./util.js";
 import { S, composers, composerKey, switchComposer } from "./state.js";
-import { ApiError } from "./api.js";
+import { api, ApiError } from "./api.js";
 import { toast } from "./toast.js";
 import { closeModal } from "./modal.js";
 import { applyStreamDelta, currentApprovals, renderChat, scheduleChatRender, scheduleStreamRender, scheduleStreamResync } from "./chat.js";
@@ -38,6 +38,12 @@ export function connectWS() {
     renderOffline();
     renderSidebar();
     refreshBootstrap().catch(() => {});
+    const updateSeq = S.updateSeq;
+    api("/update").then((status) => {
+      if (updateSeq !== S.updateSeq) return;
+      S.updateInfo = status;
+      renderTopbar();
+    }).catch(() => {});
     if (attempt > 0 && S.current) loadConversation(S.current.id, false).catch(() => {});
   };
   ws.onmessage = (e) => {
@@ -93,7 +99,9 @@ export function handleEvent(ev) {
       S.appVersion = data.version || S.appVersion;
       break;
     case "update.status": {
+      S.updateSeq++;
       S.updateInfo = data;
+      renderTopbar();
       if (S.modal?.type === "settings" && S.settingsTab === "about") renderSettings();
       if (data.stage === "restarting") toast("Restarting to finish update", "This page reconnects and refreshes automatically.", "info", 15000);
       break;

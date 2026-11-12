@@ -9,7 +9,7 @@ import { closePopover } from "./popover.js";
 import { openToolMenu, previewAnnotation, previewFile, renderChat, renderPlanDock, toolPreFor } from "./chat.js";
 import { changeElicitationPage, renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js";
 import { autoGrow, editAnnotationComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js";
-import { browserDeviceMode, browserEscape, browserHistory, browserReconnect, browserTakeover, cancelAnnotation, closeBrowserPane, openProfilePicker, runDevEval, submitAnnotation, toggleAnnotate, toggleBrowserPane, toggleDeviceBar, toggleDevtools } from "./browser.js";
+import { browserDeviceMode, browserEscape, browserHistory, browserReconnect, browserTakeover, cancelAnnotation, closeBrowserPane, openProfilePicker, selectBrowserTab, submitAnnotation, toggleAnnotate, toggleBrowserPane, toggleDeviceBar, toggleDevtools } from "./browser.js";
 import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, newProjectChat, openControlActivity, openConversationMenu, openMoreMenu, openRoutingMenu, openTeamPanel, renameConversation, selectConversation, setRoute, togglePin, toggleRouting } from "./conversations.js";
 import { renderOffline } from "./shell.js";
 import { scheduleDraftSave } from "./convmeta.js";
@@ -561,6 +561,7 @@ export function bindEvents() {
       case "update-check": await checkUpdate(); break;
       case "update-apply": applyUpdate(); break;
       case "notify-toggle": await toggleNotifications(); break;
+      case "notify-retry": loadUpdateInfo(); renderSettings(); break;
       case "notify-test": await testNotification(); break;
       case "logout": doLogout(); break;
       case "delete-all-conversations": {
@@ -585,8 +586,8 @@ export function bindEvents() {
       case "browser-device-mode": browserDeviceMode(target.dataset.device); break;
       case "browser-close": closeBrowserPane(); break;
       case "browser-devtools": toggleDevtools(); break;
+      case "browser-tab": selectBrowserTab(false); break;
       case "browser-profile-picker": openProfilePicker(); break;
-      case "browser-devtools-run": runDevEval(); break;
       case "browser-profile-change": break; // handled by its own listener
       case "browser-suggest": await browserNavigate(target.dataset.url || target.textContent); break;
       case "browser-reconnect": browserReconnect(); break;
@@ -644,8 +645,8 @@ export function bindEvents() {
 
   window.addEventListener("resize", () => {
     syncAppHeight();
-    const searchPopover = isMobile() && document.activeElement?.matches(".composer-search") ? $(".composer-popover") : null;
-    if (searchPopover) searchPopover._reposition?.(); else closePopover();
+    const editingPopover = isMobile() && document.activeElement?.matches(".composer-search, .annotate-comment") ? document.activeElement.closest(".popover") : null;
+    if (editingPopover) editingPopover._reposition?.(); else closePopover();
     autoGrow();
     const box = $("#auth-terminal");
     const live = S.authTerminal;
@@ -659,7 +660,7 @@ export function bindEvents() {
   window.visualViewport?.addEventListener("resize", () => {
     syncAppHeight();
     autoGrow();
-    if (isMobile() && document.activeElement?.matches(".composer-search")) $(".composer-popover")?._reposition?.();
+    if (isMobile() && document.activeElement?.matches(".composer-search, .annotate-comment")) document.activeElement.closest(".popover")?._reposition?.();
   });
 
   window.visualViewport?.addEventListener("scroll", syncAppHeight);

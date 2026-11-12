@@ -189,6 +189,8 @@ Local artifact paths resolve on the server. Relative paths use the conversation 
 
 Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser context per session, under a per-profile Chromium process — every named profile gets its own persistent user-data dir under `<data>/browser-profiles/<name>`, so cookies, storage, history, and saved logins survive restarts and stay isolated between profiles). Requires a Chrome/Chromium binary (`-browser-exec` / `NUSAMATION_BROWSER_EXEC`, otherwise PATH discovery; on Windows the standard install locations under `Program Files` and `LOCALAPPDATA` are also searched for Chrome, Chromium, and Edge).
 
+Each Chromium process opens a local debugging port so its bundled DevTools can inspect the current page. The pane serves the frontend through the authenticated session route.
+
 | Method | Path | Notes |
 |---|---|---|
 | `POST` | `/browser/sessions` | `{url?, conversationId?, profile?, width?, height?}` → `{session}` (201); `profile` selects the persistent browser profile (default `"default"`) |
@@ -197,7 +199,7 @@ Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser co
 | `DELETE` | `/browser/sessions/{id}` | closes the session and its browser context |
 | `POST` | `/browser/sessions/{id}/navigate` | `{url}` → `{url,title,canGoBack,canGoForward}`; scheme-less hosts get implicit `https://` with an `http://` retry on transport failure, scheme-less non-hosts become a Google search, `file:`/`about:`/`data:` pass through; 409 `busy` during in-flight nav/pick |
 | `POST` | `/browser/sessions/{id}/profile` | `{profile}` → `{session}`; migrates the tab into that profile's Chromium and reloads the current URL |
-| `GET` | `/browser/sessions/{id}/console` | `{entries}` drained from the page's console-tap buffer (devtools drawer) |
+| `GET` | `/browser/sessions/{id}/console` | `{entries}` drained from the page's console-tap buffer |
 | `POST` | `/browser/sessions/{id}/eval` | `{expression}` → `{ok, result}` or `{ok:false, error}`; same surface as `browser_evaluate` |
 | `GET` | `/browser/sessions/{id}/login-offer?id=...` | returns the current offer's username and password for editing in the pane |
 | `POST` | `/browser/sessions/{id}/login-offer` | `{id, save, username?, password?}` accepts, edits or dismisses the current offer |
@@ -212,8 +214,11 @@ Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser co
 | `POST` | `/browser/sessions/{id}/annotate/preview` | `{x,y}` → `{missed, skipped, rect, tagName, name, selector}` hover probe; no paint/upload/pick; `skipped` while busy instead of 409 |
 | `POST` | `/browser/sessions/{id}/annotate/clear` | clears the painted highlight; picks/uploads persist |
 | WebSocket | `/browser/sessions/{id}/stream` | shared live view: every attached client receives the same frames; input is leased to one controller |
+| `GET` | `/browser/sessions/{id}/devtools/{path...}` | serves Chrome's DevTools frontend and its session-scoped debugging connection |
 
 Stream protocol: server→client binary messages are JPEG screencast frames; text messages include `meta`, `control`, `login_offer`, `login_choices`, `closed` and `pong`. Login choices contain account metadata, not passwords. `meta` carries `deviceWidth/deviceHeight/mobile/touch/dpr/pageScaleFactor/scrollOffsetX/scrollOffsetY/url/title/canGoBack/canGoForward` on change. The attach-time meta adds `viewportHeld` when other viewers already own the viewport; clients should adopt the reported viewport instead of emulating their own pane size, which avoids thrash and the transitional "mirrored" frame a mid-stream resize can leave on static pages.
+
+The controlling viewer forwards single-finger touch gestures using `touch` messages with `phase` (`touchStart`, `touchMove`, `touchEnd`, or `touchCancel`) and viewport coordinates `x` and `y`. A `touchEnd` may include a nonzero `keyboardRequest` identifier; the controller receives `{type:"keyboard_focus", request, editable}` after the touch is dispatched so it can focus the local keyboard for an editable page element. The identifier lets the client discard stale responses.
 
 `control` carries the input lease: `{type:"control", owner:"you"|"other"|"agent"|"none"}` — sent on attach and whenever the lease changes. `you` = this connection controls; `other` = another human viewer does; `agent` = the agent holds the lock; `none` = no controller. Only `you` may send input.
 

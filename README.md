@@ -177,8 +177,9 @@ The server must be running to execute jobs. After downtime, each overdue job run
 
 ### Notifications & updates
 
-- **Desktop notifications** on the host OS for approval requests, finished turns and agent errors — `notify-send` on Linux, `osascript` on macOS, a hidden PowerShell balloon on Windows. Toggle and test button in **Control center → Account**.
-- **Self-update** from GitHub releases: periodic checks surface a notification once per new version; **Account → Check for updates** runs one on demand. Installing downloads the release asset, verifies it against `SHA256SUMS`, swaps the binary and restarts — progress streams live and the web UI reloads into the new version automatically.
+- **Desktop notifications** on the host OS for approval requests, finished turns and agent errors — `notify-send` on Linux, `osascript` on macOS, and a branded Windows toast. Toggle and test button in **Control center → Account**.
+- **App shortcut** in the Linux applications menu and Windows Start menu opens the control center at `http://127.0.0.1:8787`. If you use a different address, edit the shortcut to match it.
+- **Self-update** from GitHub releases: periodic checks surface a notification once per new version and an update shortcut in the web top bar while an update is available; **About → Check for updates** runs one on demand. Installing downloads the release asset, verifies it against `SHA256SUMS`, swaps the binary and restarts — progress streams live and the web UI reloads into the new version automatically.
 
 ### Reliability
 

@@ -35,10 +35,13 @@ function Pass([string]$msg) { Write-Host "ok: $msg" }
 # --- fake release assets -------------------------------------------------
 $asset = 'nusamation-windows-amd64.exe'
 Set-Content -Path (Join-Path $release $asset) -Value 'fake binary' -NoNewline
+Copy-Item (Join-Path $scriptDir '..\..\web\static\mark.ico') (Join-Path $release 'nusamation-icon.ico')
 $sha = (Get-FileHash (Join-Path $release $asset) -Algorithm SHA256).Hash.ToLowerInvariant()
-Set-Content -Path (Join-Path $release 'SHA256SUMS') -Value "$sha  $asset"
+$iconSha = (Get-FileHash (Join-Path $release 'nusamation-icon.ico') -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -Path (Join-Path $release 'SHA256SUMS') -Value @("$sha  $asset", "$iconSha  nusamation-icon.ico")
 Copy-Item (Join-Path $release $asset) (Join-Path $tampered $asset)
-Set-Content -Path (Join-Path $tampered 'SHA256SUMS') -Value "$sha  $asset"
+Copy-Item (Join-Path $release 'nusamation-icon.ico') (Join-Path $tampered 'nusamation-icon.ico')
+Copy-Item (Join-Path $release 'SHA256SUMS') (Join-Path $tampered 'SHA256SUMS')
 Add-Content -Path (Join-Path $tampered $asset) -Value 'tampered' # corrupt after checksums
 
 # --- stubs ---------------------------------------------------------------
@@ -70,6 +73,7 @@ function Unregister-ScheduledTask { }
 
 # --- isolated environment -------------------------------------------------
 $oldLocal = $env:LOCALAPPDATA
+$oldAppData = $env:APPDATA
 $oldProfile = $env:USERPROFILE
 $oldTemp = $env:TEMP
 $oldVersion = $env:NUSAMATION_VERSION
@@ -79,6 +83,7 @@ $userPathBefore = [Environment]::GetEnvironmentVariable('Path', 'User')
 
 try {
     $env:LOCALAPPDATA = Join-Path $testRoot 'local'
+    $env:APPDATA = Join-Path $testRoot 'appdata'
     $env:USERPROFILE = Join-Path $testRoot 'profile'
     $env:TEMP = Join-Path $testRoot 'temp'
     $env:NUSAMATION_VERSION = '0.1.0'
@@ -92,6 +97,7 @@ try {
     # 1. Pinned install (with scheduled task).
     & $installer | Out-Null
     if (Test-Path $binary) { Pass 'pinned install' } else { Fail 'binary not installed' }
+    if (Test-Path (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\NusaMation.url')) { Pass 'start menu shortcut installed' } else { Fail 'start menu shortcut missing' }
     if ((Test-Path (Join-Path $markerDir 'registered')) -and (Test-Path (Join-Path $markerDir 'started'))) {
         Pass 'scheduled task registered and started'
     } else {
@@ -155,6 +161,7 @@ try {
 }
 finally {
     $env:LOCALAPPDATA = $oldLocal
+    $env:APPDATA = $oldAppData
     $env:USERPROFILE = $oldProfile
     $env:TEMP = $oldTemp
     $env:NUSAMATION_VERSION = $oldVersion

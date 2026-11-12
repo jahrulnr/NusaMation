@@ -52,17 +52,17 @@ func TestMaskSecretsSessionIsolation(t *testing.T) {
 func TestSecretsConcurrentRegisterAndMask(t *testing.T) {
 	s := &Session{}
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		wg.Add(2)
 		go func(n int) {
 			defer wg.Done()
-			for j := 0; j < 50; j++ {
+			for range 50 {
 				s.RegisterSecrets(map[string]string{"val": "[[env:T]]"})
 			}
 		}(i)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 50; j++ {
+			for range 50 {
 				_ = s.MaskSecrets("val")
 			}
 		}()

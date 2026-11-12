@@ -25,6 +25,7 @@ import (
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/remote"
 	"github.com/jahrulnr/nusamation/internal/ids"
 	"github.com/jahrulnr/nusamation/internal/store"
 )
@@ -97,6 +98,7 @@ type browserProc struct {
 	alloc     context.CancelFunc
 	idle      time.Time
 	launching chan struct{}
+	debug     *debugOutput
 	err       error
 }
 
@@ -508,6 +510,7 @@ func (m *Manager) launch(p *browserProc, done chan struct{}) {
 	var browserCtx context.Context
 	var browserCancel, allocCancel context.CancelFunc
 	if err == nil {
+		debug := &debugOutput{}
 		args := []chromedp.ExecAllocatorOption{
 			chromedp.ExecPath(path),
 			chromedp.Headless,
@@ -515,6 +518,9 @@ func (m *Manager) launch(p *browserProc, done chan struct{}) {
 			chromedp.NoFirstRun,
 			chromedp.NoDefaultBrowserCheck,
 			chromedp.DisableGPU,
+			chromedp.Flag("remote-debugging-port", "0"),
+			remote.WebSocket,
+			chromedp.CombinedOutput(debug),
 		}
 		if m.profileDir != "" {
 			dir := filepath.Join(m.profileDir, p.name)
@@ -543,6 +549,9 @@ func (m *Manager) launch(p *browserProc, done chan struct{}) {
 			}
 			if err != nil {
 				err = fmt.Errorf("%w: launching %s: %v", ErrUnavailable, path, err)
+			}
+			if err == nil {
+				p.debug = debug
 			}
 		}
 	}

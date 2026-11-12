@@ -27,6 +27,8 @@ const (
 	UrgencyLow      Urgency = "low"
 	UrgencyNormal   Urgency = "normal"
 	UrgencyCritical Urgency = "critical"
+	// DeliveryTimeout leaves time for the platform notification backend to start.
+	DeliveryTimeout = 20 * time.Second
 )
 
 type Notification struct {
@@ -180,7 +182,7 @@ func (b *Broadcaster) Test(ctx context.Context) error {
 }
 
 func (b *Broadcaster) notifyEvent(ev events.Event) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), DeliveryTimeout)
 	defer cancel()
 	if !b.Enabled(ctx) {
 		return

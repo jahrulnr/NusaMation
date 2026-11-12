@@ -151,6 +151,10 @@ func (s unixSender) Notify(ctx context.Context, n Notification) error {
 	if icon == "" {
 		icon = "dialog-information"
 	}
+	if path, cleanup, err := temporaryIcon("mark.png"); err == nil {
+		icon = path
+		defer cleanup()
+	}
 	var args []string
 	if s.kind == "gdbus" {
 		args = s.gdbusArgs(title, n.Body, icon, n.Urgency)

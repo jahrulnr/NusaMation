@@ -33,6 +33,8 @@ ENV_FILE="${CONFIG_DIR}/env"
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
 UNIT_DIR="${XDG_CONFIG_HOME}/systemd/user"
 UNIT_FILE="${UNIT_DIR}/nusamation.service"
+APP_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+ICON_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/icons/hicolor/512x512/apps"
 SERVICE="nusamation.service"
 # Global so the EXIT trap below can clean it up (locals are gone by then).
 TMP_DIR=""
@@ -45,7 +47,7 @@ uninstall() {
 	if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
 		systemctl --user disable --now "$SERVICE" >/dev/null 2>&1 || true
 	fi
-	rm -f "$UNIT_FILE" "${INSTALL_DIR}/nusamation"
+	rm -f "$UNIT_FILE" "${INSTALL_DIR}/nusamation" "${APP_DIR}/nusamation.desktop" "${ICON_DIR}/nusamation.png"
 	if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
 		systemctl --user daemon-reload >/dev/null 2>&1 || true
 	fi
@@ -81,15 +83,24 @@ install_binary() {
 	log "Downloading ${base}/${asset}"
 	curl -fsSL "${base}/${asset}" -o "${TMP_DIR}/${asset}"
 	curl -fsSL "${base}/SHA256SUMS" -o "${TMP_DIR}/SHA256SUMS"
+	curl -fsSL "${base}/nusamation-icon.png" -o "${TMP_DIR}/nusamation-icon.png"
 	# SHA256SUMS lines are "hash  filename" (two spaces, coreutils format);
 	# sha256sum -c verifies the matching line relative to the temp dir.
 	if ! grep -F "  ${asset}" "${TMP_DIR}/SHA256SUMS" | (cd "${TMP_DIR}" && sha256sum -c - >/dev/null); then
 		die "checksum verification failed for ${asset}; aborting"
 	fi
+	if ! grep -F '  nusamation-icon.png' "${TMP_DIR}/SHA256SUMS" | (cd "${TMP_DIR}" && sha256sum -c - >/dev/null); then
+		die "checksum verification failed for nusamation-icon.png; aborting"
+	fi
 	log "Checksum verified (SHA-256)"
 
 	mkdir -p "${INSTALL_DIR}"
 	install -m 0755 "${TMP_DIR}/${asset}" "${INSTALL_DIR}/nusamation"
+	mkdir -p "${APP_DIR}" "${ICON_DIR}"
+	install -m 0644 "${TMP_DIR}/nusamation-icon.png" "${ICON_DIR}/nusamation.png"
+	printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=NusaMation' \
+		'Comment=Open the NusaMation control center' 'Exec=xdg-open http://127.0.0.1:8787' \
+		'Icon=nusamation' 'Terminal=false' 'Categories=Network;' > "${APP_DIR}/nusamation.desktop"
 	log "Installed ${INSTALL_DIR}/nusamation"
 
 	case ":${PATH}:" in

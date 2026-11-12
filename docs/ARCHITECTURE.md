@@ -107,7 +107,7 @@ Authenticated WebSocket hub. Every event has a monotonic ID, type, conversation 
 
 ### `internal/notify`
 
-Desktop notifications. `notify.Wrap(hub, …)` returns an `events.Broadcaster` that forwards every event to the realtime hub and, as a side effect, turns `approval.created` and terminal `turn.completed` states (`completed`, `error`) into OS notifications delivered asynchronously — the agent loop is never blocked by a desktop popup. Backends are per-OS: `notify-send` with urgency on Linux, `osascript` on macOS, and a hidden PowerShell `NotifyIcon` balloon on Windows (`CREATE_NO_WINDOW`). The `notify.enabled` setting and a shutdown `Mute()` suppress popups for intentionally killed agents.
+Desktop notifications. `notify.Wrap(hub, …)` returns an `events.Broadcaster` that forwards every event to the realtime hub and, as a side effect, turns `approval.created` and terminal `turn.completed` states (`completed`, `error`) into OS notifications delivered asynchronously — the agent loop is never blocked by a desktop popup. Backends are per-OS: `notify-send` with urgency on Linux, `osascript` on macOS, and a Windows toast sent through hidden PowerShell using a per-user NusaMation AppUserModelId and a persistent icon. The `notify.enabled` setting and a shutdown `Mute()` suppress popups for intentionally killed agents.
 
 ### `internal/update`
 

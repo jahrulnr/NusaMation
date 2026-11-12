@@ -23,6 +23,7 @@ mkdir -p "$TESTROOT/release" "$TESTROOT/fakebin" "$TESTROOT/home"
 echo '#!/bin/sh' > "$TESTROOT/release/nusamation-linux-amd64"
 echo '#!/bin/sh' > "$TESTROOT/release/nusamation-linux-arm64"
 chmod +x "$TESTROOT/release/"*
+cp "$SCRIPT_DIR/../../web/static/mark.png" "$TESTROOT/release/nusamation-icon.png"
 (cd "$TESTROOT/release" && sha256sum nusamation-* > SHA256SUMS)
 
 # Fake curl: maps a release download URL to a file in $FAKE_DIR.
@@ -67,6 +68,11 @@ pass() { echo "ok: $*"; }
 # 1. Pinned install.
 "$INSTALLER" >/dev/null || fail "pinned install exited non-zero"
 [ -x "$HOME/.local/bin/nusamation" ] || fail "binary not installed"
+[ -f "$HOME/.local/share/applications/nusamation.desktop" ] || fail "launcher not installed"
+[ -f "$HOME/.local/share/icons/hicolor/512x512/apps/nusamation.png" ] || fail "icon not installed"
+if command -v desktop-file-validate >/dev/null 2>&1; then
+	desktop-file-validate "$HOME/.local/share/applications/nusamation.desktop" || fail "invalid desktop entry"
+fi
 grep -q "NUSAMATION_ADDR=127.0.0.1:8787" "$HOME/.config/nusamation/env" || fail "env file missing/wrong"
 pass "pinned install"
 
@@ -79,6 +85,7 @@ pass "re-install is idempotent"
 # 3. Tampered binary must abort before installing.
 TAMPER="$TESTROOT/tampered"
 mkdir -p "$TAMPER"
+cp "$TESTROOT/release/nusamation-icon.png" "$TAMPER/nusamation-icon.png"
 echo "bad" > "$TAMPER/nusamation-linux-amd64"
 echo "bad" > "$TAMPER/nusamation-linux-arm64"
 (cd "$TAMPER" && sha256sum nusamation-* > SHA256SUMS)

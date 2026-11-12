@@ -33,7 +33,7 @@ func openReferenceGitIgnore(ctx context.Context, root string) *referenceGitIgnor
 		return nil
 	} // Outside a worktree or Git is unavailable.
 	g := &referenceGitIgnore{tracked: map[string]bool{}, trackedDirs: map[string]bool{}}
-	for _, name := range bytes.Split(data, []byte{0}) {
+	for name := range bytes.SplitSeq(data, []byte{0}) {
 		if len(name) == 0 {
 			continue
 		}

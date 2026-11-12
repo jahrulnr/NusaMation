@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	urlpkg "net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1283,13 +1284,7 @@ func (s *Session) Takeover(sub *Stream) {
 		s.mu.Unlock()
 		return
 	}
-	attached := false
-	for _, v := range s.streams {
-		if v == sub {
-			attached = true
-			break
-		}
-	}
+	attached := slices.Contains(s.streams, sub)
 	if !attached {
 		s.mu.Unlock()
 		return
@@ -1656,6 +1651,41 @@ func (s *Session) Tap(x, y float64) error {
 		input.DispatchTouchEventParams{Type: input.DispatchTouchEventTypeTouchEnd,
 			TouchPoints: []*input.TouchPoint{}})
 	return err
+}
+
+// Touch forwards a single touch gesture from the browser view to Chromium.
+func (s *Session) Touch(phase string, x, y float64) error {
+	t := input.DispatchTouchEventType(phase)
+	points := []*input.TouchPoint{}
+	switch t {
+	case input.DispatchTouchEventTypeTouchStart, input.DispatchTouchEventTypeTouchMove:
+		points = append(points, &input.TouchPoint{X: x, Y: y})
+	case input.DispatchTouchEventTypeTouchEnd, input.DispatchTouchEventTypeTouchCancel:
+	default:
+		return fmt.Errorf("invalid touch phase %q", phase)
+	}
+	ctx, cancel := s.ioCtx()
+	defer cancel()
+	_, err := chromedp.Call(ctx, input.DispatchTouchEvent, input.DispatchTouchEventParams{Type: t, TouchPoints: points})
+	return err
+}
+
+// FocusedEditable reports whether the page currently accepts text input.
+func (s *Session) FocusedEditable() (bool, error) {
+	ctx, cancel := s.ioCtx()
+	defer cancel()
+	yes := true
+	res, err := chromedp.Call(ctx, runtime.Evaluate, runtime.EvaluateParams{
+		Expression: `(() => { let e = document.activeElement; while (e && e.shadowRoot && e.shadowRoot.activeElement) e = e.shadowRoot.activeElement; if (!e) return false; if (e.isContentEditable) return true; if (e.disabled || e.readOnly) return false; if (e.tagName === 'TEXTAREA') return true; return e.tagName === 'INPUT' && !['button','checkbox','color','file','hidden','image','radio','range','reset','submit'].includes(e.type); })()`, ReturnByValue: &yes,
+	})
+	if err != nil {
+		return false, err
+	}
+	var editable bool
+	if err := json.Unmarshal(res.Result.Value, &editable); err != nil {
+		return false, err
+	}
+	return editable, nil
 }
 
 // DeviceOpts is one emulation state for a session: viewport metrics plus the

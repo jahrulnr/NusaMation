@@ -26,6 +26,7 @@ export function renderTopbar() {
       <div class="topbar-sub">${sub}</div>
     </div>
     <div class="topbar-actions">
+      ${S.updateInfo?.available ? `<button class="icon-btn update-available" data-action="open-settings" data-tab="about" title="NusaMation update available" aria-label="NusaMation update available">${icon("download")}</button>` : ""}
       ${c ? `<button class="pill-btn agent-pill" data-action="agent-menu">${agentOrb(agent)}<span class="pill-label">${esc(agentName(agent))}</span>${icon("chevron-down", "sm chev")}</button>` : ""}
       ${c ? `<button class="pill-btn" data-action="config-menu" title="Session configuration">${icon("sparkles", "sm")}<span class="pill-label">${esc(model)}</span>${icon("chevron-down", "sm chev")}</button>` : ""}
       ${c && links.length ? `<button class="pill-btn accent" data-action="routing-menu" title="Channel routing">${icon("link", "sm")}<span class="pill-label">${esc(links[0].channel)}</span></button>` : ""}
