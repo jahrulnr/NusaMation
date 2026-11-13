@@ -1,4 +1,46 @@
 // Resource classification is shared by Markdown, attachments and the preview.
+
+// Map filenames to the highlight.js language ids the vendored common build
+// registers. Unknown or unregistered languages fall through to '' — the
+// preview then renders plain text rather than miscoloured guesses.
+const HIGHLIGHT_BY_EXT = {
+  go:'go', js:'javascript', mjs:'javascript', cjs:'javascript', jsx:'javascript',
+  ts:'typescript', tsx:'typescript', mts:'typescript', cts:'typescript',
+  py:'python', pyw:'python', rs:'rust',
+  c:'c', h:'c', cpp:'cpp', cc:'cpp', cxx:'cpp', hpp:'cpp', hh:'cpp', hxx:'cpp',
+  java:'java', kt:'kotlin', kts:'kotlin', rb:'ruby', gemspec:'ruby', php:'php',
+  swift:'swift', cs:'csharp', vb:'vbnet', lua:'lua', pl:'perl', pm:'perl', r:'r',
+  mm:'objectivec', objc:'objectivec',
+  sh:'bash', bash:'bash', zsh:'bash', ksh:'bash',
+  css:'css', scss:'scss', less:'less',
+  xml:'xml', xsl:'xml', plist:'xml', html:'xml', htm:'xml',
+  json:'json', jsonc:'json', jsonl:'json',
+  yaml:'yaml', yml:'yaml', toml:'ini', ini:'ini', conf:'ini', env:'ini', cfg:'ini', properties:'ini',
+  md:'markdown', mkd:'markdown',
+  sql:'sql', diff:'diff', patch:'diff',
+  mk:'makefile', mak:'makefile', make:'makefile',
+  gql:'graphql', graphql:'graphql',
+  wat:'wasm', wast:'wasm',
+  txt:'plaintext', text:'plaintext', log:'plaintext', csv:'plaintext', tsv:'plaintext',
+};
+const HIGHLIGHT_BY_BASENAME = { makefile:'makefile', gnumakefile:'makefile' };
+const HIGHLIGHT_BY_MIME = {
+  'application/json':'json', 'application/javascript':'javascript', 'text/javascript':'javascript',
+  'text/css':'css', 'application/xml':'xml', 'text/xml':'xml',
+  'application/x-yaml':'yaml', 'application/yaml':'yaml', 'text/yaml':'yaml', 'text/x-yaml':'yaml',
+  'application/x-sh':'bash', 'application/x-shellscript':'bash',
+  'text/x-python':'python', 'text/x-go':'go',
+};
+
+export function highlightLanguage(name = '', mime = '') {
+  const clean = String(name).split(/[?#]/)[0].replace(/:\d+(?::\d+)?$/, '').toLowerCase();
+  const base = clean.split('/').pop();
+  if (HIGHLIGHT_BY_BASENAME[base]) return HIGHLIGHT_BY_BASENAME[base];
+  if (HIGHLIGHT_BY_EXT[base.split('.').pop()]) return HIGHLIGHT_BY_EXT[base.split('.').pop()];
+  const type = mime.split(';')[0].trim().toLowerCase();
+  return HIGHLIGHT_BY_MIME[type] || '';
+}
+
 export function resourceKind(name = '', mime = '') {
   const type = mime.split(';')[0].trim().toLowerCase();
   if (/^(image|video|audio)\//.test(type)) return type.split('/')[0];

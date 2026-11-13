@@ -118,6 +118,21 @@
 @media (max-width: 360px) {
   .settings-tab { font-size: 9.5px; letter-spacing: -0.01em; }
 }
+/* The browser pane squeezes the chat column while the window stays wide, so
+   the topbar also compacts against the column width, not just the viewport. */
+@container main (max-width: 800px) {
+  .topbar { padding: 0 10px; gap: 6px; }
+  .topbar-title { max-width: 42cqi; font-size: 13px; }
+  .topbar-sub { display: none; }
+  .topbar-actions { gap: 2px; }
+  .topbar .pill-btn { padding: 6px; max-width: 44px; }
+  .topbar .pill-btn .pill-label { display: none; }
+  .topbar .pill-btn .icon.chev { display: none; }
+  .topbar .agent-pill { max-width: 40px; }
+}
+@container main (max-width: 480px) {
+  .topbar-actions .pill-btn:not(.agent-pill) { display: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }

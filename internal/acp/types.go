@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 const ProtocolVersion = 1
@@ -427,22 +428,32 @@ const (
 
 func IsAuthRequired(err error) bool {
 	re, ok := err.(*RPCError)
-	return ok && re.Code == CodeAuthRequired
+	return ok && re != nil && re.Code == CodeAuthRequired
 }
 
 func IsInvalidParams(err error) bool {
 	re, ok := err.(*RPCError)
-	return ok && re.Code == CodeInvalidParams
+	return ok && re != nil && re.Code == CodeInvalidParams
 }
 
 func IsUnknownSession(err error) bool {
 	re, ok := err.(*RPCError)
-	return ok && (re.Code == CodeResourceNotFound || re.Code == CodeInvalidParams)
+	if !ok || re == nil {
+		return false
+	}
+	if re.Code == CodeResourceNotFound || re.Code == CodeInvalidParams {
+		return true
+	}
+	// Agents that keep a session on disk but refuse to resume it once archived
+	// (Codex answers -32603 with "session ... is archived") leave the client an
+	// unresumable session — recover exactly like a missing one.
+	return re.Code == CodeInternalError &&
+		strings.Contains(strings.ToLower(re.Message+" "+string(re.Data)), "archived")
 }
 
 func IsMethodNotFound(err error) bool {
 	re, ok := err.(*RPCError)
-	return ok && re.Code == CodeMethodNotFound
+	return ok && re != nil && re.Code == CodeMethodNotFound
 }
 
 func truncate(s string, n int) string {

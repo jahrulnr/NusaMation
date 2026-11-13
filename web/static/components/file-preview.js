@@ -2,9 +2,44 @@ import { $, esc, icon } from './util.js';
 import { S } from './state.js';
 import { modalHead, openModal } from './modal.js';
 import { enhanceMarkdown, renderMarkdown } from './markdown.js';
-import { resourceKind, decodeFileText, prepareResources } from './resources.js';
+import { resourceKind, decodeFileText, prepareResources, highlightLanguage } from './resources.js';
 
 let disposePreview = () => {};
+
+// Split highlighted code into .file-line rows at newlines. highlight.js spans
+// can straddle line breaks (block comments, raw strings), so each segment
+// reopens a clone of the element chain it came from to keep its colours.
+function highlightedRows(code) {
+  const rows = [];
+  let row, wrappers;
+  const newRow = () => { row = document.createElement('span'); row.className = 'file-line'; wrappers = []; rows.push(row); };
+  const sink = () => wrappers.length ? wrappers[wrappers.length - 1] : row;
+  const walk = (src, path) => {
+    for (const node of src.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        node.textContent.split('\n').forEach((part, i) => {
+          if (i > 0) newRow();
+          if (!part) return;
+          let k = 0;
+          while (k < wrappers.length && k < path.length && wrappers[k]._src === path[k]) k++;
+          wrappers.length = k;
+          while (k < path.length) {
+            const clone = document.createElement('span');
+            clone.className = path[k].className;
+            clone._src = path[k];
+            sink().appendChild(clone);
+            wrappers.push(clone);
+            k++;
+          }
+          sink().appendChild(document.createTextNode(part));
+        });
+      } else if (node.nodeType === Node.ELEMENT_NODE) walk(node, [...path, node]);
+    }
+  };
+  newRow();
+  walk(code, []);
+  return rows;
+}
 
 export async function previewResource(url, name = 'File', context = {}) {
   if (!url) return;
@@ -75,7 +110,20 @@ export async function previewResource(url, name = 'File', context = {}) {
         if (context.anchor) doc.querySelector(`[data-anchor="${CSS.escape(context.anchor)}"]`)?.scrollIntoView({ block: 'start' });
       } else {
         const pre = document.createElement('pre');
-        if (context.line > 0) {
+        const lang = text.length <= 512 * 1024 ? highlightLanguage(name, type) : '';
+        if (lang && window.hljs?.getLanguage?.(lang)) {
+          const code = document.createElement('code');
+          code.className = `language-${lang}`;
+          code.textContent = text;
+          try { window.hljs.highlightElement(code); } catch { code.textContent = text; code.className = ''; }
+          if (context.line > 0) {
+            const rows = highlightedRows(code);
+            const target = rows[Number(context.line) - 1];
+            if (target) { target.classList.add('file-line-selected'); target.dataset.selectedLine = '1'; }
+            code.replaceChildren(...rows);
+          }
+          pre.appendChild(code);
+        } else if (context.line > 0) {
           text.split('\n').forEach((line, i) => {
             const row = document.createElement('span'); row.className = 'file-line'; row.textContent = line + '\n';
             if (i + 1 === Number(context.line)) { row.classList.add('file-line-selected'); row.dataset.selectedLine = '1'; }

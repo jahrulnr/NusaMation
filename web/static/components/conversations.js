@@ -157,9 +157,13 @@ export async function loadOlderMessages() {
 export function renderHistoryControl() {
   const el = $("#history-control");
   if (!el) return;
+  // Scrolling near the top lazy-loads older pages by itself, so there is no
+  // idle button to render: the control only surfaces progress (skeleton) and
+  // the one state the auto-load cannot recover from — a failed fetch, which
+  // the scroll handler deliberately does not retry.
   el.innerHTML = S.historyLoading
     ? `<div class="history-skeleton" role="status" aria-label="Loading earlier messages"><span class="skeleton-line"></span><span class="skeleton-line short"></span></div>`
-    : S.historyHasMore ? `<button class="btn btn-secondary btn-sm" data-action="load-older">${S.historyError ? "Retry loading earlier messages" : "Load earlier messages"}</button>` : "";
+    : S.historyError ? `<button class="btn btn-secondary btn-sm" data-action="load-older">Retry loading earlier messages</button>` : "";
 }
 
 export function setRoute(id) {

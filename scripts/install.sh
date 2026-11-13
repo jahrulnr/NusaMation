@@ -34,7 +34,8 @@ XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
 UNIT_DIR="${XDG_CONFIG_HOME}/systemd/user"
 UNIT_FILE="${UNIT_DIR}/nusamation.service"
 APP_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
-ICON_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/icons/hicolor/512x512/apps"
+ICON_THEME_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/icons/hicolor"
+ICON_DIR="${ICON_THEME_DIR}/512x512/apps"
 SERVICE="nusamation.service"
 # Global so the EXIT trap below can clean it up (locals are gone by then).
 TMP_DIR=""
@@ -43,11 +44,20 @@ log() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m==>\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Without a rebuilt index the desktop keeps the old icon-theme.cache and the
+# launcher shows the generic gear until some other install refreshes it.
+refresh_icon_cache() {
+	if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+		gtk-update-icon-cache -f -t "${ICON_THEME_DIR}" >/dev/null 2>&1 || true
+	fi
+}
+
 uninstall() {
 	if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
 		systemctl --user disable --now "$SERVICE" >/dev/null 2>&1 || true
 	fi
 	rm -f "$UNIT_FILE" "${INSTALL_DIR}/nusamation" "${APP_DIR}/nusamation.desktop" "${ICON_DIR}/nusamation.png"
+	refresh_icon_cache
 	if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
 		systemctl --user daemon-reload >/dev/null 2>&1 || true
 	fi
@@ -101,6 +111,7 @@ install_binary() {
 	printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=NusaMation' \
 		'Comment=Open the NusaMation control center' 'Exec=xdg-open http://127.0.0.1:8787' \
 		'Icon=nusamation' 'Terminal=false' 'Categories=Network;' > "${APP_DIR}/nusamation.desktop"
+	refresh_icon_cache
 	log "Installed ${INSTALL_DIR}/nusamation"
 
 	case ":${PATH}:" in

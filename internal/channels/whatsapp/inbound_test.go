@@ -1,12 +1,14 @@
 package whatsapp
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	wastore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
 )
@@ -261,5 +263,53 @@ func TestQuoteMediaWithoutCaption(t *testing.T) {
 				t.Fatalf("quote = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+type fakeLIDStore map[types.JID]types.JID
+
+func (f fakeLIDStore) GetPNForLID(_ context.Context, lid types.JID) (types.JID, error) {
+	return f[lid], nil
+}
+func (f fakeLIDStore) GetLIDForPN(_ context.Context, pn types.JID) (types.JID, error) {
+	return f[pn], nil
+}
+func (fakeLIDStore) PutManyLIDMappings(context.Context, []wastore.LIDMapping) error { return nil }
+func (fakeLIDStore) PutLIDMapping(context.Context, types.JID, types.JID) error      { return nil }
+func (fakeLIDStore) GetManyLIDsForPNs(context.Context, []types.JID) (map[types.JID]types.JID, error) {
+	return nil, nil
+}
+
+func TestJIDAliasesBridgePNAndLID(t *testing.T) {
+	lid := types.NewJID("236395181804969", types.HiddenUserServer)
+	pn := types.NewJID("6281234567890", types.DefaultUserServer)
+	c := &Channel{client: &whatsmeow.Client{Store: &wastore.Device{LIDs: fakeLIDStore{lid: pn, pn: lid}}}}
+
+	contains := func(list []string, want string) bool {
+		for _, v := range list {
+			if v == want {
+				return true
+			}
+		}
+		return false
+	}
+	if got := c.jidAliases(context.Background(), lid); !contains(got, pn.String()) || !contains(got, pn.User) {
+		t.Fatalf("lid aliases %#v missing pn forms", got)
+	}
+	if got := c.jidAliases(context.Background(), pn); !contains(got, lid.String()) {
+		t.Fatalf("pn aliases %#v missing lid form", got)
+	}
+	if got := (&Channel{}).jidAliases(context.Background(), lid); len(got) != 2 {
+		t.Fatalf("clientless aliases = %#v, want base forms only", got)
+	}
+	if got := c.jidAliases(context.Background(), types.NewJID("g1", "g.us"), types.EmptyJID); len(got) != 2 {
+		t.Fatalf("group/empty aliases = %#v, want base forms only", got)
+	}
+
+	s := DefaultSettings()
+	s.AllowedNumbers = []string{"+62 812 3456 7890"}
+	s.Normalize()
+	if !s.allows(c.jidAliases(context.Background(), lid), c.jidAliases(context.Background(), lid)) {
+		t.Fatal("allowlisted phone number must accept a LID-addressed sender")
 	}
 }

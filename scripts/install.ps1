@@ -122,10 +122,18 @@ try {
     Write-Host 'Checksum verified (SHA-256).'
 
     # A running exe is locked and cannot be overwritten: stop the scheduled
-    # task instance and any manually-started copy of this binary first.
+    # task instance and any manually-started copy of this binary first, then
+    # wait for the exit — the kill returns before the image is unmapped, so a
+    # copy that runs immediately still hits 'file is in use'.
     Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    Get-Process nusamation -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -eq $binary } | Stop-Process -Force
+    $running = Get-Process nusamation -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -eq $binary }
+    # $null piped into Stop-/Wait-Process throws a binding error -ErrorAction
+    # does not catch, so only run them when a process was actually found.
+    if ($running) {
+        $running | Stop-Process -Force -ErrorAction SilentlyContinue
+        $running | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+    }
 
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $tmp $assetName) -Destination $binary -Force

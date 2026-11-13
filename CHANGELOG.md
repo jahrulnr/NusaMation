@@ -4,6 +4,20 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-11-13
+
+### Fixed
+
+- WhatsApp senders addressed by their linked identity (`@lid`) are now matched against the phone-number allowlist through the device's PN↔LID map, so allowlisted contacts are no longer rejected when WhatsApp delivers the LID form instead of the number.
+- The Linux app-menu icon now shows right after install: `install.sh` and `make install` refresh the hicolor `icon-theme.cache`, so the launcher no longer keeps the generic gear on systems whose cache predates the icon file.
+- Windows re-installs no longer fail with "file is in use" when a copy of `nusamation.exe` is still running: the installer waits for the stopped process to exit before overwriting it.
+- The chat top bar now compacts against the chat column's width instead of the window's, so opening a wide browser pane no longer crams the conversation title, model pill, and action buttons together.
+- An agent-set browser viewport is remembered per conversation and no longer collapses to the pane size when the room is reopened, so agents keep the emulation they chose across room switches.
+- Conversations whose ACP session was archived on the agent side (for example via `codex archive`) now recover into a fresh session with a recap — both when the session is reopened and when the archive happens mid-conversation — instead of stopping on a generic agent-error modal.
+- "Load earlier messages" no longer leaks into fresh drafts and emptied chats: pagination state now resets on every conversation switch instead of only on load. The idle button is gone entirely — scrolling near the top lazy-loads by itself, the skeleton shows progress, and only a failed fetch keeps a retry button.
+- The file preview now syntax-highlights source files with the vendored highlight.js build, picking the language from the file extension or MIME type, and keeps the highlighting when a specific line is jumped to.
+- Scrollbars widen from 8px to 16px when hovered, so the scroll strip at the window edge is easier to grab on multi-monitor setups while staying slim at rest (Chromium; Firefox keeps its standard thin scrollbar).
+
 ## [0.2.7] - 2026-11-12
 
 - Show Windows notifications under the NusaMation name and icon instead of the PowerShell identity.

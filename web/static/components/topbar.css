@@ -1,10 +1,10 @@
 /* Main */
-.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; background: radial-gradient(1000px 500px at 60% -10%, rgba(245,181,68,.045), transparent 60%), var(--bg); }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; container: main / inline-size; background: radial-gradient(1000px 500px at 60% -10%, rgba(245,181,68,.045), transparent 60%), var(--bg); }
 .topbar { height: var(--topbar-h); flex: none; display: flex; align-items: center; gap: 10px; padding: 0 18px 0 16px; border-bottom: 1px solid var(--border); background: rgba(8,9,11,.72); backdrop-filter: blur(14px); position: relative; z-index: 20; }
 .menu-btn { display: none; }
 .topbar-title-wrap { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .topbar-title { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 38vw; }
-.topbar-sub { font-size: 10.5px; color: var(--muted-2); display: flex; align-items: center; gap: 5px; }
+.topbar-sub { font-size: 10.5px; color: var(--muted-2); display: flex; align-items: center; gap: 5px; white-space: nowrap; overflow: hidden; }
 .topbar-sub .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--muted-2); }
 .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 5px; }
 .topbar-actions .update-available { color: var(--accent); background: var(--accent-dim); }

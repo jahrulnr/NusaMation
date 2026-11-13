@@ -718,6 +718,14 @@ func (r *Runtime) Prompt(ctx context.Context, s *Session, blocks []acp.ContentBl
 		r.setState("needs_auth", trimErr(err))
 		return result, &AuthRequiredError{Methods: client.AuthMethods(), Err: err}
 	}
+	if acp.IsUnknownSession(err) {
+		// The agent dropped this session mid-life (archived, expired) — keep
+		// the registration but force the next turn through loadOrCreate, which
+		// recovers into a fresh session with a recap.
+		s.mu.Lock()
+		s.loaded = false
+		s.mu.Unlock()
+	}
 	return result, err
 }
 

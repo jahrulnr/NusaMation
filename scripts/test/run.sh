@@ -70,6 +70,9 @@ pass() { echo "ok: $*"; }
 [ -x "$HOME/.local/bin/nusamation" ] || fail "binary not installed"
 [ -f "$HOME/.local/share/applications/nusamation.desktop" ] || fail "launcher not installed"
 [ -f "$HOME/.local/share/icons/hicolor/512x512/apps/nusamation.png" ] || fail "icon not installed"
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+	[ -f "$HOME/.local/share/icons/hicolor/icon-theme.cache" ] || fail "icon theme cache not refreshed"
+fi
 if command -v desktop-file-validate >/dev/null 2>&1; then
 	desktop-file-validate "$HOME/.local/share/applications/nusamation.desktop" || fail "invalid desktop entry"
 fi

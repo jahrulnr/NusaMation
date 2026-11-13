@@ -23,6 +23,28 @@ const (
 	pollCacheLimit = 512
 )
 
+// jidAliases expands JIDs into every identifier form the allowlist may hold:
+// the full JID, its user part, and the PN↔LID counterpart resolved through the
+// linked-identity map. WhatsApp increasingly addresses events by @lid while
+// operators allowlist phone numbers, and SenderAlt is only populated on some
+// event types, so the map is the reliable bridge.
+func (c *Channel) jidAliases(ctx context.Context, jids ...types.JID) []string {
+	out := make([]string, 0, len(jids)*2)
+	for _, j := range jids {
+		if j.IsEmpty() {
+			continue
+		}
+		out = append(out, j.String(), j.User)
+		if c.client == nil || c.client.Store == nil || c.client.Store.LIDs == nil {
+			continue
+		}
+		if alt, err := c.client.Store.GetAltJID(ctx, j); err == nil && !alt.IsEmpty() {
+			out = append(out, alt.String(), alt.User)
+		}
+	}
+	return out
+}
+
 func (c *Channel) handleMessage(ctx context.Context, evt *events.Message) error {
 	info := evt.Info
 	if info.IsFromMe || info.Chat.IsEmpty() || info.Sender.IsEmpty() {
@@ -56,8 +78,8 @@ func (c *Channel) handleMessage(ctx context.Context, evt *events.Message) error 
 			}
 		}
 	}
-	senderJIDs := []string{info.Sender.String(), info.Sender.User, info.SenderAlt.String(), info.SenderAlt.User}
-	chatJIDs := []string{info.Chat.String(), info.Chat.User}
+	senderJIDs := c.jidAliases(ctx, info.Sender, info.SenderAlt)
+	chatJIDs := c.jidAliases(ctx, info.Chat)
 	if !settings.allows(senderJIDs, chatJIDs) {
 		c.log.Debug("ignoring WhatsApp message from non-allowlisted sender", "sender", info.Sender.String())
 		return nil

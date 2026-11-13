@@ -59,9 +59,13 @@ a:hover { text-decoration: underline; }
 
 /* Scrollbars */
 * { scrollbar-width: thin; scrollbar-color: #2a2d33 transparent; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #282b31; border: 3px solid transparent; background-clip: content-box; border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: #3a3e45; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+/* A thin track is hard to grab at the very edge of a window on multi-monitor
+   setups, so hovering the scroll region grows the track — only the width
+   changes, so resting layout stays slim. */
+::-webkit-scrollbar:hover { width: 16px; height: 16px; }
+::-webkit-scrollbar-thumb { background: #282b31; border: 2px solid transparent; background-clip: content-box; border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: #3a3e45; }
 
 /* textarea selection */
 textarea, input, select { caret-color: var(--accent); }

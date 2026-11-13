@@ -111,6 +111,7 @@ export function resetBrowserPane() {
   B.restoreURL = "";
   B.savedURL = "";
   B.deviceChoice = "relative";
+  deviceChoiceByConv.clear();
   bootDone = false;
   bootSkip.clear();
   if (B.hoverTimer) { clearTimeout(B.hoverTimer); B.hoverTimer = null; }
@@ -125,8 +126,22 @@ export function resetBrowserPane() {
 // A pane opened on the new-conversation draft (key "") is adopted by whatever
 // conversation becomes visible next — including the conversation created by
 // the send itself — instead of being closed mid-flow.
+const deviceChoiceByConv = new Map(); // conversationId → deviceChoice
 onComposerSwitch((key) => {
   const next = key || "";
+  if (next !== B.conversationId) {
+    // A device choice — including "" for the agent-set viewport — belongs to
+    // the room that produced it. Stash and restore per conversation so a room
+    // switch does not stomp the emulation the agent is relying on. A pane
+    // adopted from the draft (key "") instead carries its choice forward.
+    if (B.conversationId === "") deviceChoiceByConv.set(next, B.deviceChoice);
+    else {
+      deviceChoiceByConv.set(B.conversationId, B.deviceChoice);
+      B.deviceChoice = deviceChoiceByConv.get(next) ?? "relative";
+      B.holdViewport = B.deviceChoice === "";
+      updateDeviceBar();
+    }
+  }
   if (!B.open) { B.conversationId = next; return; }
   if (next === B.conversationId) return;
   if (B.conversationId === "") {
@@ -1110,6 +1125,11 @@ function applyDeviceChoice() {
   // A watching pane owns neither input nor sizing — keep letterboxing the
   // held viewport even if something (meta, a stale chip click) calls this.
   if (!B.inputOwner) return;
+  // "" is the agent's own viewport: a (re)attach has nothing to push, and
+  // resizing to the pane here would stomp the emulation the agent relies on.
+  // Only a real chip click — which always sets a concrete choice — may take
+  // the viewport back.
+  if (B.deviceChoice === "") return;
   // Any explicit call — device chip, preset, agent-drive release — is the
   // user taking viewport control back from a guest attach.
   B.viewportGuest = false;

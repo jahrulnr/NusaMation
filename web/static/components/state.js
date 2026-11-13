@@ -181,6 +181,13 @@ export function onComposerSwitch(fn) { composerSwitchListeners.add(fn); }
 
 export function switchComposer(key) {
   composerKey = key || "";
+  // History pagination describes the transcript being left: S.messages is
+  // cleared on every path that ends up here (draft, delete, popstate, ws),
+  // and only loadConversation installs the next real value. Reset it so a
+  // stale "Load earlier messages" button cannot leak into the next view.
+  S.historyHasMore = false;
+  S.historyLoading = false;
+  S.historyError = "";
   for (const fn of composerSwitchListeners) {
     try { fn(composerKey); } catch (e) { console.warn("composer switch listener failed", e); }
   }
