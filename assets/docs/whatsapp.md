@@ -150,7 +150,8 @@ The usual route for a file produced during a turn is the reply attachment:
 write `[name](path)` or `![name](path)` in the final answer and NusaMation
 uploads it, then removes the link from the text. Copy the absolute path
 verbatim from the tool output; spaces, Windows backslashes and a `/C:/…` drive
-spelling are accepted. The file must be inside the workspace, the upload
+spelling are accepted, and angle brackets or quotes around a destination
+(`[shot](<C:\Users\Some Name\shot.png>)`) are unwrapped. The file must be inside the workspace, the upload
 directory, or the conversation/agent working directory.
 
 Polls support 2–12 distinct options. Votes on a poll sent with this command

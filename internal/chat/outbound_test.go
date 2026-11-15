@@ -351,6 +351,14 @@ func TestResolveOutboundPath(t *testing.T) {
 	if p, ok := resolve(strings.ReplaceAll(filepath.ToSlash(spacedResolved), " ", "%20")); !ok || p != spacedResolved {
 		t.Fatalf("percent-encoded bare path failed: %q ok=%v", p, ok)
 	}
+	// CommonMark wraps destinations that contain spaces in angle brackets,
+	// and agents also quote them. The wrapper must not reach the filesystem.
+	if p, ok := resolve("<" + spacedResolved + ">"); !ok || p != spacedResolved {
+		t.Fatalf("angle-bracket path failed: %q ok=%v", p, ok)
+	}
+	if p, ok := resolve(`"` + spacedResolved + `"`); !ok || p != spacedResolved {
+		t.Fatalf("quoted path failed: %q ok=%v", p, ok)
+	}
 	cases := []string{
 		"file:///etc/passwd",
 		"file:///root/.nusamation/secret.key",

@@ -74,7 +74,11 @@ func pathInRoots(p string, roots []string) bool {
 // symlink escapes outside the allowed roots, non-regular files (devices,
 // FIFOs), and empty or oversized files.
 func (s *Service) resolveOutboundPath(raw string, roots []string) (string, bool) {
-	raw = strings.TrimSpace(raw)
+	// Markdown wraps a destination that contains spaces in <...> or quotes.
+	// Those characters are not part of the filesystem path; leaving them on
+	// makes filepath.IsAbs fail, which is how [shot](<C:\Users\Some Name\shot.png>)
+	// stayed in the delivered text on Windows.
+	raw = normalizeRef(raw)
 	if p, ok := s.resolveOutboundCandidate(raw, roots); ok {
 		return p, true
 	}
