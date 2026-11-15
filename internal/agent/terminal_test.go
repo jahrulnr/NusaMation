@@ -162,9 +162,18 @@ func TestTerminalCwdFallsBackToExistingRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ := filepath.EvalSymlinks(live)
-	if cwd != want {
-		t.Fatalf("cwd=%q want %q", cwd, want)
+	// TerminalCwd returns the cleaned root. EvalSymlinks on both sides also
+	// expands Windows 8.3 short names (RUNNER~1 -> runneradmin).
+	got, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("cwd=%q want %q", got, want)
 	}
 	if _, err := TerminalCwd([]string{dead}, ""); err == nil {
 		t.Fatal("expected error when every root is missing")

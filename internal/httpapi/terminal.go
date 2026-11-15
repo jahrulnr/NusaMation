@@ -62,9 +62,7 @@ func (s *Server) startTermConn(cmd *exec.Cmd) (*termConn, error) {
 	pr, pw := io.Pipe()
 	var wg sync.WaitGroup
 	copy := func(src io.Reader) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			buf := make([]byte, 32*1024)
 			for {
 				n, err := src.Read(buf)
@@ -77,7 +75,7 @@ func (s *Server) startTermConn(cmd *exec.Cmd) (*termConn, error) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	copy(stdout)
 	copy(stderr)

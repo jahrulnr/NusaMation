@@ -224,12 +224,13 @@ func TestConvTerminalCwdAdditionalRoot(t *testing.T) {
 func TestConvTerminalRoots(t *testing.T) {
 	ctx := context.Background()
 	s := &Server{cfg: config.Config{DataDir: "/data"}}
+	workspace := s.cfg.WorkspaceDir()
 	roots := s.convTerminalRoots(ctx, store.Conversation{Cwd: "/proj", Metadata: []byte(`{"additionalDirectories":["/extra"]}`)})
-	if len(roots) != 3 || roots[0] != "/proj" || roots[1] != "/data/workspace" || roots[2] != "/extra" {
+	if len(roots) != 3 || roots[0] != "/proj" || roots[1] != workspace || roots[2] != "/extra" {
 		t.Fatalf("roots: %v", roots)
 	}
 	roots = s.convTerminalRoots(ctx, store.Conversation{})
-	if len(roots) != 1 || roots[0] != "/data/workspace" {
+	if len(roots) != 1 || roots[0] != workspace {
 		t.Fatalf("fallback roots: %v", roots)
 	}
 }
@@ -245,6 +246,11 @@ func TestConvRootsEndpoint(t *testing.T) {
 	dead := filepath.Join(dir, "gone")
 	workspace := filepath.Join(dir, "workspace")
 	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The roots endpoint returns EvalSymlinks, which expands Windows 8.3 names.
+	workspace, err = filepath.EvalSymlinks(workspace)
+	if err != nil {
 		t.Fatal(err)
 	}
 	st, err := store.Open(filepath.Join(dir, "test.db"))
