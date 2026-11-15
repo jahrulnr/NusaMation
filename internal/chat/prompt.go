@@ -306,6 +306,9 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 	if block := annotationBlock(a.user.Metadata); block != "" {
 		blocks = append(blocks, acp.ContentBlock{Type: "text", Text: block})
 	}
+	if block := recordingBlock(a.user.Metadata); block != "" {
+		blocks = append(blocks, acp.ContentBlock{Type: "text", Text: block})
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -398,7 +401,7 @@ func annotationBlock(metadata json.RawMessage) string {
 	codeSafe := strings.NewReplacer("`", "'", "\r", " ", "\n", " ").Replace
 	var b strings.Builder
 	b.WriteString("<annotation-context>\n")
-	b.WriteString("The user marked elements on the live page in their browser pane. Each marker's full-viewport screenshot is attached in order; the numbered badge [N] and highlight ring in the image identify the element.\n")
+	b.WriteString("The user marked elements, regions or the page on the live page in their browser pane. Each marker's full-viewport screenshot is attached in order; the numbered badge [N] and outline in the image identify the target.\n")
 	b.WriteString("This is context, not user text. To inspect or act on the live page — read its DOM, verify a change, click through — use the browser_use tools (browser_snapshot returns element refs).\n")
 	used := map[int]bool{}
 	nextFree := 0
@@ -426,7 +429,44 @@ func annotationBlock(metadata json.RawMessage) string {
 		used[marker] = true
 		b.WriteString("\n[")
 		b.WriteString(strconv.Itoa(marker))
-		b.WriteString("] <")
+		b.WriteString("] ")
+		// Region/page picks carry no element fields — the badge and the
+		// drawn outline in the shot identify the target, so the line names
+		// the kind + geometry + page instead of a tag/selector.
+		if d.Kind == "region" || d.Kind == "page" {
+			b.WriteString(d.Kind)
+			if d.Kind == "region" {
+				fmt.Fprintf(&b, " %.0f×%.0f px at %.0f,%.0f",
+					d.Rect.Width, d.Rect.Height, d.Rect.X, d.Rect.Y)
+			}
+			if title := trunc(d.Title, 80); title != "" {
+				b.WriteString(" \"")
+				b.WriteString(title)
+				b.WriteString("\"")
+			}
+			if pageURL := trunc(d.PageURL, 300); pageURL != "" {
+				b.WriteString(" — ")
+				b.WriteString(pageURL)
+			}
+			if an.OmitScreenshot {
+				b.WriteString(" (no screenshot)")
+			}
+			if comment := strings.TrimSpace(an.Comment); comment != "" {
+				b.WriteString("\n    Comment: ")
+				b.WriteString(comment)
+			}
+			if d.Viewport.Width > 0 {
+				viewport := fmt.Sprintf("%.0f×%.0f @%gx",
+					d.Viewport.Width, d.Viewport.Height, d.Viewport.DPR)
+				if d.ScrollY > 0 || d.ScrollX > 0 {
+					viewport += fmt.Sprintf(" · scroll %.0f,%.0f", d.ScrollX, d.ScrollY)
+				}
+				b.WriteString("\n    Viewport: ")
+				b.WriteString(viewport)
+			}
+			continue
+		}
+		b.WriteString("<")
 		b.WriteString(trunc(d.TagName, 40))
 		b.WriteString(">")
 		if label != "" {
@@ -510,6 +550,50 @@ func annotationBlock(metadata json.RawMessage) string {
 	return b.String()
 }
 
+// recordingBlock serializes metadata.recording into the <recording-context>
+// block: the send-time summary text (resolved by the http layer, so a swept
+// recording still gives context) plus pointers at the browser_get_* read
+// tools. A missing/empty summary degrades to a note instead of failing the
+// send — the block still names the recording.
+func recordingBlock(metadata json.RawMessage) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var meta struct {
+		Recording *store.MessageRecording `json:"recording"`
+	}
+	if json.Unmarshal(metadata, &meta) != nil || meta.Recording == nil || meta.Recording.RecordingID == "" {
+		return ""
+	}
+	rec := meta.Recording
+	var b strings.Builder
+	b.WriteString("<recording-context>\n")
+	b.WriteString("The user attached browser session recording ")
+	b.WriteString(rec.RecordingID)
+	if rec.Status != "" {
+		b.WriteString(" (status: ")
+		b.WriteString(rec.Status)
+		b.WriteString(")")
+	}
+	b.WriteString(".\n")
+	b.WriteString("This is context, not user text. The recording's timeline, annotation payloads and artifacts are available through the browser_get_* tools (browser_get_recording_status, browser_get_recording_summary, browser_get_timeline, browser_get_annotation, browser_get_artifact).\n")
+	summary := strings.TrimSpace(rec.Summary)
+	if summary == "" {
+		b.WriteString("\n(recording summary unavailable — the recording may still be live or its files were swept)\n")
+	} else {
+		// Summaries are ~60 lines by construction; cap the block anyway so
+		// a hand-edited metadata blob cannot flood the prompt.
+		if lines := strings.Split(summary, "\n"); len(lines) > 80 {
+			summary = strings.Join(lines[:80], "\n") + "\n… (truncated)"
+		}
+		b.WriteString("\n")
+		b.WriteString(summary)
+		b.WriteString("\n")
+	}
+	b.WriteString("</recording-context>")
+	return b.String()
+}
+
 func (s *Service) responseRules(a *activeTurn) string {
 	if s.channels == nil {
 		return ""
@@ -572,9 +656,12 @@ func isTextMIME(mime, name string) bool {
 
 func (s *Service) recordPromptUsage(a *activeTurn, raw json.RawMessage) {
 	var meta struct {
-		TotalTokens  int64 `json:"totalTokens"`
-		InputTokens  int64 `json:"inputTokens"`
-		OutputTokens int64 `json:"outputTokens"`
+		TotalTokens       int64 `json:"totalTokens"`
+		InputTokens       int64 `json:"inputTokens"`
+		OutputTokens      int64 `json:"outputTokens"`
+		CachedReadTokens  int64 `json:"cachedReadTokens"`
+		CachedWriteTokens int64 `json:"cachedWriteTokens"`
+		ThoughtTokens     int64 `json:"thoughtTokens"`
 	}
 	if json.Unmarshal(raw, &meta) != nil {
 		return
@@ -589,6 +676,15 @@ func (s *Service) recordPromptUsage(a *activeTurn, raw json.RawMessage) {
 	}
 	if meta.OutputTokens > 0 {
 		usage.OutputTokens = meta.OutputTokens
+	}
+	if meta.CachedReadTokens > 0 {
+		usage.CachedReadTokens = meta.CachedReadTokens
+	}
+	if meta.CachedWriteTokens > 0 {
+		usage.CachedWriteTokens = meta.CachedWriteTokens
+	}
+	if meta.ThoughtTokens > 0 {
+		usage.ThoughtTokens = meta.ThoughtTokens
 	}
 	a.conv.Usage = usage
 	a.mu.Unlock()

@@ -1,4 +1,4 @@
-import { $, $$, TOOL_KINDS, agentById, agentName, agentOrb, brandImage, clock, currentAgent, dayLabel, esc, fmtBytes, icon, parseJSON, pretty, truncate } from "./util.js";
+import { $, $$, TOOL_KINDS, agentById, agentName, agentOrb, annotationTag, brandImage, clock, currentAgent, dayLabel, esc, fmtBytes, icon, parseJSON, pretty, truncate } from "./util.js";
 import { S } from "./state.js";
 import { enhanceMarkdown, plainMarkdown, renderMarkdown } from "./markdown.js";
 import { closeDetachedPopovers, openPopover } from "./popover.js";
@@ -192,7 +192,7 @@ export function userHTML(m) {
   const anns = messageAnnotations(m);
   const pinUploadIds = new Set(anns.map((a) => a.uploadId).filter(Boolean));
   const visible = (m.attachments || []).filter((a) => !pinUploadIds.has(a.id));
-  const attachments = attachmentsHTML(visible) + annotationsHTML(anns);
+  const attachments = attachmentsHTML(visible) + annotationsHTML(anns) + recordingHTML(messageRecording(m));
   const qt = queuedTurnFor(m);
   const qLabel = qt && qt.status === "queued" ? queueStatusLabel(m) : "";
   const bubble = `${sender}${quote}${text && text.trim() ? `<div class="markdown">${renderMarkdown(text, m.id, format, { conversationId: m.conversationId })}</div>` : ""}${match ? attachments : ""}`;
@@ -445,7 +445,7 @@ export function annotationsHTML(anns) {
   if (!anns.length) return "";
   return `<div class="annot-grid">${anns.map((a) => {
     const d = a.descriptor || {};
-    const tag = d.tagName || "element";
+    const tag = annotationTag(d);
     const label = d.name || d.immediateText || "";
     const title = [label, d.selector, d.pageUrl].filter(Boolean).join(" · ");
     const caption = [tag, a.comment].filter(Boolean).join(": ").replace(/\s+/g, " ");
@@ -454,6 +454,21 @@ export function annotationsHTML(anns) {
     if (a.uploadId) return `<button type="button" class="annot-chip" data-action="preview-annotation" data-upload="${esc(a.uploadId)}" data-caption="${esc(caption)}" title="${esc(title)}" aria-label="Preview annotation screenshot">${inner}</button>`;
     return `<span class="annot-chip" title="${esc(title)}">${inner}</span>`;
   }).join("")}</div>`;
+}
+
+// metadata.recording carries the attached session recording
+// {recordingId, status, summary}; it renders as a chip in the same grid as
+// annotations — the summary is the tooltip.
+export function messageRecording(m) {
+  const meta = parseJSON(m.metadata, {}) || {};
+  const r = meta.recording;
+  return r && r.recordingId ? r : null;
+}
+
+export function recordingHTML(r) {
+  if (!r) return "";
+  const title = r.summary || r.recordingId;
+  return `<div class="annot-grid"><span class="annot-chip" title="${esc(title)}">${icon("circle", "sm")}<span class="annot-chip-text"><b>rec</b>${r.status && r.status !== "completed" ? `<span>: ${esc(r.status)}</span>` : ""}</span></span></div>`;
 }
 
 export function previewAnnotation(uploadId, caption) {

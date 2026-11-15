@@ -4,7 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -38,6 +40,18 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "browser_unavailable", "The embedded browser is not enabled.")
 		return
 	}
+	// Recording read tools answer from the recordings dir — they never launch
+	// or resurrect a session; the live session only supplies the active
+	// recording and the secret mask when it exists. They get no timeline
+	// tool event: an agent polling the recording must not write into it.
+	if recordingReadTool(tool) {
+		sess := s.browser.ConversationSession(convID)
+		mw := newSecretMaskWriter(w, sess)
+		w = mw
+		defer mw.flush()
+		s.handleRecordingRead(w, convID, sess, tool, in)
+		return
+	}
 	sess, err := s.browserForConversation(r, convID)
 	if err != nil {
 		s.browserError(w, err, false)
@@ -48,6 +62,12 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 	mw := newSecretMaskWriter(w, sess)
 	w = mw
 	defer mw.flush()
+	// Every dispatched tool lands on the recording timeline as an agent/tool
+	// intent event — success and failure alike (registered before the switch
+	// so early error returns are covered). Args marshal once, only while
+	// recording; the writer re-masks every string, so raw args are safe to
+	// pass. mw.buf still holds the buffered error body when this runs.
+	defer appendBrowserToolEvent(sess, in.Tool, tool, in, mw)
 	var pointer *struct {
 		x, y float64
 		kind string
@@ -130,6 +150,7 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 			s.browserError(w, err, false)
 			return
 		}
+		sess.NoteViewport("browser")
 	case "select":
 		out, err := sess.SelectRef(r.Context(), in.Ref, in.Values)
 		if err != nil {
@@ -308,40 +329,48 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 	if detail != "" {
 		out["detail"] = detail
 	}
+	if obs := sess.Observations(); len(obs) > 0 {
+		out["observations"] = obs
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 type browserUseRequest struct {
-	Tool        string               `json:"tool"`
-	URL         string               `json:"url"`
-	X           *float64             `json:"x"`
-	Y           *float64             `json:"y"`
-	Button      string               `json:"button"`
-	ClickCount  int64                `json:"clickCount"`
-	DoubleClick bool                 `json:"doubleClick"`
-	Text        string               `json:"text"`
-	Key         string               `json:"key"`
-	DeltaX      float64              `json:"deltaX"`
-	DeltaY      float64              `json:"deltaY"`
-	Preset      string               `json:"preset"`
-	Profile     string               `json:"profile"`
-	Username    *string              `json:"username"`
-	Expression  string               `json:"expression"`
-	Function    string               `json:"function"`
-	Ref         string               `json:"ref"`
-	Element     string               `json:"element"` // schema parity with Playwright; descriptive only
-	Values      []string             `json:"values"`
-	Fields      []browser.FieldValue `json:"fields"`
-	Time        float64              `json:"time"`
-	TextGone    string               `json:"textGone"`
-	Submit      bool                 `json:"submit"`
-	Mode        *bool                `json:"mode"`
-	Width       *int64               `json:"width"`
-	Height      *int64               `json:"height"`
-	DPR         *float64             `json:"dpr"`
-	Mobile      *bool                `json:"mobile"`
-	UA          *string              `json:"ua"`
-	Touch       *bool                `json:"touch"`
+	Tool         string               `json:"tool"`
+	URL          string               `json:"url"`
+	X            *float64             `json:"x"`
+	Y            *float64             `json:"y"`
+	Button       string               `json:"button"`
+	ClickCount   int64                `json:"clickCount"`
+	DoubleClick  bool                 `json:"doubleClick"`
+	Text         string               `json:"text"`
+	Key          string               `json:"key"`
+	DeltaX       float64              `json:"deltaX"`
+	DeltaY       float64              `json:"deltaY"`
+	Preset       string               `json:"preset"`
+	Profile      string               `json:"profile"`
+	Username     *string              `json:"username"`
+	Expression   string               `json:"expression"`
+	Function     string               `json:"function"`
+	Ref          string               `json:"ref"`
+	Element      string               `json:"element"` // schema parity with Playwright; descriptive only
+	Values       []string             `json:"values"`
+	Fields       []browser.FieldValue `json:"fields"`
+	AfterSeq     int64                `json:"after_seq"`
+	Limit        int                  `json:"limit"`
+	Types        []string             `json:"types"`
+	AnnotationID string               `json:"annotation_id"`
+	Name         string               `json:"name"`
+	Time         float64              `json:"time"`
+	TextGone     string               `json:"textGone"`
+	Submit       bool                 `json:"submit"`
+	Mode         *bool                `json:"mode"`
+	Width        *int64               `json:"width"`
+	Height       *int64               `json:"height"`
+	DPR          *float64             `json:"dpr"`
+	Mobile       *bool                `json:"mobile"`
+	UA           *string              `json:"ua"`
+	Touch        *bool                `json:"touch"`
 }
 
 // normalizeBrowserUseTool maps Playwright-flavoured tool names onto the
@@ -392,6 +421,16 @@ func normalizeBrowserUseTool(name string) string {
 		return "emulate"
 	case "browser_lock":
 		return "lock"
+	case "browser_get_recording_status":
+		return "recording_status"
+	case "browser_get_recording_summary":
+		return "recording_summary"
+	case "browser_get_timeline":
+		return "timeline"
+	case "browser_get_annotation":
+		return "annotation"
+	case "browser_get_artifact":
+		return "artifact"
 	default:
 		return name
 	}
@@ -401,7 +440,19 @@ func knownBrowserUseTool(name string) bool {
 	switch name {
 	case "navigate", "navigate_back", "navigate_forward", "snapshot", "tree",
 		"console", "wait", "move", "hover", "click", "type", "press", "scroll",
-		"emulate", "eval", "select", "fill", "lock", "profile", "vault_fill":
+		"emulate", "eval", "select", "fill", "lock", "profile", "vault_fill",
+		"recording_status", "recording_summary", "timeline", "annotation", "artifact":
+		return true
+	default:
+		return false
+	}
+}
+
+// recordingReadTool reports whether the op reads recording files — those
+// tools resolve the recording server-side and never need a live session.
+func recordingReadTool(name string) bool {
+	switch name {
+	case "recording_status", "recording_summary", "timeline", "annotation", "artifact":
 		return true
 	default:
 		return false
@@ -489,6 +540,14 @@ func (in browserUseRequest) invalid(tool string) string {
 		if in.Mode == nil {
 			return "mode is required."
 		}
+	case "annotation":
+		if strings.TrimSpace(in.AnnotationID) == "" {
+			return "annotation_id is required."
+		}
+	case "artifact":
+		if strings.TrimSpace(in.Name) == "" {
+			return "name is required."
+		}
 	}
 	return ""
 }
@@ -558,7 +617,7 @@ func (s *Server) browserForConversation(r *http.Request, conversationID string) 
 	if sess := s.browser.ConversationSession(conversationID); sess != nil {
 		return sess, nil
 	}
-	return s.browser.CreateSession(r.Context(), conversationID, "about:blank", 1280, 800)
+	return s.browser.CreateSession(r.Context(), conversationID, "", 1280, 800)
 }
 
 func (s *Server) noteBrowserDriven(id, pageURL string) {
@@ -579,4 +638,185 @@ func (s *Server) noteBrowserDriven(id, pageURL string) {
 	// closed (an explicit open:false in the file).
 	m.Browser.LastURL = pageURL
 	_ = s.saveConvMeta(id, m)
+}
+
+/* ---------------- recording read tools ----------------
+   The browser_get_* tools resolve the recording server-side: loopback token
+   → conversation → newest relevant recording (the live session's active
+   recorder wins, else the newest completed/interrupted meta). The agent
+   never sends a recording id and never sees tokens or raw paths. */
+
+const (
+	// artifactTextCap bounds text artifacts; artifactReadCap bounds the
+	// total read (images can be bigger than text but not unbounded).
+	artifactTextCap = 256 << 10
+	artifactReadCap = 8 << 20
+	// recEventsScanLimit bounds one page of the annotation timeline scan.
+	recEventsScanLimit = 1000
+)
+
+// recordingForConversation picks the recording a browser_get_* tool sees.
+func (s *Server) recordingForConversation(convID string, sess *browser.Session) *browser.Recording {
+	if s.browser == nil {
+		return nil
+	}
+	if sess != nil {
+		if r := sess.Recording(); r != nil {
+			if rec, err := s.browser.Recording(r.Meta().ID); err == nil {
+				return rec
+			}
+		}
+	}
+	// Recordings merges live sessions' recorders over their ~1s-stale disk
+	// snapshots, newest first — the first entry is the newest relevant one.
+	for _, meta := range s.browser.Recordings(convID) {
+		if rec, err := s.browser.Recording(meta.ID); err == nil {
+			return rec
+		}
+	}
+	return nil
+}
+
+// handleRecordingRead serves the browser_get_* tools. Data rides the
+// apiResult contract: result for JSON, detail for text, image+mimeType for
+// binaries — the same shapes browser_console_messages/navigate already use.
+func (s *Server) handleRecordingRead(w http.ResponseWriter, convID string, sess *browser.Session, tool string, in browserUseRequest) {
+	rec := s.recordingForConversation(convID, sess)
+	if rec == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"detail": "No browser recording exists for this conversation."})
+		return
+	}
+	meta := rec.Meta()
+	switch tool {
+	case "recording_status":
+		writeJSON(w, http.StatusOK, map[string]any{"result": map[string]any{"recording": meta}})
+	case "recording_summary":
+		summary, err := rec.Summary()
+		switch {
+		case errors.Is(err, browser.ErrSummaryUnavailable):
+			writeJSON(w, http.StatusOK, map[string]any{
+				"detail": "Recording " + meta.ID + " is still " + meta.Status +
+					" — no summary yet. browser_get_timeline reads the live event stream."})
+		case err != nil:
+			s.browserError(w, err, false)
+		default:
+			writeJSON(w, http.StatusOK, map[string]any{"detail": summary})
+		}
+	case "timeline":
+		limit := in.Limit
+		if limit <= 0 {
+			limit = 200
+		}
+		events, next, done := rec.Events(in.AfterSeq, limit, in.Types)
+		if events == nil {
+			events = []browser.RecEvent{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"result": map[string]any{
+			"recordingId": meta.ID, "events": events, "next": next, "done": done,
+		}})
+	case "annotation":
+		s.writeRecordingAnnotation(w, rec, strings.TrimSpace(in.AnnotationID))
+	case "artifact":
+		s.writeRecordingArtifact(w, rec, strings.TrimSpace(in.Name))
+	}
+}
+
+// writeRecordingAnnotation finds an annotation event by annotationId/pickId
+// and resolves its pick: descriptor + upload ref ride the result object.
+func (s *Server) writeRecordingAnnotation(w http.ResponseWriter, rec *browser.Recording, annotationID string) {
+	var data map[string]any
+	pickID := ""
+	// Page the annotation stream until the id matches — annotations are rare
+	// but the scan stays bounded either way.
+	var after int64
+	for pages := 0; pages < 20 && data == nil; pages++ {
+		evs, next, done := rec.Events(after, recEventsScanLimit, []string{"annotation"})
+		for _, ev := range evs {
+			var d map[string]any
+			if json.Unmarshal(ev.Data, &d) != nil {
+				continue
+			}
+			id, _ := d["annotationId"].(string)
+			pk, _ := d["pickId"].(string)
+			if id == annotationID || (pk != "" && pk == annotationID) {
+				data = d
+				if pk != "" {
+					pickID = pk
+				} else {
+					pickID = id
+				}
+				break
+			}
+		}
+		after = next
+		// A short page means the scan reached EOF — done additionally marks
+		// a terminal recording fully read (live ones keep done=false).
+		if done || len(evs) < recEventsScanLimit {
+			break
+		}
+	}
+	if data == nil {
+		writeError(w, http.StatusNotFound, "annotation_not_found",
+			"No annotation with that id exists in the recording.")
+		return
+	}
+	out := map[string]any{"annotation": data}
+	if pickID != "" {
+		if pick, ok := s.browser.Pick(pickID); ok {
+			out["pick"] = map[string]any{
+				"pickId": pick.ID, "marker": pick.Marker,
+				"descriptor": pick.Descriptor, "upload": pick.Upload,
+			}
+		} else {
+			// Picks are ephemeral UI state swept after a week — the event
+			// data still describes the annotation without them.
+			out["pickUnavailable"] = true
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"result": out})
+}
+
+// writeRecordingArtifact streams one recording artifact back over the
+// apiResult contract: images as image content, text/json/jsonl/logs as
+// bounded text, anything else an explicit unsupported error.
+func (s *Server) writeRecordingArtifact(w http.ResponseWriter, rec *browser.Recording, name string) {
+	path, err := rec.ArtifactPath(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "artifact_not_found", "Artifact not found in the recording.")
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "artifact_not_found", "Artifact not found in the recording.")
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, artifactReadCap+1))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "artifact_read_failed", "Could not read the artifact.")
+		return
+	}
+	mime := http.DetectContentType(data[:min(512, len(data))])
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		if len(data) > artifactReadCap {
+			writeError(w, http.StatusRequestEntityTooLarge, "artifact_too_large",
+				"Image artifact exceeds the tool's 8MB limit.")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"image": base64.StdEncoding.EncodeToString(data), "mimeType": mime,
+			"detail": "artifact " + name,
+		})
+	case strings.HasPrefix(mime, "text/"):
+		text := string(data)
+		if len(data) > artifactTextCap {
+			text = string(data[:artifactTextCap]) + "\n… (truncated at 256KB)"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"detail": text})
+	default:
+		writeError(w, http.StatusUnsupportedMediaType, "artifact_unsupported",
+			"Artifact is not an image or text file.")
+	}
 }

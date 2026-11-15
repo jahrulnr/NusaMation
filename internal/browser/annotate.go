@@ -224,12 +224,79 @@ return new Promise(function(res){var t=setTimeout(res,250);requestAnimationFrame
 
 const markerRemover = `(function(){var m=document.getElementById('__nusamation_marker');if(m)m.remove();return true})()`
 
+// regionMarkerPainter is the markerPainter variant for non-element picks: it
+// strokes the user-drawn region rect (dashed, so it reads as a drawn area
+// rather than an element's box) plus the same numbered badge. A null rect —
+// a page annotation — paints only the badge centered at the viewport top.
+const regionMarkerPainter = `function(r,n){
+var old=document.getElementById('__nusamation_marker');if(old)old.remove();
+var host=document.createElement('div');
+host.id='__nusamation_marker';
+host.setAttribute('style','position:fixed !important;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none;');
+var vw=window.innerWidth||1280,vh=window.innerHeight||800;
+var bx,by;
+if(r){
+	var ring=document.createElement('div');
+	ring.setAttribute('style','position:fixed !important;left:'+r.x+'px;top:'+r.y+'px;width:'+Math.max(2,r.width)+'px;height:'+Math.max(2,r.height)+'px;border:2px dashed #3b82f6 !important;background:rgba(59,130,246,.10) !important;border-radius:3px;box-sizing:border-box;');
+	host.appendChild(ring);
+	bx=r.x+r.width/2;by=r.y;
+	bx=Math.max(14,Math.min(bx,vw-14));
+	if(by<14)by=r.y+r.height;
+	by=Math.max(14,Math.min(by,vh-14));
+}else{
+	bx=vw/2;by=16;
+}
+var badge=document.createElement('div');
+badge.setAttribute('style','position:fixed !important;left:'+bx+'px;top:'+by+'px;transform:translate(-50%,-50%);min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#3b82f6 !important;color:#fff !important;font:600 12px/20px system-ui,-apple-system,"Segoe UI",sans-serif;text-align:center;box-shadow:0 0 0 2px #fff,0 1px 4px rgba(0,0,0,.35);box-sizing:content-box;');
+badge.textContent=String(n);
+host.appendChild(badge);
+(document.documentElement||document.body).appendChild(host);
+return new Promise(function(res){var t=setTimeout(res,250);requestAnimationFrame(function(){requestAnimationFrame(function(){clearTimeout(t);res()})})});}`
+
+// pageInfoExtractor collects the page fields region/page descriptors carry
+// instead of element data — the same page-url/title/viewport/scroll/page-size
+// fields descriptorExtractor reports, without the element ones.
+const pageInfoExtractor = `(function(){var de=document.documentElement;return{
+pageUrl:location.href,title:document.title,
+viewport:{width:window.innerWidth||0,height:window.innerHeight||0,dpr:window.devicePixelRatio||1},
+scrollX:window.scrollX||0,scrollY:window.scrollY||0,
+pageW:Math.max(de?de.scrollWidth:0,document.body?document.body.scrollWidth:0),
+pageH:Math.max(de?de.scrollHeight:0,document.body?document.body.scrollHeight:0)}})()`
+
 func markerExpr(rect store.AnnotationRect, n int) (string, error) {
 	r, err := json.Marshal(rect)
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("(%s)(%s,%d)", markerPainter, r, n), nil
+}
+
+// regionMarkerExpr builds the region/page painter call; a nil rect paints
+// only the badge (page annotations).
+func regionMarkerExpr(rect *store.AnnotationRect, n int) (string, error) {
+	arg := []byte("null")
+	if rect != nil {
+		r, err := json.Marshal(rect)
+		if err != nil {
+			return "", err
+		}
+		arg = r
+	}
+	return fmt.Sprintf("(%s)(%s,%d)", regionMarkerPainter, arg, n), nil
+}
+
+// annotationMarkerExpr picks the painter for the pick kind: element rings the
+// element rect, region strokes the drawn rect, page paints only the badge.
+func annotationMarkerExpr(desc store.AnnotationDescriptor, n int) (string, error) {
+	switch desc.Kind {
+	case "region":
+		r := desc.Rect
+		return regionMarkerExpr(&r, n)
+	case "page":
+		return regionMarkerExpr(nil, n)
+	default:
+		return markerExpr(desc.Rect, n)
+	}
 }
 
 // pickObjectID hit-tests a client-viewport point via elementFromPoint and
@@ -298,24 +365,100 @@ func (s *Session) Annotate(ctx context.Context, x, y float64, marker int) (*Pick
 	if err := json.Unmarshal(raw, &desc); err != nil {
 		return fail(err)
 	}
+	desc.Kind = "element"
 	desc.Point = store.AnnotationPoint{X: x, Y: y}
+	return s.markedPick(ctx, cctx, desc, marker, map[string]any{
+		"kind": "element",
+		"descriptor": map[string]any{
+			"tag": desc.TagName, "role": desc.Role,
+			"name": desc.Name, "selector": desc.Selector,
+		},
+	})
+}
+
+// AnnotateRegion captures a user-drawn viewport rect as a pick: no hit test —
+// the region outline (dashed, drawn-area style) plus the numbered badge are
+// painted instead of the element ring. The descriptor carries only the rect
+// and page metadata with kind "region"; element fields stay empty.
+func (s *Session) AnnotateRegion(ctx context.Context, rect store.AnnotationRect, marker int) (*Pick, error) {
+	if rect.Width <= 0 || rect.Height <= 0 {
+		return nil, fmt.Errorf("%w: a region needs positive width and height", ErrInvalidAction)
+	}
+	rect = clampAnnotationRect(rect)
+	if err := s.acquire(); err != nil {
+		return nil, err
+	}
+	defer s.busy.Store(false)
+	cctx, cancel := context.WithTimeout(s.tabCtx, 20*time.Second)
+	defer cancel()
+	desc, err := s.annotatePageInfo(cctx)
+	if err != nil {
+		return nil, fmt.Errorf("annotate: %w", err)
+	}
+	desc.Kind = "region"
+	desc.Rect = rect
+	return s.markedPick(ctx, cctx, desc, marker, map[string]any{
+		"kind": "region", "rect": rect,
+	})
+}
+
+// AnnotatePage captures the whole viewport as a pick: no hit test, no target
+// rect — only the numbered badge is painted, and the descriptor carries page
+// metadata with kind "page".
+func (s *Session) AnnotatePage(ctx context.Context, marker int) (*Pick, error) {
+	if err := s.acquire(); err != nil {
+		return nil, err
+	}
+	defer s.busy.Store(false)
+	cctx, cancel := context.WithTimeout(s.tabCtx, 20*time.Second)
+	defer cancel()
+	desc, err := s.annotatePageInfo(cctx)
+	if err != nil {
+		return nil, fmt.Errorf("annotate: %w", err)
+	}
+	desc.Kind = "page"
+	return s.markedPick(ctx, cctx, desc, marker, map[string]any{"kind": "page"})
+}
+
+// annotatePageInfo reads the page metadata region/page descriptors carry —
+// best-effort through the same eval path as the element extractor.
+func (s *Session) annotatePageInfo(cctx context.Context) (store.AnnotationDescriptor, error) {
+	var desc store.AnnotationDescriptor
+	res, err := chromedp.Call(cctx, runtime.Evaluate, runtime.EvaluateParams{
+		Expression: pageInfoExtractor, ReturnByValue: new(true),
+	})
+	if err != nil {
+		return desc, err
+	}
+	if res.ExceptionDetails != nil {
+		return desc, errors.New(res.ExceptionDetails.Text)
+	}
+	if res.Result == nil {
+		return desc, errors.New("page info returned no result")
+	}
+	if err := json.Unmarshal([]byte(res.Result.Value), &desc); err != nil {
+		return desc, err
+	}
+	return desc, nil
+}
+
+// markedPick runs the shared back half of every pick: paint the numbered
+// marker (full-viewport capture only — a clipped captureScreenshot
+// transiently resizes the visual viewport and leaks a wrongly-sized frame
+// into the screencast stream), remove it, then commit upload + pick. The
+// caller owns the busy claim; cctx scopes the CDP calls, ctx the upload save.
+func (s *Session) markedPick(ctx, cctx context.Context, desc store.AnnotationDescriptor, marker int, event map[string]any) (*Pick, error) {
 	if marker <= 0 {
 		marker = 1
 	}
-	// Paint the numbered pin into the page and capture the marked viewport —
-	// the badge inside the shot matches the [N] label in the prompt text.
-	// Full-viewport capture only: a clipped captureScreenshot transiently
-	// resizes the visual viewport and leaks a wrongly-sized frame into the
-	// screencast stream.
-	if expr, err := markerExpr(desc.Rect, marker); err == nil {
-		if _, err := chromedp.Call(cctx, runtime.Evaluate, runtime.EvaluateParams{
-			Expression: expr, AwaitPromise: new(true),
-		}); err != nil {
-			s.m.log.Warn("annotation pin paint failed; screenshot will be unmarked",
-				"session", s.id, "error", err)
-		}
-	} else {
+	expr, err := annotationMarkerExpr(desc, marker)
+	if err != nil {
 		s.m.log.Warn("annotation pin marker not built; screenshot will be unmarked",
+			"session", s.id, "error", err)
+	} else if _, err := chromedp.Call(cctx, runtime.Evaluate, runtime.EvaluateParams{
+		Expression: expr, AwaitPromise: new(true),
+	}); err != nil {
+		s.m.log.Warn("annotation pin paint failed; screenshot will be unmarked",
 			"session", s.id, "error", err)
 	}
 	marked, err := chromedp.Call(cctx, page.CaptureScreenshot, page.CaptureScreenshotParams{
@@ -326,23 +469,71 @@ func (s *Session) Annotate(ctx context.Context, x, y float64, marker int) (*Pick
 	_, _ = chromedp.Call(hctx, runtime.Evaluate, runtime.EvaluateParams{Expression: markerRemover})
 	hcancel()
 	if err != nil {
-		return fail(err)
+		return nil, fmt.Errorf("annotate: %w", err)
 	}
+	return s.finishPick(ctx, marked.Data, desc, marker, event)
+}
+
+// finishPick is the CDP-free tail: store the marked PNG as an upload,
+// register the pick, and append the recording's dom/annotation event
+// (pickId + marker + kind land on whatever kind-specific fields the caller
+// put in event). Committed picks only — PreviewAnnotate appends nothing.
+func (s *Session) finishPick(ctx context.Context, png []byte, desc store.AnnotationDescriptor, marker int, event map[string]any) (*Pick, error) {
 	if s.m.save == nil {
-		return fail(errors.New("attachment saving is not configured"))
+		return nil, fmt.Errorf("annotate: %w", errors.New("attachment saving is not configured"))
+	}
+	if marker <= 0 {
+		marker = 1
+	}
+	kind := desc.Kind
+	if kind == "" {
+		kind = "element"
 	}
 	pickID := ids.New("pk")
-	up, err := s.m.save(ctx, s.conversationID, "element-"+pickID+".png", "image/png", marked.Data)
+	up, err := s.m.save(ctx, s.ConversationID(), kind+"-"+pickID+".png", "image/png", png)
 	if err != nil {
-		return fail(err)
+		return nil, fmt.Errorf("annotate: %w", err)
 	}
 	p := &Pick{
-		ID: pickID, SessionID: s.id, ConversationID: s.conversationID,
+		ID: pickID, SessionID: s.id, ConversationID: s.ConversationID(),
 		Marker: marker, Descriptor: desc,
 		Upload: up, CreatedAt: nowMillis(),
 	}
 	s.m.addPick(p)
+	if r := s.Recording(); r != nil {
+		if event == nil {
+			event = map[string]any{}
+		}
+		event["pickId"] = p.ID
+		event["marker"] = p.Marker
+		event["kind"] = kind
+		r.Append("dom", "annotation", event)
+	}
 	return p, nil
+}
+
+// clampAnnotationRect keeps a drawn region inside sane bounds — like the
+// viewport clamps on session create. Region edges may legitimately sit a
+// little outside the viewport, so only absurd magnitudes clamp.
+func clampAnnotationRect(r store.AnnotationRect) store.AnnotationRect {
+	const maxDim = 16384
+	clamp := func(v float64) float64 {
+		if v < -maxDim {
+			return -maxDim
+		}
+		if v > maxDim {
+			return maxDim
+		}
+		return v
+	}
+	r.X, r.Y = clamp(r.X), clamp(r.Y)
+	if r.Width > maxDim {
+		r.Width = maxDim
+	}
+	if r.Height > maxDim {
+		r.Height = maxDim
+	}
+	return r
 }
 
 // ClearAnnotate removes the painted pin marker (§3.8); pick records and

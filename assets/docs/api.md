@@ -26,6 +26,15 @@ text against the conversation agent's saved env (fail-closed preflight:
 that endpoint's JSON responses only — exact match, no encoded/transformed or
 screenshot masking.
 
+The same endpoint answers the recording read tools —
+`browser_get_recording_status`, `browser_get_recording_summary`,
+`browser_get_timeline` (`after_seq`/`limit`/`types`),
+`browser_get_annotation` (`annotation_id`), and `browser_get_artifact`
+(`name`; `downloads/<guid>` for captured downloads). The bearer token's
+conversation selects the recording — the live session's active one first,
+else the newest finished — so a request never names a recording, and the
+calls never launch a session.
+
 The browser stream sends `login_offer` when a submitted login can be saved.
 The authenticated pane can retrieve that offer's username and password for
 editing; `POST /api/browser/sessions/{id}/login-offer` with `{id, save}` and
@@ -48,6 +57,13 @@ GET|POST /api/projects
 PATCH|DELETE /api/projects/{id}
 POST /api/projects/{id}/restore
 GET  /api/fs/list?path=                 # child directories; empty path is the home directory
+                                        #   ?files=1 adds regular files {name,path,size,mtime}
+GET  /api/conversations/{id}/roots      # existing dirs for pane path pickers — the conversation's
+                                        #   project working dirs for members, its roots otherwise
+GET  /api/projects/{id}/roots           # project's existing working dirs — draft-room pick list
+GET  /api/fs/file?path=                 # stream a local file (draft-room file previews/downloads)
+WS   /api/terminal                      # conversation-less shell for draft rooms; ?cwd= or home
+WS   /api/conversations/{id}/terminal   # interactive shell; ?cwd= may be any existing directory
 GET|POST /api/conversations/{id}/messages
 GET  /api/references?conversationId=...&q=... # picker candidates; draft uses agentId and optional projectId
 POST /api/conversations/{id}/cancel|retry|config|agent|routing|prepare

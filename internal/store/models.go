@@ -127,13 +127,19 @@ func DefaultRouting() Routing {
 }
 
 type Usage struct {
-	Used         int64   `json:"used"`
-	Size         int64   `json:"size"`
-	CostAmount   float64 `json:"costAmount,omitempty"`
-	CostCurrency string  `json:"costCurrency,omitempty"`
-	TotalTokens  int64   `json:"totalTokens,omitempty"`
-	InputTokens  int64   `json:"inputTokens,omitempty"`
-	OutputTokens int64   `json:"outputTokens,omitempty"`
+	Used              int64   `json:"used"`
+	Size              int64   `json:"size"`
+	CostAmount        float64 `json:"costAmount,omitempty"`
+	CostCurrency      string  `json:"costCurrency,omitempty"`
+	TotalTokens       int64   `json:"totalTokens,omitempty"`
+	InputTokens       int64   `json:"inputTokens,omitempty"`
+	OutputTokens      int64   `json:"outputTokens,omitempty"`
+	CachedReadTokens  int64   `json:"cachedReadTokens,omitempty"`
+	CachedWriteTokens int64   `json:"cachedWriteTokens,omitempty"`
+	ThoughtTokens     int64   `json:"thoughtTokens,omitempty"`
+	// Meta keeps the vendor _meta blob (model name, rate-limit windows, quota
+	// breakdowns) verbatim — small, so it survives unmodified to the UI.
+	Meta json.RawMessage `json:"meta,omitempty"`
 }
 
 func (u Usage) Empty() bool {
@@ -340,8 +346,11 @@ type AnnotationComputed struct {
 
 // AnnotationDescriptor is the element descriptor captured at pick time
 // (browser-api-contract §6.1). backendNodeId stays server-side and is never
-// serialized.
+// serialized. Kind is "element" (a hit-tested element pick), "region" (a
+// user-drawn rect — Rect + page fields only), or "page" (whole viewport —
+// page fields only); "" is a legacy element pick.
 type AnnotationDescriptor struct {
+	Kind        string `json:"kind,omitempty"`
 	Selector    string `json:"selector"`
 	ElementPath string `json:"elementPath"`
 	TagName     string `json:"tagName"`
@@ -390,6 +399,24 @@ type MessageAnnotation struct {
 	UploadID       string               `json:"uploadId"`
 	OmitScreenshot bool                 `json:"omitScreenshot,omitempty"`
 	Descriptor     AnnotationDescriptor `json:"descriptor"`
+}
+
+// RecordingInput is the recording resolved httpapi → chat on SubmitInput;
+// the client only submits recordingId and the server resolves the rest.
+// Summary carries the finalized summary.txt, or a meta-derived brief while
+// the recording is still live — resolved at send time so a swept recording
+// keeps its context.
+type RecordingInput struct {
+	ID      string
+	Status  string
+	Summary string
+}
+
+// MessageRecording is the persisted metadata.recording entry.
+type MessageRecording struct {
+	RecordingID string `json:"recordingId"`
+	Status      string `json:"status,omitempty"`
+	Summary     string `json:"summary,omitempty"`
 }
 
 type AgentInput struct {

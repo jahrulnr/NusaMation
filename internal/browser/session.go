@@ -16,6 +16,7 @@ import (
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/inspector"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/cdproto/target"
@@ -177,6 +178,43 @@ type Session struct {
 	castCtx    context.Context
 	castCancel context.CancelFunc
 
+	// recorder is the live session recording (nil when idle). s.mu guards the
+	// pointer; the Recorder serializes its own status and file writes.
+	recorder *Recorder
+	// recCap is the capture bundle armed for recorder on the current tab;
+	// replaced on every tab swap so teardowns serialize with re-arms.
+	recCap *recCapture
+
+	// inMu guards the pane input queue drained by inputWorker: the WebSocket
+	// read loop only enqueues, so a renderer-ack-gated dispatch never stalls
+	// it. Consecutive undispatched moves of the same kind coalesce to the
+	// freshest position.
+	inMu      sync.Mutex
+	inputJobs []inputJob
+	inputWake chan struct{}
+
+	// netLog is a bounded ring of network traffic kept for the session's whole
+	// life — independent of any recording — so the Chrome Dev tab and the
+	// /netlog endpoint have traffic as soon as the page loads. netPending
+	// joins request/response events by request id.
+	netMu      sync.Mutex
+	netPending map[network.RequestID]*NetEntry
+	netLog     []*NetEntry
+	netSeq     int64
+
+	// obs is a bounded ring of one-line "what happened since your last call"
+	// notes for the browser_use agent: the always-on __nusaRecPush binding
+	// feed (user clicks, inputs, console errors, SPA navs) plus synthesized
+	// full-document navs and failed netLog requests. obsSeq stamps push
+	// order; obsCursor is the last seq handed out by Observations; obsURL
+	// dedupes the synthesized nav against the tap's own SPA nav entries.
+	obsMu     sync.Mutex
+	obs       []obsLine
+	obsSeq    int64
+	obsCursor int64
+	obsNetSeq int64
+	obsURL    string
+
 	busy atomic.Bool
 
 	pendingLogin *loginOffer
@@ -196,8 +234,35 @@ type Session struct {
 	secretReplacer *strings.Replacer
 }
 
-func (s *Session) ID() string             { return s.id }
-func (s *Session) ConversationID() string { return s.conversationID }
+func (s *Session) ID() string { return s.id }
+
+func (s *Session) ConversationID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conversationID
+}
+
+// ClaimConversation binds a draft-created session (conversationID "") to a
+// materialized conversation. It refuses to re-bind a session that already
+// belongs to a room, so it can never steal another conversation's browser.
+func (s *Session) ClaimConversation(conversationID string) bool {
+	s.mu.Lock()
+	if s.conversationID != "" || conversationID == "" {
+		s.mu.Unlock()
+		return false
+	}
+	s.conversationID = conversationID
+	r := s.recorder
+	s.mu.Unlock()
+	// Rebind recordings written while the session was unclaimed — the live
+	// one in memory, finalized ones on disk — so conversation lookups find
+	// them after the draft materializes.
+	if r != nil {
+		r.claimConversation(conversationID)
+	}
+	claimSessionRecordings(s.m.recordingsDir, s.id, conversationID, s.m.log)
+	return true
+}
 
 // Profile returns the browser profile this session's storage belongs to.
 func (s *Session) Profile() string {
@@ -280,9 +345,16 @@ func (s *Session) refreshNavState() {
 	s.afterLoadHooks(url, title, profile)
 }
 
+// IsInternalPage reports URLs that exist as app chrome rather than user
+// destinations (about:blank, the embedded start page); they never belong in
+// nav history or address-bar suggestions.
+func IsInternalPage(u string) bool {
+	return u == "" || strings.HasPrefix(u, "about:") || strings.HasSuffix(u, "/static/browser-start.html")
+}
+
 // afterLoadHooks records the visit and drains buffered login reports.
 func (s *Session) afterLoadHooks(url, title, profile string) {
-	if s.m.rec == nil || url == "" {
+	if s.m.rec == nil || IsInternalPage(url) {
 		return
 	}
 	if err := s.m.rec.RecordBrowserVisit(context.Background(), profile, url, title); err != nil {
@@ -1000,8 +1072,114 @@ func (s *Session) watchNav() {
 		if ev.Frame == nil || ev.Frame.ParentID != "" {
 			continue
 		}
+		if r := s.Recording(); r != nil {
+			r.Append("browser", "navigate", map[string]any{
+				"navType": "full", "url": ev.Frame.URL, "frameId": string(ev.Frame.ID),
+			})
+		}
 		s.afterCommit(false)
 	}
+}
+
+// NetEntry is one row of the session's always-on network log.
+type NetEntry struct {
+	Seq    int64  `json:"seq,omitempty"`
+	TS     int64  `json:"ts"`
+	Method string `json:"method"`
+	URL    string `json:"url"`
+	Status int64  `json:"status,omitempty"`
+	Type   string `json:"type,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+const (
+	netLogCap     = 300
+	netPendingCap = 256
+)
+
+// watchNetLog fills the session's network ring for the tab's whole life. The
+// Network domain is enabled at tab setup; each cdp.Events iterator is an
+// independent subscription, so a recording's watchers run beside these.
+func (s *Session) watchNetLog() {
+	go func() {
+		for ev, err := range cdp.Events[network.EventRequestWillBeSent](s.tabCtx, s.tab(), network.RequestWillBeSent) {
+			if err != nil {
+				return
+			}
+			e := &NetEntry{TS: epochMillis(ev.WallTime), Type: string(ev.Type)}
+			if ev.Request != nil {
+				e.Method, e.URL = ev.Request.Method, ev.Request.URL
+			}
+			s.netMu.Lock()
+			if len(s.netPending) >= netPendingCap {
+				for id := range s.netPending {
+					delete(s.netPending, id)
+					break
+				}
+			}
+			s.netPending[ev.RequestID] = e
+			s.netMu.Unlock()
+		}
+	}()
+	go func() {
+		for ev, err := range cdp.Events[network.EventResponseReceived](s.tabCtx, s.tab(), network.ResponseReceived) {
+			if err != nil {
+				return
+			}
+			s.netMu.Lock()
+			e := s.netPending[ev.RequestID]
+			if e != nil {
+				delete(s.netPending, ev.RequestID)
+			} else {
+				e = &NetEntry{TS: nowMillis()}
+			}
+			if ev.Response != nil {
+				e.Status, e.URL, e.Type = ev.Response.Status, ev.Response.URL, string(ev.Type)
+			}
+			s.pushNetEntry(e)
+			s.netMu.Unlock()
+		}
+	}()
+	go func() {
+		for ev, err := range cdp.Events[network.EventLoadingFailed](s.tabCtx, s.tab(), network.LoadingFailed) {
+			if err != nil {
+				return
+			}
+			if ev.Canceled {
+				continue
+			}
+			s.netMu.Lock()
+			e := s.netPending[ev.RequestID]
+			if e != nil {
+				delete(s.netPending, ev.RequestID)
+			} else {
+				e = &NetEntry{TS: nowMillis()}
+			}
+			e.Error = ev.ErrorText
+			s.pushNetEntry(e)
+			s.netMu.Unlock()
+		}
+	}()
+}
+
+func (s *Session) pushNetEntry(e *NetEntry) {
+	s.netSeq++
+	e.Seq = s.netSeq
+	s.netLog = append(s.netLog, e)
+	if len(s.netLog) > netLogCap {
+		s.netLog = s.netLog[len(s.netLog)-netLogCap:]
+	}
+}
+
+// NetLog returns a copy of the session's network ring, oldest first.
+func (s *Session) NetLog() []NetEntry {
+	s.netMu.Lock()
+	defer s.netMu.Unlock()
+	out := make([]NetEntry, len(s.netLog))
+	for i, e := range s.netLog {
+		out[i] = *e
+	}
+	return out
 }
 
 func (s *Session) watchCrash() {
@@ -1064,6 +1242,9 @@ func (s *Session) watchLoginContexts() {
 		}
 		ctx, cancel := context.WithTimeout(s.tabCtx, ioTimeout)
 		_, _ = chromedp.Call(ctx, runtime.AddBinding, runtime.AddBindingParams{Name: "__nusaReportLogin"})
+		// The recording binding shares this context watcher: every fresh
+		// execution context (navigations, iframes) gets both taps rearmed.
+		_, _ = chromedp.Call(ctx, runtime.AddBinding, runtime.AddBindingParams{Name: "__nusaRecPush"})
 		cancel()
 	}
 }
@@ -1085,6 +1266,7 @@ func (s *Session) swapTab(tabCtx context.Context, tabCancel context.CancelFunc, 
 	s.canBack = false
 	s.canFwd = false
 	s.lastFrame = nil
+	rec := s.recorder
 	// The old castCtx dies with the old tab — attached viewers must get a
 	// fresh screencast epoch on the new target or they show one forced frame
 	// and then nothing, looking live while every input reports no change.
@@ -1100,16 +1282,30 @@ func (s *Session) swapTab(tabCtx context.Context, tabCancel context.CancelFunc, 
 		castCtx, castCancel = s.castCtx, s.castCancel
 	}
 	s.mu.Unlock()
+	// Recordings are session-scoped, not tab-scoped: the log survives the
+	// swap and the marker keeps the profile migration on the timeline. Phase
+	// B must re-arm the in-page tap and Network events on the new target.
+	if rec != nil {
+		rec.appendState("tab_swapped", map[string]any{"profile": profile})
+	}
 	oldCancel()
+	// The old capture bundle dies with the old tab ctx (its watcher sees
+	// capCtx close and tears down once); re-arm all sources on the new tab.
+	if rec != nil {
+		s.startRecordingCapture(rec)
+	}
 	ctx, c := context.WithTimeout(oldBrowser, 5*time.Second)
 	_, _ = chromedp.CallBrowser(ctx, target.CloseTarget, target.CloseTargetParams{TargetID: oldID})
 	c()
 	go s.watchNav()
 	go s.watchCrash()
 	go s.watchDialogs()
+	go s.watchNetLog()
+	go s.watchObsBindings()
 	go s.watchLoginBindings()
 	go s.watchLoginContexts()
 	go s.maintLoop()
+	go s.inputWorker()
 	s.refreshNavState()
 	if hasStream {
 		go s.castLoop(castCtx, castCancel)
@@ -1141,6 +1337,12 @@ func (s *Session) markCrashedLocked(reason string) {
 	s.streams = nil
 	s.controller = nil
 	s.agentLock = false
+	// markCrashedLocked can run while m.mu is held (watchBrowser), so the
+	// interrupt's file I/O goes to a goroutine instead of running under lock.
+	if r := s.recorder; r != nil {
+		s.recorder = nil
+		go r.interrupt(reason)
+	}
 }
 
 // maintLoop is the session's serialized CDP worker: screencast acks (issued
@@ -1296,6 +1498,7 @@ func (s *Session) Takeover(sub *Stream) {
 	s.mu.Unlock()
 	if changed {
 		s.broadcastControl()
+		s.noteRecState("takeover", nil)
 	}
 }
 
@@ -1312,6 +1515,7 @@ func (s *Session) SetAgentLock(on bool) {
 	s.lastActivity = time.Now()
 	s.mu.Unlock()
 	s.broadcastControl()
+	s.noteRecState("agent_lock", map[string]any{"on": on})
 }
 
 // AgentLocked reports whether the agent currently holds the input lease.
@@ -1440,7 +1644,10 @@ func (s *Session) castLoop(ctx context.Context, cancel context.CancelFunc) {
 	}()
 	events := cdp.Events[page.EventScreencastFrame](ctx, s.tab(), page.ScreencastFrame)
 	if _, err := chromedp.Call(ctx, page.StartScreencast, page.StartScreencastParams{
+		// SendLastFrame trades a held frame for ~1 frame of fresher
+		// presentation — worth it on the interactive path.
 		Format: "jpeg", Quality: new(screencastQuality), EveryNthFrame: 1,
+		SendLastFrame: new(true),
 	}); err != nil {
 		return
 	}
@@ -1577,6 +1784,156 @@ func (s *Session) Click(x, y float64, button string, clickCount int64) error {
 		}
 	}
 	return nil
+}
+
+// MouseDown/MouseUp forward the two halves of a drag-capable press. The pane
+// uses these (not Click) so press→move→release gestures reach the page;
+// Click stays for semantic single clicks from other callers.
+func (s *Session) MouseDown(x, y float64, button string, clickCount int64) error {
+	s.mu.Lock()
+	mobile := s.device.Mobile
+	s.mu.Unlock()
+	if mobile {
+		return s.Touch("touchStart", x, y)
+	}
+	// Button transitions carry their own coordinates — a separate leading
+	// move would only spend an extra renderer-ack round trip.
+	return s.mouseButton(input.DispatchMouseEventTypeMousePressed, x, y, button, clickCount)
+}
+
+func (s *Session) MouseUp(x, y float64, button string, clickCount int64) error {
+	s.mu.Lock()
+	mobile := s.device.Mobile
+	s.mu.Unlock()
+	if mobile {
+		return s.Touch("touchEnd", x, y)
+	}
+	return s.mouseButton(input.DispatchMouseEventTypeMouseReleased, x, y, button, clickCount)
+}
+
+func (s *Session) mouseButton(t input.DispatchMouseEventType, x, y float64, button string, clickCount int64) error {
+	btn := input.MouseButton(button)
+	if btn == "" {
+		btn = input.MouseButtonLeft
+	}
+	if clickCount < 1 {
+		clickCount = 1
+	}
+	ctx, cancel := s.ioCtx()
+	defer cancel()
+	_, err := chromedp.Call(ctx, input.DispatchMouseEvent,
+		input.DispatchMouseEventParams{Type: t, X: x, Y: y, Button: btn, ClickCount: clickCount})
+	return err
+}
+
+// MouseMoveButtons moves the pointer carrying the held-buttons bitmask, which
+// drags need so the page keeps seeing buttons=1 while the press is open.
+// Pane callers should queue moves via SubmitMove rather than call this
+// directly: one dispatch in flight at a time, freshest position wins.
+func (s *Session) MouseMoveButtons(x, y float64, buttons int64) error {
+	s.mu.Lock()
+	mobile := s.device.Mobile
+	s.mu.Unlock()
+	if mobile {
+		if buttons > 0 {
+			return s.Touch("touchMove", x, y)
+		}
+		return nil
+	}
+	return s.dispatchMouseMove(x, y, buttons)
+}
+
+// inputJob is one queued pane input. A non-empty moveKey marks a coalescable
+// move: enqueueing another job with the same key overwrites an undispatched
+// same-key tail, so an expensive page always gets the freshest position.
+type inputJob struct {
+	moveKey string
+	run     func() error
+}
+
+// SubmitMove queues a coalescable move ("mouse"/"touch"). SubmitInput queues
+// an ordered discrete input. Both are non-blocking and safe from any caller.
+func (s *Session) SubmitMove(key string, run func() error) {
+	s.submitInput(inputJob{moveKey: key, run: run})
+}
+
+func (s *Session) SubmitInput(run func() error) {
+	s.submitInput(inputJob{run: run})
+}
+
+func (s *Session) submitInput(job inputJob) {
+	const maxQueued = 128
+	s.inMu.Lock()
+	if job.moveKey != "" {
+		if n := len(s.inputJobs); n > 0 && s.inputJobs[n-1].moveKey == job.moveKey {
+			s.inputJobs[n-1] = job
+			s.inMu.Unlock()
+			return
+		}
+	}
+	if len(s.inputJobs) >= maxQueued {
+		// Flood backpressure: a stale move is dropped outright; discrete input
+		// evicts the oldest coalescable job, and if none exists the input is
+		// dropped — a full queue means the tab is wedged regardless.
+		if job.moveKey != "" {
+			s.inMu.Unlock()
+			return
+		}
+		room := false
+		for i, j := range s.inputJobs {
+			if j.moveKey != "" {
+				s.inputJobs = append(s.inputJobs[:i], s.inputJobs[i+1:]...)
+				room = true
+				break
+			}
+		}
+		if !room {
+			s.inMu.Unlock()
+			return
+		}
+	}
+	s.inputJobs = append(s.inputJobs, job)
+	select {
+	case s.inputWake <- struct{}{}:
+	default:
+	}
+	s.inMu.Unlock()
+}
+
+// inputWorker drains queued pane input one dispatch at a time. Bound to
+// s.tabCtx once at start — like maintLoop — and re-armed by swapTab on the new
+// tab, so queued jobs survive a tab swap.
+func (s *Session) inputWorker() {
+	ctx := s.tabCtx
+	for {
+		s.inMu.Lock()
+		if len(s.inputJobs) == 0 {
+			s.inMu.Unlock()
+			select {
+			case <-s.inputWake:
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
+		job := s.inputJobs[0]
+		s.inputJobs = s.inputJobs[1:]
+		s.inMu.Unlock()
+		if ctx.Err() != nil {
+			return // a swapped/dead tab's worker retires, not competes for jobs
+		}
+		if err := job.run(); err != nil && ctx.Err() == nil {
+			s.m.log.Debug("browser input dispatch failed", "session", s.id, "error", err)
+		}
+	}
+}
+
+func (s *Session) dispatchMouseMove(x, y float64, buttons int64) error {
+	ctx, cancel := s.ioCtx()
+	_, err := chromedp.Call(ctx, input.DispatchMouseEvent,
+		input.DispatchMouseEventParams{Type: input.DispatchMouseEventTypeMouseMoved, X: x, Y: y, Buttons: buttons})
+	cancel()
+	return err
 }
 
 func (s *Session) Wheel(x, y, deltaX, deltaY float64) error {
@@ -1823,7 +2180,14 @@ func (s *Session) closeWith(code, message string) {
 	s.streams = nil
 	s.controller = nil
 	s.agentLock = false
+	rec := s.recorder
+	s.recorder = nil
 	s.mu.Unlock()
+	// Close callers hold no locks, so the recording interrupt can finalize
+	// synchronously — files are complete before Close returns.
+	if rec != nil {
+		rec.interrupt("session closed")
+	}
 	if cancel != nil {
 		cancel()
 	}

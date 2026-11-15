@@ -300,6 +300,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 			Comment    string `json:"comment"`
 			Screenshot *bool  `json:"screenshot"`
 		} `json:"annotations"`
+		RecordingID    string `json:"recordingId"`
 		ReplyToChannel bool   `json:"replyToChannel"`
 		ReplyChannel   string `json:"replyChannel"`
 		Delivery       string `json:"delivery"`
@@ -323,10 +324,21 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 			OmitScreenshot: a.Screenshot != nil && !*a.Screenshot,
 		})
 	}
+	var recording *store.RecordingInput
+	if recID := strings.TrimSpace(in.RecordingID); recID != "" {
+		var ok bool
+		recording, ok = s.resolveRecording(recID, convID)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "recording_invalid",
+				"Unknown recording or it belongs to another conversation.")
+			return
+		}
+	}
 	msg, turn, err := s.chat.Submit(r.Context(), chat.SubmitInput{
 		ConversationID: convID, Text: in.Text, Attachments: in.Attachments,
 		Channel: "web", ReplyToChannel: in.ReplyToChannel, ReplyChannel: in.ReplyChannel,
 		Delivery: in.Delivery, Annotations: annotations, References: in.References,
+		Recording: recording,
 	})
 	if err != nil {
 		status := http.StatusBadRequest
@@ -346,6 +358,43 @@ func (s *Server) resolvePick(pickID string) (*browser.Pick, bool) {
 		return nil, false
 	}
 	return s.browser.Pick(pickID)
+}
+
+// resolveRecording resolves a browser recording id for send-to-agent; the
+// recordings dir is the source of truth (live, completed, and interrupted
+// recordings all resolve — client-submitted metadata is ignored). The
+// recording must belong to the prompted conversation. A live recording has
+// no summary.txt yet, so its meta + counts stand in as the brief.
+func (s *Server) resolveRecording(recID, convID string) (*store.RecordingInput, bool) {
+	if s.browser == nil || recID == "" {
+		return nil, false
+	}
+	rec, err := s.browser.Recording(recID)
+	if err != nil {
+		return nil, false
+	}
+	meta := rec.Meta()
+	if meta.ConversationID != convID {
+		return nil, false
+	}
+	in := &store.RecordingInput{ID: meta.ID, Status: meta.Status}
+	if summary, err := rec.Summary(); err == nil && strings.TrimSpace(summary) != "" {
+		in.Summary = summary
+	} else {
+		in.Summary = liveRecordingBrief(meta)
+	}
+	return in, true
+}
+
+// liveRecordingBrief is the send-time context for a recording that has no
+// finalized summary.txt — meta + the counters the writer keeps fresh.
+func liveRecordingBrief(meta browser.RecMeta) string {
+	started := "-"
+	if meta.StartedAt > 0 {
+		started = time.UnixMilli(meta.StartedAt).Format(time.RFC3339)
+	}
+	return fmt.Sprintf("Browser recording %s — status %s (no finalized summary yet).\nStarted: %s\nEvents so far: %d | Annotations: %d | Errors: %d\nUse the browser_get_timeline tool for the live event stream; browser_get_recording_summary works once the recording stops.",
+		meta.ID, meta.Status, started, meta.Counts.Events, meta.Counts.Annotations, meta.Counts.Errors)
 }
 
 func (s *Server) hydrateMessagesOne(r *http.Request, m store.Message) messageView {

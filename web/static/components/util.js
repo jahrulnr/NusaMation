@@ -94,6 +94,44 @@ export function truncate(s, n) {
   return s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s;
 }
 
+// formatElapsed renders a millisecond duration as mm:ss — the browser pane's
+// recording chip ticks it client-side from the meta's startedAt.
+export function formatElapsed(ms) {
+  const s = Math.max(0, Math.floor((ms || 0) / 1000));
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// normalizeRect turns two corner points (any drag direction) into a top-left
+// anchored {x,y,width,height} rect — the region annotation payload shape.
+export function normalizeRect(a, b) {
+  return {
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    width: Math.abs(a.x - b.x),
+    height: Math.abs(a.y - b.y),
+  };
+}
+
+// annotationTag is the chip label for a pick descriptor: element picks show
+// their tag, regions their viewport size, pages a fixed "Page" label.
+export function annotationTag(d) {
+  if (d && d.kind === "region") {
+    const w = Math.round(d.rect?.width || 0), h = Math.round(d.rect?.height || 0);
+    return w > 0 && h > 0 ? `Region ${w}×${h}` : "Region";
+  }
+  if (d && d.kind === "page") return "Page";
+  return (d && d.tagName) || "element";
+}
+
+// recordingBrief is the one-line human summary carried in the send-to-agent
+// message text; the server swaps in the real summary.txt for the prompt.
+export function recordingBrief(meta, now = Date.now()) {
+  const c = (meta && meta.counts) || {};
+  const count = (n, one, many) => `${n || 0} ${n === 1 ? one : many}`;
+  const dur = meta && meta.startedAt ? ` in ${formatElapsed(Math.max(0, (meta.endedAt || now) - meta.startedAt))}` : "";
+  return `QA recording attached: ${count(c.events, "event", "events")} · ${count(c.annotations, "annotation", "annotations")} · ${count(c.errors, "error", "errors")}${dur}`;
+}
+
 export function initials(name) {
   const s = String(name || "?").trim();
   if (!s) return "?";

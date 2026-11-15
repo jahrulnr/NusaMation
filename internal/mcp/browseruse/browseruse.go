@@ -80,22 +80,28 @@ func toolList() []stdio.Tool {
 		{Name: "browser_vault_fill", Description: "Fill the current page login using a saved credential for this browser profile and exact origin. Optionally specify the exact username to choose an account; otherwise the most recent is used. Returns only whether a login was filled; the password is not returned. Does not submit the form or replace a different password already in the field.", InputSchema: obj(map[string]any{"username": str})},
 		{Name: "browser_profile", Description: "Switch the pane to a different persistent browser profile (name). Each profile keeps its own cookies, storage, history, and saved logins across restarts; the pane's current page reloads in the new profile. Omit profile or use 'default' for the default profile.", InputSchema: obj(map[string]any{"profile": str})},
 		{Name: "browser_lock", Description: "Take or release the pane's input lease: mode=true mutes input from every human pane viewer so a stray click cannot disturb the run (they keep watching the live view); mode=false hands control back to the current viewer. A human can always preempt with Take over, which ends the lock.", InputSchema: obj(map[string]any{"mode": boolean}, "mode")},
+		{Name: "browser_get_recording_status", Description: "Return the newest browser session recording for this conversation: its id, status, event/annotation/error counts and times. The live session's active recording wins; otherwise the newest completed or interrupted one. Reports that none exists when the conversation was never recorded.", InputSchema: obj(map[string]any{})},
+		{Name: "browser_get_recording_summary", Description: "Return the recording's summary.txt: header (env/url/duration/counts), annotations list, a compact step outline, and observations (failed requests, console errors). Only finalized recordings have one — a live recording reports 'still recording' instead.", InputSchema: obj(map[string]any{})},
+		{Name: "browser_get_timeline", Description: "Read the recording's event timeline. Optional after_seq resumes from a previous call's next cursor; limit defaults to 200 (max 1000); types filters to a subset such as click, input, navigate, annotation, tool, network_error, download, console, state. Returns {events, next, done}.", InputSchema: obj(map[string]any{"after_seq": num, "limit": num, "types": map[string]any{"type": "array", "items": str}})},
+		{Name: "browser_get_annotation", Description: "Resolve one annotation from the recording by its annotation_id/pickId: returns the recorded event plus the pick's descriptor (element/region/page), marker and marked-screenshot upload ref.", InputSchema: obj(map[string]any{"annotation_id": str}, "annotation_id")},
+		{Name: "browser_get_artifact", Description: "Fetch a file from the recording's artifacts dir by name (downloads/<guid> reaches captured downloads). Images return as image content; text/json/jsonl/log files return as text (capped at 256KB).", InputSchema: obj(map[string]any{"name": str}, "name")},
 	}
 }
 
 type apiResult struct {
-	URL       string          `json:"url"`
-	Title     string          `json:"title"`
-	Width     int             `json:"width"`
-	Height    int             `json:"height"`
-	SessionID string          `json:"sessionId"`
-	Image     string          `json:"image"`
-	MimeType  string          `json:"mimeType"`
-	Result    json.RawMessage `json:"result"`
-	Snapshot  string          `json:"snapshot"`
-	Detail    string          `json:"detail"`
-	Error     string          `json:"error"`
-	Code      string          `json:"code"`
+	URL          string          `json:"url"`
+	Title        string          `json:"title"`
+	Width        int             `json:"width"`
+	Height       int             `json:"height"`
+	SessionID    string          `json:"sessionId"`
+	Image        string          `json:"image"`
+	MimeType     string          `json:"mimeType"`
+	Result       json.RawMessage `json:"result"`
+	Snapshot     string          `json:"snapshot"`
+	Detail       string          `json:"detail"`
+	Observations []string        `json:"observations"`
+	Error        string          `json:"error"`
+	Code         string          `json:"code"`
 }
 
 func callTool(client *loopback.Client, name string, args json.RawMessage) (map[string]any, error) {
@@ -123,19 +129,37 @@ func callTool(client *loopback.Client, name string, args json.RawMessage) (map[s
 	if parsed.Error != "" {
 		return nil, fmt.Errorf("%s", parsed.Error)
 	}
-	text := fmt.Sprintf("url: %s\ntitle: %s\nviewport: %dx%d", parsed.URL, parsed.Title, parsed.Width, parsed.Height)
+	// Drive tools always carry url/title/viewport; read-only recording tools
+	// answer with data only, so the header lines are conditional.
+	var lines []string
+	if parsed.URL != "" {
+		lines = append(lines, "url: "+parsed.URL)
+	}
+	if parsed.Title != "" {
+		lines = append(lines, "title: "+parsed.Title)
+	}
+	if parsed.Width > 0 || parsed.Height > 0 {
+		lines = append(lines, fmt.Sprintf("viewport: %dx%d", parsed.Width, parsed.Height))
+	}
 	if parsed.Snapshot != "" {
-		text += fmt.Sprintf("\nsnapshot:\n%s", parsed.Snapshot)
+		lines = append(lines, "snapshot:\n"+parsed.Snapshot)
 	}
 	if parsed.Detail != "" {
-		text += fmt.Sprintf("\ndetail: %s", parsed.Detail)
+		lines = append(lines, "detail: "+parsed.Detail)
+	}
+	if len(parsed.Observations) > 0 {
+		lines = append(lines, "observations:\n- "+strings.Join(parsed.Observations, "\n- "))
 	}
 	if len(parsed.Result) > 0 {
 		if name == "browser_console_messages" {
-			text += fmt.Sprintf("\nmessages: %s", parsed.Result)
+			lines = append(lines, fmt.Sprintf("messages: %s", parsed.Result))
 		} else {
-			text += fmt.Sprintf("\nresult: %s", parsed.Result)
+			lines = append(lines, fmt.Sprintf("result: %s", parsed.Result))
 		}
+	}
+	text := strings.Join(lines, "\n")
+	if text == "" {
+		text = "ok"
 	}
 	content := []any{map[string]any{"type": "text", "text": text}}
 	if parsed.Image != "" {

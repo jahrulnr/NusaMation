@@ -6,6 +6,16 @@ import { resourceKind, decodeFileText, prepareResources, highlightLanguage } fro
 
 let disposePreview = () => {};
 
+// Text is decoded to a JS string (~2 bytes/char) plus DOM rows — unbounded
+// files would OOM the tab. Same-origin files are fetched through a Range
+// request, so the server only ever sends the window we ask for; a truncated
+// response renders its first window with a notice. Deep links to a line get a
+// larger window so most jumps still land.
+const PREVIEW_CAP = 1024 * 1024;      // 1 MB
+const PREVIEW_LINE_CAP = 8 * 1024 * 1024; // 8 MB when jumping to a line
+
+const fmtMB = (n) => n >= 1024 * 1024 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(n / 1024))} KB`;
+
 // Split highlighted code into .file-line rows at newlines. highlight.js spans
 // can straddle line breaks (block comments, raw strings), so each segment
 // reopens a clone of the element chain it came from to keep its colours.
@@ -77,7 +87,9 @@ export async function previewResource(url, name = 'File', context = {}) {
     const remote = download.origin !== location.origin;
     const guess = context.kind || resourceKind(name) || resourceKind(url);
     if (remote && ['image','audio','video'].includes(guess)) { showMedia(guess, url); return; }
-    const response = await fetch(url, { credentials: 'same-origin', signal: controller.signal });
+    const cap = context.line > 0 ? PREVIEW_LINE_CAP : PREVIEW_CAP;
+    const headers = remote ? {} : { Range: `bytes=0-${cap - 1}` };
+    const response = await fetch(url, { credentials: 'same-origin', signal: controller.signal, headers });
     if (!response.ok) {
       let message = `Could not open file (${response.status}).`;
       if ((response.headers.get('content-type') || '').includes('application/json')) { try { message = (await response.json()).error || message; } catch {} }
@@ -87,23 +99,42 @@ export async function previewResource(url, name = 'File', context = {}) {
     const type = response.headers.get('content-type') || '';
     const kind = resourceKind(name, type) || resourceKind(url, type);
     if (['image','audio','video'].includes(kind)) { await response.body?.cancel(); showMedia(kind, url); return; }
+    // File size from Content-Range (206) or Content-Length (200). A remote
+    // host may ignore Range entirely; when it does and the file is heavy,
+    // refuse before pulling the whole body.
+    const len = Number(response.headers.get('content-length') || 0);
+    if (len > cap) {
+      await response.body?.cancel();
+      throw new Error(`This file is too large to preview (${fmtMB(len)}). Use Download or Open original.`);
+    }
     const blob = await response.blob();
     if (!root.isConnected) return;
+    const body = blob.size > cap ? blob.slice(0, cap) : blob;
+    const rangeTotal = (response.headers.get('content-range') || '').split('/')[1];
+    const total = Number(rangeTotal || len || blob.size) || 0;
+    // body.size < blob.size means a compressed or length-less response still
+    // overran the cap — a fragment must never render as a complete file.
+    const truncated = blob.size > cap || total > body.size;
     if (kind === 'pdf') {
-      const source = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+      if (truncated) throw new Error(`This PDF is too large to preview${total ? ` (${fmtMB(total)})` : ''}. Use Download or Open original.`);
+      const source = URL.createObjectURL(new Blob([body], { type: 'application/pdf' }));
       objectURLs.push(source);
       const frame = document.createElement('iframe');
       frame.title = name; frame.src = source;
       root.replaceChildren(frame);
     } else {
       let text;
-      try { text = decodeFileText(await blob.arrayBuffer(), type); }
+      // Non-fatal on a truncated window: the cap can split a multi-byte
+      // character, and a replacement glyph at the seam beats a failed preview.
+      try { text = decodeFileText(await body.arrayBuffer(), type, !truncated); }
       catch { throw new Error('Preview is unavailable for this file type. Use Download or Open original.'); }
-      if (kind === 'html' && !context.line) {
+      // A truncated file renders as plain text: partial HTML/PDF renders are
+      // broken, and "first window of the file" is the honest view.
+      if (kind === 'html' && !context.line && !truncated) {
         const frame = document.createElement('iframe');
         frame.title = name; frame.setAttribute('sandbox', ''); frame.srcdoc = prepareResources(text, context);
         root.replaceChildren(frame);
-      } else if (kind === 'markdown' && !context.line) {
+      } else if (kind === 'markdown' && !context.line && !truncated) {
         const doc = document.createElement('div'); doc.className = 'markdown';
         doc.innerHTML = renderMarkdown(text, 'file-preview', 'markdown', context);
         root.replaceChildren(doc); enhanceMarkdown(root);
@@ -132,6 +163,15 @@ export async function previewResource(url, name = 'File', context = {}) {
         } else pre.textContent = text;
         root.replaceChildren(pre);
         $('[data-selected-line]', root)?.scrollIntoView({ block: 'center' });
+      }
+      if (truncated) {
+        const note = document.createElement('div');
+        note.className = 'file-preview-truncated';
+        const shown = fmtMB(body.size), whole = fmtMB(total);
+        note.textContent = (shown === whole ? `Showing the first ${body.size.toLocaleString()} bytes of a ${total.toLocaleString()}-byte file.`
+          : `Showing the first ${shown} of a ${whole} file.`) +
+          (context.line > 0 && !root.querySelector('[data-selected-line]') ? ` Line ${context.line} is beyond the shown window.` : '');
+        root.appendChild(note);
       }
     }
     root.removeAttribute('role');

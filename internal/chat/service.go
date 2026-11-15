@@ -203,8 +203,12 @@ type SubmitInput struct {
 	// Annotations carries resolved browser picks (pickId → descriptor +
 	// marked-screenshot upload); the http layer resolves them so chat sees
 	// plain data.
-	Annotations     []store.AnnotationInput `json:"-"`
-	AutomationRunID string                  `json:"-"`
+	Annotations []store.AnnotationInput `json:"-"`
+	// Recording carries a resolved browser recording (recordingId → meta +
+	// summary text); like annotations the http layer resolves it so chat
+	// sees plain data.
+	Recording       *store.RecordingInput `json:"-"`
+	AutomationRunID string                `json:"-"`
 }
 
 // Orchestrator identifies the conversation that sent a cross-conversation
@@ -233,7 +237,7 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 	if err := validatePromptReferences(text, in.References); err != nil {
 		return store.Message{}, store.Turn{}, err
 	}
-	if text == "" && len(in.Attachments) == 0 && len(in.Annotations) == 0 {
+	if text == "" && len(in.Attachments) == 0 && len(in.Annotations) == 0 && in.Recording == nil {
 		return store.Message{}, store.Turn{}, ErrInvalidPrompt
 	}
 	conv, err := s.store.GetConversation(ctx, in.ConversationID)
@@ -287,10 +291,10 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 		}
 		uploads = append(uploads, a.Upload)
 	}
-	// Steer injects text into the running prompt — it cannot carry uploads
-	// or annotations, so any message with them must take the
-	// wait-tools→cancel→send path below instead of silently dropping them.
-	if in.Delivery == deliverySteer && len(uploads) == 0 && len(in.Annotations) == 0 {
+	// Steer injects text into the running prompt — it cannot carry uploads,
+	// annotations or a recording context, so any message with them must take
+	// the wait-tools→cancel→send path below instead of silently dropping them.
+	if in.Delivery == deliverySteer && len(uploads) == 0 && len(in.Annotations) == 0 && in.Recording == nil {
 		if msg, turn, handled, err := s.trySteer(ctx, conv, text, channel, originChannel, originRef, in.References); err != nil || handled {
 			return msg, turn, err
 		}
@@ -335,6 +339,12 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 			})
 		}
 		meta["annotations"] = list
+	}
+	if in.Recording != nil && in.Recording.ID != "" {
+		meta["recording"] = store.MessageRecording{
+			RecordingID: in.Recording.ID, Status: in.Recording.Status,
+			Summary: in.Recording.Summary,
+		}
 	}
 	if in.Delivery == deliveryAfterTools {
 		meta["delivery"] = deliveryAfterTools

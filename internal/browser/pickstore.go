@@ -21,6 +21,7 @@ type pickRecord struct {
 	SessionID      string                     `json:"sessionId"`
 	ConversationID string                     `json:"conversationId"`
 	Marker         int                        `json:"marker"`
+	Kind           string                     `json:"kind,omitempty"` // mirrors Descriptor.Kind for quick scans
 	Descriptor     store.AnnotationDescriptor `json:"descriptor"`
 	Upload         store.Upload               `json:"upload"`
 	CreatedAt      int64                      `json:"createdAt"`
@@ -32,7 +33,8 @@ type pickRecord struct {
 func savePickFile(dir string, p *Pick) error {
 	rec := pickRecord{
 		ID: p.ID, SessionID: p.SessionID, ConversationID: p.ConversationID,
-		Marker: p.Marker, Descriptor: p.Descriptor, Upload: p.Upload, CreatedAt: p.CreatedAt,
+		Marker: p.Marker, Kind: p.Descriptor.Kind, Descriptor: p.Descriptor,
+		Upload: p.Upload, CreatedAt: p.CreatedAt,
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -61,6 +63,11 @@ func loadPickFile(dir, id string) (*Pick, error) {
 	}
 	if rec.ID != id {
 		return nil, fmt.Errorf("pick id mismatch: file %q holds %q", id, rec.ID)
+	}
+	// Records written before kind existed stay element picks; a record that
+	// only carries the top-level kind back-fills the descriptor.
+	if rec.Descriptor.Kind == "" {
+		rec.Descriptor.Kind = rec.Kind
 	}
 	return &Pick{
 		ID: rec.ID, SessionID: rec.SessionID, ConversationID: rec.ConversationID,

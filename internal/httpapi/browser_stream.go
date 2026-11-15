@@ -97,6 +97,7 @@ type browserInput struct {
 	Y               float64 `json:"y"`
 	Button          string  `json:"button"`
 	ClickCount      int64   `json:"clickCount"`
+	Buttons         int64   `json:"buttons"`
 	DeltaX          float64 `json:"deltaX"`
 	DeltaY          float64 `json:"deltaY"`
 	Text            string  `json:"text"`
@@ -129,30 +130,66 @@ func (s *Server) browserInput(sess *browser.Session, sub *browser.Stream, msg br
 	if !sess.InputAllowed(sub) {
 		return
 	}
+	// Continuous input (moves) and discrete gestures (press, click, keys,
+	// wheel, text) queue on the session's input worker so a slow page's
+	// renderer-ack-gated dispatch never blocks this read loop; undispatched
+	// moves coalesce to the freshest position. Infrequent control calls
+	// (resize/emulate) stay synchronous because the reply matters.
 	var err error
 	switch msg.Type {
 	case "mousemove":
-		err = sess.MouseMove(msg.X, msg.Y)
+		sess.SubmitMove("mouse", func() error {
+			return sess.MouseMoveButtons(msg.X, msg.Y, msg.Buttons)
+		})
 	case "click":
-		err = sess.Click(msg.X, msg.Y, msg.Button, msg.ClickCount)
+		sess.SubmitInput(func() error {
+			return sess.Click(msg.X, msg.Y, msg.Button, msg.ClickCount)
+		})
+	case "down":
+		sess.SubmitInput(func() error {
+			return sess.MouseDown(msg.X, msg.Y, msg.Button, msg.ClickCount)
+		})
+	case "up":
+		sess.SubmitInput(func() error {
+			return sess.MouseUp(msg.X, msg.Y, msg.Button, msg.ClickCount)
+		})
 	case "touch":
-		err = sess.Touch(msg.Phase, msg.X, msg.Y)
-		if err == nil && msg.Phase == "touchEnd" && msg.KeyboardRequest != 0 {
-			var editable bool
-			editable, err = sess.FocusedEditable()
-			if err == nil {
+		if msg.Phase == "touchMove" {
+			sess.SubmitMove("touch", func() error {
+				return sess.Touch(msg.Phase, msg.X, msg.Y)
+			})
+			return
+		}
+		sess.SubmitInput(func() error {
+			err := sess.Touch(msg.Phase, msg.X, msg.Y)
+			if err == nil && msg.Phase == "touchEnd" && msg.KeyboardRequest != 0 {
+				editable, ferr := sess.FocusedEditable()
+				if ferr != nil {
+					return ferr
+				}
 				b, _ := json.Marshal(map[string]any{"type": "keyboard_focus", "request": msg.KeyboardRequest, "editable": editable})
 				sub.Send(b)
 			}
-		}
+			return err
+		})
+		return
 	case "wheel":
-		err = sess.Wheel(msg.X, msg.Y, msg.DeltaX, msg.DeltaY)
+		sess.SubmitInput(func() error {
+			return sess.Wheel(msg.X, msg.Y, msg.DeltaX, msg.DeltaY)
+		})
 	case "text":
-		err = sess.InsertText(msg.Text)
+		sess.SubmitInput(func() error {
+			return sess.InsertText(msg.Text)
+		})
 	case "key":
-		err = sess.Key(msg.Key, msg.Modifiers)
+		sess.SubmitInput(func() error {
+			return sess.Key(msg.Key, msg.Modifiers)
+		})
 	case "resize":
 		err = sess.Resize(msg.Width, msg.Height)
+		if err == nil {
+			sess.NoteViewport("system")
+		}
 	case "emulate":
 		var w, h *int64
 		var dpr *float64
@@ -168,6 +205,9 @@ func (s *Server) browserInput(sess *browser.Session, sub *browser.Stream, msg br
 		_, err = sess.ApplyDevicePatch(msg.Preset, browser.DevicePatch{
 			Width: w, Height: h, DPR: dpr, Mobile: msg.Mobile, UserAgent: msg.UA, Touch: msg.Touch,
 		})
+		if err == nil {
+			sess.NoteViewport("system")
+		}
 	default:
 		return
 	}

@@ -10,6 +10,7 @@ import { focusComposer, prepareComposer, renderComposer, upsertTurn } from "./co
 import { closeMobileSidebar, renderSidebar, scheduleSidebarRender } from "./sidebar.js";
 import { renderTopbar } from "./topbar.js";
 import { saveTitle } from "./convmeta.js";
+import { visibleProjectId } from "./projectmodel.js";
 
 export async function selectInitialConversation() {
   const m = location.pathname.match(/^\/c\/([^/]+)/);
@@ -50,7 +51,12 @@ export async function loadConversation(id, push = true) {
   S.historyError = "";
   switchComposer(id);
   S.scrollPinned = true;
+  // The project scope follows the open conversation so the sidebar's target
+  // and "New conversation in …" label match the top bar. Refresh loads of the
+  // same conversation keep a deliberate scope.
+  const switching = !S.current || S.current.id !== id;
   S.current = S.conversations.find((c) => c.id === id) || S.current;
+  if (switching && S.current && S.current.id === id) setSelectedProject(visibleProjectId(S.current, S.projects));
   S.messages = [];
   S.turns = {};
   S.active = null;
@@ -67,6 +73,7 @@ export async function loadConversation(id, push = true) {
     const bufferedDeltas = S.loadingDeltas;
     S.loadingDeltas = [];
     S.current = data.conversation;
+    if (switching) setSelectedProject(visibleProjectId(S.current, S.projects));
     S.messages = (data.messages || []).map(normalizeMessage);
     const received = new Set(S.messages.map((message) => message.id));
     duringLoad.forEach((message) => {
@@ -183,8 +190,10 @@ export function upsertConversation(conv, render = true) {
   else S.conversations.unshift(next);
   S.conversations.sort((a, b) => (Number(b.pinned) - Number(a.pinned)) || ((b.lastMessageAt || b.updatedAt || 0) - (a.lastMessageAt || a.updatedAt || 0)));
   if (S.current && S.current.id === conv.id) {
+    const prevProjectId = S.current.projectId || "";
     S.current = { ...S.current, ...conv };
     if (projectId !== undefined) S.current.projectId = projectId;
+    if ((S.current.projectId || "") !== prevProjectId) setSelectedProject(visibleProjectId(S.current, S.projects));
   }
   if (render) { renderSidebar(); renderTopbar(); }
 }

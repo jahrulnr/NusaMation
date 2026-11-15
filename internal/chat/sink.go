@@ -528,9 +528,12 @@ func (s *Service) applyUsage(a *activeTurn, u acp.SessionUpdate) {
 	}
 	if len(u.Meta) > 0 {
 		var meta struct {
-			TotalTokens  int64 `json:"totalTokens"`
-			InputTokens  int64 `json:"inputTokens"`
-			OutputTokens int64 `json:"outputTokens"`
+			TotalTokens       int64 `json:"totalTokens"`
+			InputTokens       int64 `json:"inputTokens"`
+			OutputTokens      int64 `json:"outputTokens"`
+			CachedReadTokens  int64 `json:"cachedReadTokens"`
+			CachedWriteTokens int64 `json:"cachedWriteTokens"`
+			ThoughtTokens     int64 `json:"thoughtTokens"`
 		}
 		if json.Unmarshal(u.Meta, &meta) == nil {
 			if meta.TotalTokens > 0 {
@@ -542,6 +545,18 @@ func (s *Service) applyUsage(a *activeTurn, u acp.SessionUpdate) {
 			if meta.OutputTokens > 0 {
 				usage.OutputTokens = meta.OutputTokens
 			}
+			if meta.CachedReadTokens > 0 {
+				usage.CachedReadTokens = meta.CachedReadTokens
+			}
+			if meta.CachedWriteTokens > 0 {
+				usage.CachedWriteTokens = meta.CachedWriteTokens
+			}
+			if meta.ThoughtTokens > 0 {
+				usage.ThoughtTokens = meta.ThoughtTokens
+			}
+		}
+		if capped := capJSON(u.Meta, 16<<10); len(capped) > 0 {
+			usage.Meta = capped
 		}
 	}
 	a.conv.Usage = usage

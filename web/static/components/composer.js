@@ -1,5 +1,5 @@
 import { $, $$, agentById, agentName, agentOrb, configChoices, configLabel, currentAgent, esc, icon, isMobile, isShort, parseConfigs, parseJSON } from "./util.js";
-import { S, composerFor, composerKey, moveComposer } from "./state.js";
+import { S, composerFor, composerKey, moveComposer, setSelectedProject } from "./state.js";
 import { api } from "./api.js";
 import { toast } from "./toast.js";
 import { closeModal, promptModal } from "./modal.js";
@@ -11,6 +11,7 @@ import { clearDraft, saveDraftNow, scheduleDraftSave } from "./convmeta.js";
 import { renderTopbar } from "./topbar.js";
 import { openSettings } from "./settings.js";
 import { referenceTrigger, reconcileReferences, referencesForSend } from "./references.js";
+import { visibleProjectId } from "./projectmodel.js";
 
 /* ---------------- composer ---------------- */
 let commandIndex = 0;
@@ -158,7 +159,7 @@ export function renderComposer() {
         </div>
       </div>
     </div>
-    <div class="composer-foot"><span>${icon("shield", "sm")} Approvals stay in your hands</span><span>${icon("brain", "sm")} Full thoughts on web</span></div>
+    <div class="composer-foot"><span>${icon("shield", "sm")} Approvals stay in your hands</span><span>${icon("brain", "sm")} Full thoughts on web</span>${S.current?.usage ? usageChipHTML(S.current.usage) : ""}</div>
     <input type="file" id="file-input" multiple hidden>
     <div class="drop-overlay" id="drop-overlay">Drop files to attach</div>
   </div>`;
@@ -241,7 +242,9 @@ export function composerConfigs() {
 export function mobileConfigSummary() {
   const model = S.configs.find((o) => String(o?.category || "").toLowerCase() === "model");
   const effort = S.configs.find((o) => ["thought_level", "reasoning_effort"].includes(String(o?.category || "").toLowerCase()));
-  return model ? [configLabel(model), effort && configLabel(effort)].filter(Boolean).join(" · ") : "";
+  const v = usageView(S.current?.usage);
+  const parts = [model && configLabel(model), effort && configLabel(effort), v?.pct != null ? `${v.pct}% ctx` : ""].filter(Boolean);
+  return parts.join(" · ");
 }
 
 export function autoGrow() {
@@ -349,6 +352,16 @@ export function renderPendingAttachments() {
   const el = $("#pending-attachments");
   if (!el) return;
   el.innerHTML = S.attachments.map((a) => {
+    if (a.type === "recording") {
+      const label = `${a.label || "recording"}${a.comment ? ": " + a.comment : ""}`;
+      const title = [a.detail, a.comment].filter(Boolean).join(" · ");
+      return `<div class="pending-attach annot" title="${esc(title || label)}">
+        ${icon("circle", "sm")}
+        <span class="name">${esc(label)}</span>
+        <button data-action="recording-edit" data-id="${esc(a.recordingId)}" aria-label="Edit comment" title="Edit comment">${icon("edit", "sm")}</button>
+        <button data-action="remove-attachment" data-id="${esc(a.id)}" aria-label="Remove">${icon("x", "sm")}</button>
+      </div>`;
+    }
     if (a.type === "annotation") {
       const u = a.upload || {};
       const label = `${a.tagName || a.label || "element"}${a.comment ? ": " + a.comment : ""}`;
@@ -375,6 +388,17 @@ export function editAnnotationComment(pickId) {
   const chip = S.attachments.find((a) => a.type === "annotation" && a.pickId === pickId);
   if (!chip) return;
   promptModal("Edit annotation comment", "Comment", chip.comment || "", async (value) => {
+    chip.comment = (value || "").trim();
+    renderPendingAttachments();
+    scheduleDraftSave();
+    closeModal();
+  }, "Comment for the agent…", true);
+}
+
+export function editRecordingComment(recordingId) {
+  const chip = S.attachments.find((a) => a.type === "recording" && a.recordingId === recordingId);
+  if (!chip) return;
+  promptModal("Edit recording comment", "Comment", chip.comment || "", async (value) => {
     chip.comment = (value || "").trim();
     renderPendingAttachments();
     scheduleDraftSave();
@@ -415,17 +439,20 @@ export async function uploadFiles(files) {
   }
 }
 
-export async function sendMessage() {
-  if (S.sending || (!S.current && S.preparing === "draft")) return;
+export async function sendMessage(opts = {}) {
+  if (S.sending || (!S.current && S.preparing === "draft")) return false;
   const ta = $("#prompt");
-  if (!ta) return;
-  const text = ta.value.trim();
-  if (!text && !S.attachments.length) return;
+  if (!ta) return false;
   const owner = composerFor(composerKey);
   const sourceKey = composerKey;
+  const attachments = owner.attachments.slice();
+  const recs = attachments.filter((a) => a.type === "recording");
+  // opts.text is a fallback for callers sending outside the typed draft; a
+  // real draft wins, then a recording chip's comment.
+  const text = ta.value.trim() || String(opts.text || "").trim() || (recs.at(-1)?.comment || "");
+  if (!text && !S.attachments.length) return false;
   let conversation = S.current;
   const delivery = isBusyTurn() ? owner.sendDelivery : "queue";
-  const attachments = owner.attachments.slice();
   const references = referencesForSend(ta.value, owner.references);
   const sentReferences = JSON.stringify(owner.references);
   owner.sending = true;
@@ -445,6 +472,7 @@ export async function sendMessage() {
         ++S.loadSeq;
         S.loadingConversation = false;
         S.current = conversation;
+        setSelectedProject(visibleProjectId(conversation, S.projects));
         S.messages = [];
         S.configs = [];
         S.currentAgent = ag;
@@ -462,7 +490,7 @@ export async function sendMessage() {
     const links = (conversation.links || []).filter((l) => l.channel !== "web");
     // Annotation chips are NOT uploads: they ride as annotations[{pickId,comment,
     // screenshot}] and the server binds each pick's marked upload itself (contract §3.9/§6.3).
-    const files = attachments.filter((a) => a.type !== "annotation");
+    const files = attachments.filter((a) => a.type !== "annotation" && a.type !== "recording");
     const annotations = attachments.filter((a) => a.type === "annotation");
     const body = {
       text,
@@ -473,6 +501,8 @@ export async function sendMessage() {
       delivery,
     };
     if (annotations.length) body.annotations = annotations.map((a) => ({ pickId: a.pickId, comment: a.comment || "", screenshot: a.shot !== false }));
+    if (recs.length) body.recordingId = recs.at(-1).recordingId;
+    else if (opts.recordingId) body.recordingId = opts.recordingId;
     const d = await api(`/conversations/${encodeURIComponent(conversation.id)}/messages`, { method: "POST", body });
     owner.sending = false;
     if (owner.draft.trim() === text && JSON.stringify(owner.references) === sentReferences) { owner.draft = ""; owner.references = []; if (composerFor(composerKey) === owner) $("#prompt").value = ""; }
@@ -481,7 +511,9 @@ export async function sendMessage() {
     // (edited mid-send or added while sending) stay persisted as the draft.
     clearDraft(conversation.id);
     if (owner.draft || owner.attachments.length) scheduleDraftSave(conversation.id);
-    if (composerFor(composerKey) !== owner || S.current?.id !== conversation.id) return;
+    // true marks a committed send — the recording button relies on it even
+    // when the visible room switched mid-send and the UI refresh is skipped.
+    if (composerFor(composerKey) !== owner || S.current?.id !== conversation.id) return true;
     renderPendingAttachments();
     upsertTurn(d.turn);
     upsertMessage(normalizeMessage({ ...d.message }));
@@ -491,10 +523,12 @@ export async function sendMessage() {
     renderTopbar();
     renderComposer();
     focusComposer();
+    return true;
   } catch (e) {
     owner.sending = false;
     if (composerFor(composerKey) === owner) updateComposerState();
     toast("Could not send", e.message, "error");
+    return false;
   }
 }
 
@@ -543,10 +577,77 @@ export async function openConfigMenu(anchor) {
     } catch {}
   }
   const opts = S.configs;
-  const usage = S.current.usage || {};
   openPopover(anchor, `<div class="popover-title">Session configuration <span class="muted" style="font-weight:400;font-size:10px">live</span></div>
     ${opts.length ? `<div class="config-list">${opts.map((o) => configControl(o)).join("")}</div>` : `<div class="popover-empty">No session options yet.<br>Send a message once; the agent will publish its model and mode.</div>`}
-    <div class="config-usage">${usage.totalTokens ? `${usage.totalTokens.toLocaleString()} tokens` : ""}${usage.inputTokens ? ` · ↑${usage.inputTokens.toLocaleString()}` : ""}${usage.outputTokens ? ` · ↓${usage.outputTokens.toLocaleString()}` : ""}${usage.costAmount ? ` · $${usage.costAmount}` : ""}</div>`, { width: 330 });
+    ${usageDetailHTML(S.current?.usage)}`, { width: 330 });
+}
+
+/* ---------------- usage indicator ---------------- */
+
+// usageView normalizes the raw Usage record into display parts shared by the
+// foot chip, the mobile summary, and the detail popover.
+function usageView(u) {
+  if (!u || typeof u !== "object") return null;
+  const pct = u.size > 0 ? Math.min(100, Math.round((u.used / u.size) * 100)) : null;
+  const level = pct == null ? "" : pct >= 90 ? "danger" : pct >= 75 ? "warn" : "";
+  const currency = u.costCurrency || "USD";
+  const cost = u.costAmount ? `${currency === "USD" ? "$" : currency + " "}${u.costAmount < 1 ? u.costAmount.toFixed(3) : u.costAmount.toFixed(2)}` : "";
+  return { pct, level, cost };
+}
+
+// Foot chip: a tiny ring + % (and cost when reported). Renders only when the
+// agent has reported context size — the honest "no data yet" state is no chip.
+function usageChipHTML(u) {
+  const v = usageView(u);
+  if (!v || v.pct == null) return "";
+  const c = 2 * Math.PI * 6.5;
+  const tip = `Session usage ${v.pct}%${v.cost ? ` · ${v.cost}` : ""} — click for details`;
+  return `<button type="button" id="usage-chip" class="usage-chip ${v.level}" data-action="usage-detail" title="${esc(tip)}" aria-label="${esc(tip)}">
+    <svg class="usage-ring" viewBox="0 0 16 16" aria-hidden="true"><circle class="usage-ring-bg" cx="8" cy="8" r="6.5"/><circle class="usage-ring-fg" cx="8" cy="8" r="6.5" stroke-dasharray="${(c * v.pct / 100).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 8 8)"/></svg>
+    <span>${v.pct}%</span>${v.cost ? icon("coins", "sm") : ""}
+  </button>`;
+}
+
+// Shared detail block for every popover surface (config menu, agent options,
+// dedicated usage popover). Vendor _meta extras render best-effort.
+function usageDetailHTML(u) {
+  const v = usageView(u);
+  if (!v) return "";
+  const rows = [];
+  if (v.pct != null) rows.push(["Context", `${u.used.toLocaleString()} / ${u.size.toLocaleString()} (${v.pct}%)`, v.pct]);
+  if (u.totalTokens) rows.push(["Tokens", `${u.totalTokens.toLocaleString()} total · ↑${(u.inputTokens || 0).toLocaleString()} in · ↓${(u.outputTokens || 0).toLocaleString()} out`]);
+  const cached = (u.cachedReadTokens || 0) + (u.cachedWriteTokens || 0);
+  if (cached) rows.push(["Cache", `read ${(u.cachedReadTokens || 0).toLocaleString()} · write ${(u.cachedWriteTokens || 0).toLocaleString()}`]);
+  if (u.thoughtTokens) rows.push(["Thinking", `${u.thoughtTokens.toLocaleString()}`]);
+  if (v.cost) rows.push(["Cost", v.cost]);
+  const meta = parseJSON(u.meta, {}) || {};
+  const model = meta["_claude/model"];
+  const rl = meta["_claude/rateLimit"];
+  const win = rl?.unifiedWindows || {};
+  if (model) rows.push(["Model", model]);
+  if (win.five_hour?.utilization != null) rows.push(["5h limit", `${Math.round(win.five_hour.utilization * 100)}%${rl.resetsAt ? ` · resets ${new Date(rl.resetsAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}`, Math.round(win.five_hour.utilization * 100)]);
+  if (win.seven_day?.utilization != null) rows.push(["7d limit", `${Math.round(win.seven_day.utilization * 100)}%`, Math.round(win.seven_day.utilization * 100)]);
+  if (!rows.length) return "";
+  return `<div class="usage-detail">${rows.map(([k, val, pct]) => `<div class="usage-row"><span class="usage-k">${esc(k)}</span><span class="usage-v">${esc(String(val))}</span>${pct != null ? `<span class="usage-bar"><span style="width:${Math.min(100, pct)}%" class="${pct >= 90 ? "danger" : pct >= 75 ? "warn" : ""}"></span></span>` : ""}</div>`).join("")}</div>`;
+}
+
+export function openUsageDetail(anchor) {
+  const u = S.current?.usage;
+  const detail = usageDetailHTML(u);
+  openPopover(anchor, `<div class="popover-title">Session usage <span class="muted" style="font-weight:400;font-size:10px">live</span></div>
+    ${detail || `<div class="popover-empty">No usage reported yet.<br>The agent publishes context and token stats during turns.</div>`}`, { width: 300 });
+}
+
+// usage.updated arrives per turn event — patch just the chip instead of
+// rebuilding the composer bar (which would churn focus and click targets).
+export function renderUsageIndicator() {
+  const chip = $("#usage-chip");
+  const html = usageChipHTML(S.current?.usage);
+  if (chip) { chip.outerHTML = html || ""; }
+  else if (html) {
+    const foot = $(".composer-foot");
+    if (foot) foot.insertAdjacentHTML("beforeend", html);
+  }
 }
 
 export function configControl(o) {
@@ -571,7 +672,7 @@ export function openComposerSettings(anchor, includeMode = false) {
     links.length ? menuItem(S.replyToChannel ? "check" : "message", S.replyToChannel ? "Stop replying to chat" : "Reply to chat", "reply-toggle") : "",
     S.elicitations.some((e) => e.conversationId === S.current?.id) ? menuItem("info", "Respond", "show-agent-request") : "",
   ].join("") : "";
-  openPopover(anchor, `<div class="popover-title">Agent options</div><div class="popover-list composer-options">${compact}${opts.map((o) => `<button class="menu-item" data-action="composer-subconfig" data-id="${esc(o.id)}"><span class="popover-main"><b>${esc(o.name || o.id)}</b>${o.description ? `<small>${esc(o.description)}</small>` : ""}</span><span class="composer-option-value">${esc(configLabel(o))}</span>${icon("chevron-right", "sm")}</button>`).join("")}</div>`, { width: 300, class: "composer-popover" });
+  openPopover(anchor, `<div class="popover-title">Agent options</div>${usageDetailHTML(S.current?.usage)}<div class="popover-list composer-options">${compact}${opts.map((o) => `<button class="menu-item" data-action="composer-subconfig" data-id="${esc(o.id)}"><span class="popover-main"><b>${esc(o.name || o.id)}</b>${o.description ? `<small>${esc(o.description)}</small>` : ""}</span><span class="composer-option-value">${esc(configLabel(o))}</span>${icon("chevron-right", "sm")}</button>`).join("")}</div>`, { width: 300, class: "composer-popover" });
 }
 
 export function openComposerConfig(anchor, id, nested = false) {

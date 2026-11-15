@@ -69,8 +69,70 @@ func TestToolListUsesBrowserPrefix(t *testing.T) {
 			t.Fatalf("tool %q has no input schema", tool.Name)
 		}
 	}
-	if len(seen) < 19 {
+	if len(seen) < 24 {
 		t.Fatalf("tool count = %d", len(seen))
+	}
+	for _, want := range []string{
+		"browser_get_recording_status", "browser_get_recording_summary",
+		"browser_get_timeline", "browser_get_annotation", "browser_get_artifact",
+	} {
+		if !seen[want] {
+			t.Fatalf("recording read tool %q missing from toolList()", want)
+		}
+	}
+}
+
+// Recording read tools answer with data only — no url/title/viewport header
+// lines — and an image artifact rides as an image content block.
+func TestCallToolRendersRecordingResult(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch body["tool"] {
+		case "browser_get_timeline":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"result": map[string]any{"events": []any{}, "next": 0, "done": true},
+			})
+		case "browser_get_recording_status":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"detail": "No browser recording exists for this conversation.",
+			})
+		case "browser_get_artifact":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"image": "aGVsbG8=", "mimeType": "image/png", "detail": "artifact shot.png",
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "unexpected tool"})
+		}
+	}))
+	defer srv.Close()
+	client := newTestClient(srv.URL)
+
+	res, err := callTool(client, "browser_get_timeline", json.RawMessage(`{"after_seq":2}`))
+	if err != nil {
+		t.Fatalf("timeline: %v", err)
+	}
+	text := res["content"].([]any)[0].(map[string]any)["text"].(string)
+	if strings.HasPrefix(text, "url:") || !strings.Contains(text, `"done":true`) {
+		t.Fatalf("timeline text = %q", text)
+	}
+
+	res, err = callTool(client, "browser_get_recording_status", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("status none: %v", err)
+	}
+	text = res["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "detail: No browser recording") {
+		t.Fatalf("status-none text = %q", text)
+	}
+
+	res, err = callTool(client, "browser_get_artifact", json.RawMessage(`{"name":"shot.png"}`))
+	if err != nil {
+		t.Fatalf("artifact: %v", err)
+	}
+	content := res["content"].([]any)
+	if len(content) != 2 || content[1].(map[string]any)["type"] != "image" {
+		t.Fatalf("artifact content = %#v", res["content"])
 	}
 }
 

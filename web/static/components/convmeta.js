@@ -17,7 +17,7 @@ let onBrowserMeta = null;
 
 export function usableBrowserURL(url) {
   const u = String(url || "").trim();
-  if (!u || u === "about:blank") return "";
+  if (!u || u === "about:blank" || u.endsWith("/static/browser-start.html")) return "";
   return u;
 }
 

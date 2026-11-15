@@ -85,31 +85,36 @@ func TestBrowserUseDevicePatch(t *testing.T) {
 
 func TestNormalizeBrowserUseTool(t *testing.T) {
 	cases := map[string]string{
-		"browser_navigate":         "navigate",
-		"browser_navigate_back":    "navigate_back",
-		"browser_navigate_forward": "navigate_forward",
-		"browser_snapshot":         "tree",
-		"browser_take_screenshot":  "snapshot",
-		"browser_click":            "click",
-		"browser_mouse_click_xy":   "click",
-		"browser_mouse_move_xy":    "move",
-		"browser_hover":            "hover",
-		"browser_type":             "type",
-		"browser_press_key":        "press",
-		"browser_wait_for":         "wait",
-		"browser_evaluate":         "eval",
-		"browser_console_messages": "console",
-		"browser_select_option":    "select",
-		"browser_fill_form":        "fill",
-		"browser_resize":           "emulate",
-		"browser_scroll":           "scroll",
-		"browser_emulate":          "emulate",
-		"browser_profile":          "profile",
-		"browser_lock":             "lock",
-		"navigate":                 "navigate",
-		"snapshot":                 "snapshot",
-		"eval":                     "eval",
-		"something_else":           "something_else",
+		"browser_navigate":              "navigate",
+		"browser_navigate_back":         "navigate_back",
+		"browser_navigate_forward":      "navigate_forward",
+		"browser_snapshot":              "tree",
+		"browser_take_screenshot":       "snapshot",
+		"browser_click":                 "click",
+		"browser_mouse_click_xy":        "click",
+		"browser_mouse_move_xy":         "move",
+		"browser_hover":                 "hover",
+		"browser_type":                  "type",
+		"browser_press_key":             "press",
+		"browser_wait_for":              "wait",
+		"browser_evaluate":              "eval",
+		"browser_console_messages":      "console",
+		"browser_select_option":         "select",
+		"browser_fill_form":             "fill",
+		"browser_resize":                "emulate",
+		"browser_scroll":                "scroll",
+		"browser_emulate":               "emulate",
+		"browser_profile":               "profile",
+		"browser_lock":                  "lock",
+		"browser_get_recording_status":  "recording_status",
+		"browser_get_recording_summary": "recording_summary",
+		"browser_get_timeline":          "timeline",
+		"browser_get_annotation":        "annotation",
+		"browser_get_artifact":          "artifact",
+		"navigate":                      "navigate",
+		"snapshot":                      "snapshot",
+		"eval":                          "eval",
+		"something_else":                "something_else",
 	}
 	for in, want := range cases {
 		if got := normalizeBrowserUseTool(in); got != want {
@@ -117,10 +122,19 @@ func TestNormalizeBrowserUseTool(t *testing.T) {
 		}
 	}
 	for _, op := range []string{"navigate", "navigate_back", "navigate_forward", "snapshot", "tree",
-		"console", "wait", "move", "hover", "click", "type", "press", "scroll", "emulate", "eval", "select", "fill", "lock", "profile"} {
+		"console", "wait", "move", "hover", "click", "type", "press", "scroll", "emulate", "eval", "select", "fill", "lock", "profile",
+		"recording_status", "recording_summary", "timeline", "annotation", "artifact"} {
 		if !knownBrowserUseTool(op) {
 			t.Errorf("knownBrowserUseTool(%q) = false", op)
 		}
+	}
+	for _, op := range []string{"recording_status", "recording_summary", "timeline", "annotation", "artifact"} {
+		if !recordingReadTool(op) {
+			t.Errorf("recordingReadTool(%q) = false", op)
+		}
+	}
+	if recordingReadTool("click") {
+		t.Error("recordingReadTool(click) = true — drive tools must not take the read path")
 	}
 	if knownBrowserUseTool("bogus") {
 		t.Error("knownBrowserUseTool(bogus) = true")
@@ -151,6 +165,10 @@ func TestBrowserUseInvalid(t *testing.T) {
 		{"type ok ref", browserUseRequest{Text: "hi", Ref: "e2"}, "type", ""},
 		{"lock needs mode", browserUseRequest{}, "lock", "mode is required"},
 		{"lock mode ok", browserUseRequest{Mode: new(true)}, "lock", ""},
+		{"annotation needs id", browserUseRequest{}, "annotation", "annotation_id"},
+		{"annotation ok", browserUseRequest{AnnotationID: "pk_1"}, "annotation", ""},
+		{"artifact needs name", browserUseRequest{}, "artifact", "name"},
+		{"artifact ok", browserUseRequest{Name: "shot.png"}, "artifact", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

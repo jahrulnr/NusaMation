@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/jahrulnr/nusamation/internal/browser"
+	"github.com/jahrulnr/nusamation/internal/store"
 )
 
 // browserError maps browser-layer errors onto the contract §11 envelope.
@@ -26,6 +27,14 @@ func (s *Server) browserError(w http.ResponseWriter, err error, annotate bool) {
 		writeError(w, http.StatusBadRequest, "invalid_action", err.Error())
 	case errors.Is(err, browser.ErrPickMissed):
 		writeError(w, http.StatusUnprocessableEntity, "pick_missed", "No element resolved at that point.")
+	case errors.Is(err, browser.ErrRecordingNotFound):
+		writeError(w, http.StatusNotFound, "recording_not_found", "Recording not found.")
+	case errors.Is(err, browser.ErrNoActiveRecording):
+		writeError(w, http.StatusNotFound, "no_active_recording", "No recording is active for this session.")
+	case errors.Is(err, browser.ErrRecordingActive):
+		writeError(w, http.StatusConflict, "recording_active", "A recording is already active on this session.")
+	case errors.Is(err, browser.ErrSummaryUnavailable):
+		writeError(w, http.StatusNotFound, "summary_unavailable", "The recording has no summary yet.")
 	case errors.As(err, &navErr):
 		writeError(w, http.StatusBadGateway, "navigate_failed", navErr.Reason)
 	case errors.Is(err, browser.ErrUnavailable):
@@ -180,15 +189,25 @@ func (s *Server) handleBrowserSessionCreate(w http.ResponseWriter, r *http.Reque
 	}
 	in.ConversationID = strings.TrimSpace(in.ConversationID)
 	if in.ConversationID != "" {
+		if s.store == nil {
+			writeError(w, http.StatusBadRequest, "conversation_not_found", "Conversation not found.")
+			return
+		}
 		if _, err := s.store.GetConversation(r.Context(), in.ConversationID); err != nil {
 			writeError(w, http.StatusBadRequest, "conversation_not_found", "Conversation not found.")
 			return
 		}
 	}
-	target, _, ok := normalizeBrowserURL(in.URL)
-	if !ok {
-		writeError(w, http.StatusBadRequest, "bad_request", "Invalid URL.")
-		return
+	// An empty URL stays empty so the manager resolves the configured start
+	// page — normalizeBrowserURL would collapse it to about:blank first.
+	target := ""
+	if strings.TrimSpace(in.URL) != "" {
+		var ok bool
+		target, _, ok = normalizeBrowserURL(in.URL)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "bad_request", "Invalid URL.")
+			return
+		}
 	}
 	clamp := func(v, def int) int {
 		if v == 0 {
@@ -232,12 +251,53 @@ func (s *Server) handleBrowserSessionGet(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"session": sess.View(true)})
 }
 
+// handleBrowserNetLog returns the session's always-on network ring — the same
+// traffic the Chrome Dev tab sees — so a caller can inspect requests without
+// arming a recording first.
+func (s *Server) handleBrowserNetLog(w http.ResponseWriter, r *http.Request) {
+	sess := s.browserSession(w, r)
+	if sess == nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": sess.NetLog()})
+}
+
 func (s *Server) handleBrowserSessionDelete(w http.ResponseWriter, r *http.Request) {
 	sess := s.browserSession(w, r)
 	if sess == nil {
 		return
 	}
 	sess.Close()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleBrowserSessionClaim binds a draft-created session (owner "") to the
+// conversation that materialized from the draft. Sessions already owned by a
+// room cannot be claimed, so this can never steal another room's browser.
+func (s *Server) handleBrowserSessionClaim(w http.ResponseWriter, r *http.Request) {
+	sess := s.browserSession(w, r)
+	if sess == nil {
+		return
+	}
+	var in struct {
+		ConversationID string `json:"conversationId"`
+	}
+	if err := readJSON(w, r, &in, 64<<10); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid claim payload.")
+		return
+	}
+	if s.store == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
+		return
+	}
+	if _, err := s.store.GetConversation(r.Context(), in.ConversationID); err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
+		return
+	}
+	if !sess.ClaimConversation(in.ConversationID) {
+		writeError(w, http.StatusConflict, "session_claimed", "The session already belongs to a conversation.")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -296,25 +356,51 @@ func (s *Server) handleBrowserHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// handleBrowserAnnotate runs a pick: "element" (default) hit-tests x/y into
+// an element pin, "region" strokes a user-drawn rect, "page" marks the whole
+// viewport. All kinds produce the same {pickId, marker, descriptor, upload}
+// shape; the descriptor's kind says which fields are filled.
 func (s *Server) handleBrowserAnnotate(w http.ResponseWriter, r *http.Request) {
 	sess := s.browserSession(w, r)
 	if sess == nil {
 		return
 	}
 	var in struct {
+		Kind   string   `json:"kind"`
 		X      *float64 `json:"x"`
 		Y      *float64 `json:"y"`
+		Width  *float64 `json:"width"`
+		Height *float64 `json:"height"`
 		Marker int      `json:"marker"`
 	}
 	if err := readJSON(w, r, &in, 64<<10); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid annotate payload.")
 		return
 	}
-	if in.X == nil || in.Y == nil || *in.X < 0 || *in.Y < 0 {
-		writeError(w, http.StatusBadRequest, "bad_request", "Valid x and y coordinates are required.")
+	var pick *browser.Pick
+	var err error
+	switch in.Kind {
+	case "", "element":
+		if in.X == nil || in.Y == nil || *in.X < 0 || *in.Y < 0 {
+			writeError(w, http.StatusBadRequest, "bad_request", "Valid x and y coordinates are required.")
+			return
+		}
+		pick, err = sess.Annotate(r.Context(), *in.X, *in.Y, in.Marker)
+	case "region":
+		if in.X == nil || in.Y == nil || *in.X < 0 || *in.Y < 0 ||
+			in.Width == nil || in.Height == nil || *in.Width <= 0 || *in.Height <= 0 {
+			writeError(w, http.StatusBadRequest, "bad_request", "A region needs x, y and positive width/height.")
+			return
+		}
+		pick, err = sess.AnnotateRegion(r.Context(), store.AnnotationRect{
+			X: *in.X, Y: *in.Y, Width: *in.Width, Height: *in.Height,
+		}, in.Marker)
+	case "page":
+		pick, err = sess.AnnotatePage(r.Context(), in.Marker)
+	default:
+		writeError(w, http.StatusBadRequest, "bad_request", "Unknown annotation kind; try element, region, or page.")
 		return
 	}
-	pick, err := sess.Annotate(r.Context(), *in.X, *in.Y, in.Marker)
 	if err != nil {
 		s.browserError(w, err, true)
 		return
@@ -378,7 +464,15 @@ func (s *Server) handleBrowserHistoryQuery(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "history_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+	// Rows recorded before internal pages were excluded linger in the table;
+	// they must never come back as suggestions.
+	visible := entries[:0]
+	for _, e := range entries {
+		if !browser.IsInternalPage(e.URL) {
+			visible = append(visible, e)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": visible})
 }
 
 func (s *Server) handleBrowserProfiles(w http.ResponseWriter, r *http.Request) {

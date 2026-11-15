@@ -154,3 +154,19 @@ func runTerminalToExit(t *testing.T, req acp.TerminalCreateRequest, root string)
 	}
 	return out.(acp.TerminalOutputResponse).Output
 }
+
+func TestTerminalCwdFallsBackToExistingRoot(t *testing.T) {
+	live := t.TempDir()
+	dead := filepath.Join(t.TempDir(), "gone")
+	cwd, err := TerminalCwd([]string{dead, live}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := filepath.EvalSymlinks(live)
+	if cwd != want {
+		t.Fatalf("cwd=%q want %q", cwd, want)
+	}
+	if _, err := TerminalCwd([]string{dead}, ""); err == nil {
+		t.Fatal("expected error when every root is missing")
+	}
+}

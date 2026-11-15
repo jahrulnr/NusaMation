@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NusaMation</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #16141f; color: #e8e6f0;
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { width: min(560px, 88vw); text-align: center; padding-bottom: 12vh; }
+  .mark {
+    width: 56px; height: 56px; margin: 0 auto 18px; border-radius: 16px;
+    display: block; object-fit: cover;
+    box-shadow: 0 8px 30px rgba(245, 166, 35, .25);
+  }
+  h1 { font-size: 26px; font-weight: 650; margin: 0 0 4px; letter-spacing: -.02em; }
+  .sub { color: #9a95ad; margin: 0 0 28px; }
+  form { display: flex; }
+  input[type="search"] {
+    flex: 1; padding: 13px 18px; font-size: 15px; color: #e8e6f0;
+    background: #242130; border: 1px solid #38344a; border-radius: 12px;
+    outline: none; transition: border-color .15s, box-shadow .15s;
+  }
+  input[type="search"]:focus { border-color: #f5a623; box-shadow: 0 0 0 3px rgba(245,166,35,.18); }
+  input[type="search"]::placeholder { color: #6d6884; }
+  .hint { margin-top: 14px; font-size: 13px; color: #6d6884; }
+  .hint kbd {
+    padding: 2px 7px; border-radius: 6px; background: #242130;
+    border: 1px solid #38344a; font: 12px ui-monospace, monospace;
+  }
+</style>
+</head>
+<body>
+<main>
+  <img class="mark" src="mark.png" alt="NusaMation">
+  <h1>NusaMation</h1>
+  <p class="sub">Your embedded browser, ready.</p>
+  <form id="f" autocomplete="off">
+    <input type="search" id="q" name="q" placeholder="Search the web or type a URL" autofocus spellcheck="false">
+  </form>
+  <p class="hint">Search goes to DuckDuckGo. A full URL or a <kbd>host/path</kbd> opens directly.</p>
+</main>
+<script>
+  // Omnibox-lite: bare hosts navigate, everything else searches. Kept tiny —
+  // NusaMation's own address bar has the full normalization rules.
+  document.getElementById('f').addEventListener('submit', function (e) {
+    e.preventDefault();
+    const v = document.getElementById('q').value.trim();
+    if (!v) return;
+    const looksLikeHost = /^[^\s]+\.[^\s]{2,}([/?#].*)?$/.test(v) || /^localhost(:\d+)?([/?#].*)?$/.test(v) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?([/?#].*)?$/.test(v) || /^https?:\/\//.test(v);
+    location.href = looksLikeHost ? (v.match(/^[a-z]+:\/\//i) ? v : 'https://' + v) : 'https://duckduckgo.com/?q=' + encodeURIComponent(v);
+  });
+</script>
+</body>
+</html>

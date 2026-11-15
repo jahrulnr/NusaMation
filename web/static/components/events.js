@@ -8,8 +8,8 @@ import { closeModal, confirmModal, promptModal } from "./modal.js";
 import { closePopover } from "./popover.js";
 import { openToolMenu, previewAnnotation, previewFile, renderChat, renderPlanDock, toolPreFor } from "./chat.js";
 import { changeElicitationPage, renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js";
-import { autoGrow, editAnnotationComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js";
-import { browserDeviceMode, browserEscape, browserHistory, browserReconnect, browserTakeover, cancelAnnotation, closeBrowserPane, openProfilePicker, selectBrowserTab, submitAnnotation, toggleAnnotate, toggleBrowserPane, toggleDeviceBar, toggleDevtools } from "./browser.js";
+import { autoGrow, editAnnotationComment, editRecordingComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, openUsageDetail, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js";
+import { activatePaneTab, addPaneTab, annotatePage, browserDeviceMode, browserEscape, browserHistory, browserReconnect, browserTakeover, cancelAnnotation, closeBrowserPane, closePaneTab, openBrowserMenu, openNewTabMenu, openProfilePicker, openSavedLogins, recordingAttach, recordingAttachSubmit, recordingDismiss, recordingPause, recordingResume, recordingStart, recordingStop, submitAnnotation, toggleAnnotate, toggleBrowserPane, toggleDeviceBar, toggleDevtools } from "./browser.js";
 import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, newProjectChat, openControlActivity, openConversationMenu, openMoreMenu, openRoutingMenu, openTeamPanel, renameConversation, selectConversation, setRoute, togglePin, toggleRouting } from "./conversations.js";
 import { renderOffline } from "./shell.js";
 import { scheduleDraftSave } from "./convmeta.js";
@@ -323,6 +323,7 @@ export function bindEvents() {
       case "conv-menu": e.preventDefault(); openConversationMenu(target, id); break;
       case "agent-menu": openAgentMenu(target); break;
       case "config-menu": openConfigMenu(target); break;
+      case "usage-detail": openUsageDetail(target); break;
       case "prepare-composer": await prepareComposer(); break;
       case "show-agent-request": showPendingRequest(); break;
       case "composer-config": openComposerConfig(target, id); break;
@@ -411,6 +412,9 @@ export function bindEvents() {
               tagName: a.descriptor?.tagName || "", label: a.descriptor?.name || a.descriptor?.immediateText || "",
               selector: a.descriptor?.selector || "", upload: a.uploadId ? { id: a.uploadId } : null,
             })));
+          if (meta.recording && meta.recording.recordingId) {
+            owner.attachments.push({ type: "recording", recordingId: meta.recording.recordingId, comment: "" });
+          }
           const ta = $("#prompt");
           if (ta) { ta.value = owner.draft; autoGrow(); }
           renderPendingAttachments();
@@ -578,6 +582,8 @@ export function bindEvents() {
       }
       case "palette-run": await runPalette(target.dataset.kind, target.dataset.id); break;
       case "toggle-browser": toggleBrowserPane(); break;
+      case "browser-menu": openBrowserMenu(target); break;
+      case "browser-vault": openSavedLogins(); break;
       case "browser-back": await browserHistory("back"); break;
       case "browser-forward": await browserHistory("forward"); break;
       case "browser-reload": await browserHistory("reload"); break;
@@ -586,15 +592,29 @@ export function bindEvents() {
       case "browser-device-mode": browserDeviceMode(target.dataset.device); break;
       case "browser-close": closeBrowserPane(); break;
       case "browser-devtools": toggleDevtools(); break;
-      case "browser-tab": selectBrowserTab(false); break;
+      case "browser-tab": activatePaneTab("browser", { exitDevTools: true }); break;
+      case "browser-new-tab": openNewTabMenu(target); break;
+      case "pane-new": addPaneTab(target.dataset.kind); break;
+      case "pane-tab": activatePaneTab(target.dataset.tab); break;
+      case "pane-tab-close": closePaneTab(target.dataset.tab); break;
       case "browser-profile-picker": openProfilePicker(); break;
       case "browser-profile-change": break; // handled by its own listener
-      case "browser-suggest": await browserNavigate(target.dataset.url || target.textContent); break;
+      // browser-suggest rows are handled by browser.js's own row listener —
+      // this case was unreachable and referenced an unimported binding.
       case "browser-reconnect": browserReconnect(); break;
       case "browser-takeover": browserTakeover(); break;
+      case "browser-annotate-page": annotatePage(); break;
+      case "browser-record": await recordingStart(); break;
+      case "browser-rec-pause": await recordingPause(); break;
+      case "browser-rec-resume": await recordingResume(); break;
+      case "browser-rec-stop": await recordingStop(); break;
+      case "browser-rec-attach": await recordingAttach(); break;
+      case "recording-attach-submit": recordingAttachSubmit(); break;
+      case "browser-rec-dismiss": recordingDismiss(); break;
       case "annotation-submit": submitAnnotation(); break;
       case "annotation-cancel": cancelAnnotation(); break;
       case "annotation-edit": editAnnotationComment(id); break;
+      case "recording-edit": editRecordingComment(id); break;
       case "preview-annotation":
         e.preventDefault();
         previewAnnotation(target.dataset.upload, target.dataset.caption || "");

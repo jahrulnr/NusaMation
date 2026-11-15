@@ -202,7 +202,9 @@ export function moveComposer(from, to) {
 const SELECTED_PROJECT_KEY = "nusamation:selected-project";
 
 export function setSelectedProject(id) {
-  S.selectedProjectId = id || "";
+  const next = id || "";
+  if (S.selectedProjectId === next) return;
+  S.selectedProjectId = next;
   try {
     if (S.selectedProjectId) localStorage.setItem(SELECTED_PROJECT_KEY, S.selectedProjectId);
     else localStorage.removeItem(SELECTED_PROJECT_KEY);

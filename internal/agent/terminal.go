@@ -129,7 +129,7 @@ func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, root
 	if strings.TrimSpace(req.Command) == "" {
 		return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: "command is required"}
 	}
-	cwd, err := terminalCwd(roots, req.Cwd)
+	cwd, err := TerminalCwd(roots, req.Cwd)
 	if err != nil {
 		return nil, &acp.RPCError{Code: acp.CodeInvalidParams, Message: err.Error()}
 	}
@@ -208,15 +208,41 @@ func (tm *TerminalManager) create(ctx context.Context, raw json.RawMessage, root
 	return acp.TerminalCreateResponse{TerminalID: t.id}, nil
 }
 
-// terminalCwd accepts a working directory inside any session root. An empty
-// cwd uses the primary root. Paths outside every root are rejected.
-func terminalCwd(roots []string, cwd string) (string, error) {
+// TerminalCwd accepts a working directory inside any session root. An empty
+// cwd uses the first root that exists — a deleted primary cwd falls back to
+// another root rather than bricking every terminal. Paths outside every root
+// are rejected.
+func TerminalCwd(roots []string, cwd string) (string, error) {
 	if len(roots) == 0 {
 		return "", errors.New("session has no workspace root")
 	}
 	cwd = strings.TrimSpace(cwd)
 	if cwd == "" {
-		cwd = roots[0]
+		var last error
+		for _, root := range roots {
+			if strings.TrimSpace(root) == "" || !filepath.IsAbs(root) {
+				continue
+			}
+			abs, err := security.SafePath(root, root, true)
+			if err != nil {
+				last = err
+				continue
+			}
+			info, err := os.Stat(abs)
+			if err != nil {
+				last = err
+				continue
+			}
+			if !info.IsDir() {
+				last = fmt.Errorf("%s is not a directory", abs)
+				continue
+			}
+			return abs, nil
+		}
+		if last != nil {
+			return "", last
+		}
+		return "", errors.New("session has no workspace root")
 	}
 	if !filepath.IsAbs(cwd) {
 		return "", errors.New("path must be absolute")

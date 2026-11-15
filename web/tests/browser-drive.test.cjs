@@ -67,23 +67,32 @@ const browserSrc = fs.readFileSync(path.join(__dirname, '..', 'static', 'compone
 const showAgentBrowserSrc = sliceExport(browserSrc, 'export async function showAgentBrowser(', '\n/* ---------------- stream');
 
 function paneWorld({ composerKey, conversationId, open, bootSkipKeys = [], apiSession, cachedMeta = null }) {
-  const calls = { open: 0, attach: [], attachOrCreate: 0 };
-  const B = { open, conversationId, session: null, deviceChoice: 'relative', pendingPointer: null, holdViewport: false };
+  const calls = { open: 0, attach: [], attachOrCreate: 0, tabs: [] };
+  const B = { session: null, deviceChoice: 'relative', pendingPointer: null, holdViewport: false };
+  const P = { open, conversationId };
+  const primary = { id: 'browser', kind: 'browser', state: B };
+  const st = { tabs: [], active: 'browser', primary, browserTab: primary };
   const showAgentBrowser = vm.runInNewContext(`(${showAgentBrowserSrc})`, {
     composerKey,
     B,
+    P,
     bootSkip: new Set(bootSkipKeys),
     updateDeviceBar() {},
     stopResizeWatch() {},
     applyDeviceChoice() {},
-    openBrowserPane(_url, _opts) { calls.open++; B.open = true; B.conversationId = composerKey; },
+    uid: (p) => `${p}_x`,
+    freshBrowserState: () => ({ session: null, deviceChoice: 'relative' }),
+    activatePaneTab(id) { calls.tabs.push(id); },
+    curTabs() { return st; },
+    convTabs() { return st; },
+    openBrowserPane(_url, _opts) { calls.open++; P.open = true; P.conversationId = composerKey; },
     attachOrCreate() { calls.attachOrCreate++; },
     placeAgentPointer() {},
     attach(s) { calls.attach.push(s); },
     api: async () => ({ session: apiSession }),
     cachedBrowserMeta: () => cachedMeta,
   });
-  return { B, calls, run: (sessionId, convId, tool) => showAgentBrowser(sessionId, null, tool || 'click', convId) };
+  return { B, P, calls, st, run: (sessionId, convId, tool) => showAgentBrowser(sessionId, null, tool || 'click', convId) };
 }
 
 test('the pane attaches the driving room session', async () => {
@@ -92,6 +101,12 @@ test('the pane attaches the driving room session', async () => {
   assert.equal(w.calls.open, 1);
   assert.equal(w.calls.attachOrCreate, 0); // the drive attach is deferred to the fetch, never raced
   assert.deepEqual(w.calls.attach.map((s) => s.id), ['bs_1']);
+  // Land on the page view first, then on the tab created for the driven
+  // session — an unbound session gets its own tab, it does not steal one.
+  assert.equal(w.calls.tabs[0], 'browser');
+  assert.equal(w.calls.tabs.at(-1), 'tab_x');
+  assert.equal(w.st.tabs.length, 1);
+  assert.equal(w.st.tabs[0].kind, 'browser');
 });
 
 test('a session owned by another room is never attached', async () => {
@@ -143,51 +158,68 @@ const openBrowserPaneSrc = sliceExport(browserSrc, 'export function openBrowserP
 
 function openWorld({ composerKey, bootSkipKeys = [] }) {
   const calls = { saveOpen: [], attachOrCreate: 0 };
-  const B = { open: false, conversationId: 'stale', paneGen: 0, savedURL: 'x', restoreURL: 'y', nav: {} };
+  const B = { paneGen: 0, savedURL: 'x', restoreURL: 'y', nav: {}, session: null, newTab: false };
+  const P = { open: false, conversationId: 'stale' };
   const openBrowserPane = vm.runInNewContext(`(${openBrowserPaneSrc})`, {
     composerKey,
     B,
+    P,
+    paneEpoch: 1,
     bootSkip: new Set(bootSkipKeys),
-    $: () => ({ dataset: {} }),
+    $: () => ({ dataset: {}, classList: { contains: () => false } }),
     usableBrowserURL: () => '',
     cachedBrowserMeta: () => null,
     saveBrowserOpen: (k, v) => calls.saveOpen.push([k, v]),
     buildPane() {},
     setPaneVisible() {},
+    convTabs() { return { tabs: [], active: 'browser', primary: { id: 'browser', kind: 'browser', state: null }, browserTab: null }; },
+    freshBrowserState: () => B,
+    browserStateOf: () => B,
+    adoptBrowserTab() {},
+    // Mirrors production: adoptBrowserTab attaches unless activation defers it.
+    activatePaneTab(_id, opts) { if (!opts?.deferAttach) calls.attachOrCreate++; },
     attachOrCreate() { calls.attachOrCreate++; },
   });
-  return { B, calls, run: (url, opts) => openBrowserPane(url, opts) };
+  return { B, P, calls, run: (url, opts) => openBrowserPane(url, opts) };
 }
 
 test('openBrowserPane binds the visible room, not a stale detail object', () => {
   const w = openWorld({ composerKey: 'cv_a', bootSkipKeys: ['cv_a'] });
   w.run();
-  assert.equal(w.B.conversationId, 'cv_a');
+  assert.equal(w.P.conversationId, 'cv_a');
   assert.deepEqual(w.calls.saveOpen, [['cv_a', true]]);
   assert.equal(w.calls.attachOrCreate, 1);
-  assert.equal(w.B.open, true);
+  assert.equal(w.P.open, true);
 });
 
 test('an explicit open lifts the close suppression for that room', () => {
   const w = openWorld({ composerKey: 'cv_a', bootSkipKeys: ['cv_a'] });
   // bootSkip lives in the vm sandbox above; recreate to inspect the same set.
   const bootSkip = new Set(['cv_a']);
-  const B = { open: false, conversationId: '', paneGen: 0, savedURL: '', restoreURL: '', nav: {} };
+  const B = { paneGen: 0, savedURL: '', restoreURL: '', nav: {}, session: null, newTab: false };
+  const P = { open: false, conversationId: '' };
   const openBrowserPane = vm.runInNewContext(`(${openBrowserPaneSrc})`, {
     composerKey: 'cv_a',
     B,
+    P,
+    paneEpoch: 1,
     bootSkip,
-    $: () => ({ dataset: {} }),
+    $: () => ({ dataset: {}, classList: { contains: () => false } }),
     usableBrowserURL: () => '',
     cachedBrowserMeta: () => null,
     saveBrowserOpen() {},
     buildPane() {},
     setPaneVisible() {},
+    convTabs() { return { tabs: [], active: 'browser', primary: { id: 'browser', kind: 'browser', state: null }, browserTab: null }; },
+    freshBrowserState: () => B,
+    browserStateOf: () => B,
+    adoptBrowserTab() {},
+    activatePaneTab() {},
     attachOrCreate() {},
   });
   openBrowserPane();
   assert.equal(bootSkip.has('cv_a'), false);
-  assert.equal(B.conversationId, 'cv_a');
+  assert.equal(P.conversationId, 'cv_a');
 });
 
 test('deferAttach leaves the attach to the caller (drive path)', () => {

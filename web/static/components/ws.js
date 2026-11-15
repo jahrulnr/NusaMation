@@ -5,7 +5,7 @@ import { toast } from "./toast.js";
 import { closeModal } from "./modal.js";
 import { applyStreamDelta, currentApprovals, renderChat, scheduleChatRender, scheduleStreamRender, scheduleStreamResync } from "./chat.js";
 import { refreshApprovalModal, renderApprovalsModal, showAgentBlocker, showPendingRequest, showSlowAgent } from "./requests.js";
-import { renderCommands, renderComposer, upsertTurn } from "./composer.js";
+import { renderCommands, renderComposer, renderUsageIndicator, upsertTurn } from "./composer.js";
 import { loadConversation, normalizeMessage, setRoute, touchConversationFromMessage, upsertConversation, upsertMessage } from "./conversations.js";
 import { renderOffline } from "./shell.js";
 import { renderSidebar } from "./sidebar.js";
@@ -14,7 +14,7 @@ import { renderTopbar } from "./topbar.js";
 import { renderSettings } from "./settings.js";
 import { updateWhatsAppPanel } from "./whatsapp.js";
 import { refreshBootstrap } from "./boot.js";
-import { showAgentBrowser } from "./browser.js";
+import { dropPaneTabs, showAgentBrowser } from "./browser.js";
 
 /* ---------------- live stream ---------------- */
 export function connectWS() {
@@ -129,6 +129,7 @@ export function handleEvent(ev) {
       const id = data.id || convId;
       S.conversations = S.conversations.filter((c) => c.id !== id);
       composers.delete(id);
+      dropPaneTabs(id);
       if (S.current && S.current.id === id) {
         S.current = null; switchComposer(""); S.messages = []; S.active = null; setRoute("");
         renderChat(); renderTopbar(); renderComposer();
@@ -228,7 +229,7 @@ export function handleEvent(ev) {
       break;
     }
     case "usage.updated": {
-      if (S.current && convId === S.current.id) { S.current.usage = data.usage; }
+      if (S.current && convId === S.current.id) { S.current.usage = data.usage; renderUsageIndicator(); }
       break;
     }
     case "turn.updated": {

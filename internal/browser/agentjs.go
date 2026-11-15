@@ -245,6 +245,229 @@ const loginTapJS = `(function(){
   document.addEventListener('click', e => { if (e.target !== lastFocusTarget || Date.now() - lastFocusAt > 300) offer(e); }, true);
 })()`
 
+// recordingTapJS is the L1 in-page event tap for session recording. It is
+// always installed alongside consoleTapJS so the page buffer exists whether
+// or not a recording is live: events collect in window.__nusaRecBuf (a
+// rolling buffer, cap 500) and leave through the __nusaRecPush CDP binding
+// every ~300ms and on pagehide, or through window.__nusaRecTake() which the
+// session drains on a slow tick for contexts where the binding is not
+// installed yet. Whichever path splices the buffer first wins. Every event
+// is {t: <type>, ts: <Date.now()>, ...}; the Go side assigns seq/origin.
+const recordingTapJS = `(function(){
+  if (window.__nusaRecTap) return;
+  window.__nusaRecTap = true;
+  const CAP = 500;
+  const buf = window.__nusaRecBuf = window.__nusaRecBuf || [];
+  const push = (ev) => { try { buf.push(ev); if (buf.length > CAP) buf.shift(); } catch (e) {} };
+
+  // Lite element descriptor: the annotate-time seg()/nth() chain cut to the
+  // timeline fields — selector and path keep at most 4 ancestor levels and
+  // cross shadow boundaries with " >>> "; rect and click coordinates are
+  // converted to top-viewport CSS px via the frameElement offset walk.
+  const cssv = s => String(s).replace(/([^\w-])/g, '\\$1');
+  const seg = el => {
+    const tag = el.tagName.toLowerCase();
+    if (el.id) return tag + '#' + cssv(el.id);
+    const cls = [...el.classList].filter(c => /^[A-Za-z_][\w-]*$/.test(c)).slice(0, 2);
+    if (cls.length) return tag + '.' + cls.map(cssv).join('.');
+    const p = el.parentElement;
+    if (p) { const same = [...p.children].filter(c => c.tagName === el.tagName); if (same.length > 1) return tag + ':nth-of-type(' + (same.indexOf(el) + 1) + ')'; }
+    return tag;
+  };
+  const nth = el => {
+    const tag = el.tagName.toLowerCase(); const p = el.parentElement;
+    if (!p) return tag;
+    const same = [...p.children].filter(c => c.tagName === el.tagName);
+    return same.length > 1 ? tag + ':nth-of-type(' + (same.indexOf(el) + 1) + ')' : tag;
+  };
+  const roleMap = {BUTTON:'button',SELECT:'combobox',TEXTAREA:'textbox',NAV:'navigation',MAIN:'main',
+    ASIDE:'complementary',H1:'heading',H2:'heading',H3:'heading',H4:'heading',H5:'heading',H6:'heading',
+    UL:'list',OL:'list',LI:'listitem',TABLE:'table',IMG:'img',DIALOG:'dialog',FORM:'form'};
+  const frameInfo = () => {
+    const fp = []; let ox = 0, oy = 0;
+    try { let w = window; while (w.frameElement) { const fr = w.frameElement.getBoundingClientRect(); ox += fr.left; oy += fr.top; fp.unshift(seg(w.frameElement)); w = w.parent; } } catch (_) {}
+    return {fp: fp, ox: ox, oy: oy};
+  };
+  const lite = (e) => {
+    if (!e || e.nodeType !== 1) return null;
+    const chain = (fn) => {
+      let chains = [[]], node = e, d = 0;
+      while (node && node.nodeType === 1 && d < 4) {
+        chains[0].unshift(fn(node)); d++;
+        const root = node.getRootNode();
+        if (root && root.host) { node = root.host; chains.unshift([]); continue; }
+        node = node.parentElement;
+      }
+      return chains.map(c => c.join(' > ')).join(' >>> ');
+    };
+    let role = e.getAttribute('role') || '';
+    if (!role) {
+      if (e.tagName === 'INPUT') {
+        const t = (e.getAttribute('type') || 'text').toLowerCase();
+        role = {checkbox:'checkbox',radio:'radio',range:'slider',number:'spinbutton',
+          search:'searchbox',submit:'button',button:'button',reset:'button',image:'button'}[t] || 'textbox';
+      } else if (e.tagName === 'A') { role = e.hasAttribute('href') ? 'link' : ''; }
+      else role = roleMap[e.tagName] || '';
+    }
+    let name = '';
+    const aria = e.getAttribute('aria-label'); if (aria) name = aria.trim();
+    if (!name) { const al = e.getAttribute('alt') || e.getAttribute('title') || e.getAttribute('placeholder'); if (al) name = al.trim(); }
+    if (!name && (e.tagName === 'A' || e.tagName === 'BUTTON' || role === 'button' || role === 'link')) name = (e.textContent || '').trim();
+    if (!name) { try { const lab = e.labels && e.labels[0]; if (lab) name = (lab.textContent || '').trim(); } catch (_) {} }
+    const r = e.getBoundingClientRect();
+    const fi = frameInfo();
+    return {tag: e.tagName.toLowerCase(), role: role, name: name.replace(/\s+/g, ' ').slice(0, 200),
+      selector: chain(seg), path: chain(nth), framePath: fi.fp,
+      rect: {x: r.x + fi.ox, y: r.y + fi.oy, width: r.width, height: r.height}};
+  };
+
+  // Clicks carry the resolved point in top-viewport CSS px, matching the
+  // screencast coordinate space the pane shows.
+  // Press→release pairs with displacement are drags. The release still
+  // produces a click (on the common ancestor), so suppress the click that
+  // follows a drag — otherwise every drag ghosts as a click too.
+  let pressPt = null, suppressClickUntil = 0;
+  document.addEventListener('pointerdown', e => {
+    pressPt = {x: e.clientX, y: e.clientY, t: e.target, button: e.button};
+  }, true);
+  document.addEventListener('pointerup', e => {
+    if (!pressPt || e.button !== pressPt.button) { pressPt = null; return; }
+    const fi = frameInfo();
+    if (Math.hypot(e.clientX - pressPt.x, e.clientY - pressPt.y) > 5) {
+      push({t: 'drag', ts: Date.now(), descriptor: lite(pressPt.t),
+        x: pressPt.x + fi.ox, y: pressPt.y + fi.oy,
+        toX: e.clientX + fi.ox, toY: e.clientY + fi.oy, button: e.button});
+      suppressClickUntil = Date.now() + 80;
+    }
+    pressPt = null;
+  }, true);
+  // Native HTML5 drag&drop has its own event family on top of the pointer pair.
+  document.addEventListener('dragstart', e => push({t: 'dragstart', ts: Date.now(), descriptor: lite(e.target)}), true);
+  document.addEventListener('drop', e => push({t: 'drop', ts: Date.now(), descriptor: lite(e.target)}), true);
+
+  const clickEv = (e, dbl) => {
+    if (Date.now() < suppressClickUntil) return;
+    const fi = frameInfo();
+    push({t: dbl ? 'dblclick' : 'click', ts: Date.now(), descriptor: lite(e.target),
+      x: e.clientX + fi.ox, y: e.clientY + fi.oy, button: e.button, clickCount: e.detail});
+  };
+  document.addEventListener('click', e => clickEv(e, false), true);
+  document.addEventListener('dblclick', e => clickEv(e, true), true);
+  document.addEventListener('submit', e => push({t: 'submit', ts: Date.now(), descriptor: lite(e.target)}), true);
+
+  // Inputs batch per element: the first event pushes a slot into the buffer,
+  // later keystrokes update that slot in place (latest value, fresh ts), so
+  // a drain ships one entry per field instead of one per keystroke. 'change'
+  // covers selects and checkboxes; password values never leave the page.
+  const pend = new Map();
+  const valueOf = (el) => {
+    const tn = el.tagName;
+    if (tn === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) return {t: 'change', v: el.checked};
+    if (tn === 'SELECT') return {t: 'change', v: el.value};
+    let v = el.isContentEditable ? (el.innerText || '') : (el.value === undefined ? '' : el.value);
+    if (typeof v !== 'string') v = String(v);
+    if (v.length > 4000) v = v.slice(0, 4000) + '…';
+    if (tn === 'INPUT' && el.type === 'password') v = '[password]';
+    return {t: 'input', v: v};
+  };
+  const track = (el) => {
+    if (!el || el.nodeType !== 1) return;
+    const tn = el.tagName;
+    if (tn !== 'INPUT' && tn !== 'TEXTAREA' && tn !== 'SELECT' && !el.isContentEditable) return;
+    const got = valueOf(el);
+    let ev = pend.get(el);
+    if (ev) { ev.t = got.t; ev.value = got.v; ev.ts = Date.now(); return; }
+    ev = {t: got.t, ts: Date.now(), descriptor: lite(el), value: got.v};
+    if (tn === 'INPUT') ev.inputType = el.type;
+    pend.set(el, ev);
+    push(ev);
+    if (pend.size > CAP) pend.delete(pend.keys().next().value);
+  };
+  document.addEventListener('input', e => track(e.target), true);
+  document.addEventListener('change', e => track(e.target), true);
+  document.addEventListener('focusout', e => track(e.target), true);
+
+  const KEYS = ['Enter', 'Tab', 'Escape', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F5'];
+  document.addEventListener('keydown', (e) => {
+    let key = e.key;
+    if ((e.ctrlKey || e.metaKey) && (key === 'r' || key === 'R')) key = 'Ctrl+R';
+    else if (!KEYS.includes(key)) return;
+    push({t: 'key', ts: Date.now(), key: key, descriptor: lite(e.target)});
+  }, true);
+
+  // Scroll does not bubble; the capture listener sees document and element
+  // scrolls alike. Events are debounced to one entry per 300ms burst.
+  let scrollTimer = null, pendingScroll = null;
+  document.addEventListener('scroll', (e) => {
+    const t = e.target;
+    if (t && t.nodeType === 1 && t !== document.documentElement && t !== document.body) {
+      pendingScroll = {t: 'scroll', ts: Date.now(), x: t.scrollLeft, y: t.scrollTop, target: lite(t)};
+    } else {
+      pendingScroll = {t: 'scroll', ts: Date.now(), x: window.scrollX, y: window.scrollY};
+    }
+    if (scrollTimer) return;
+    scrollTimer = setTimeout(() => {
+      scrollTimer = null;
+      if (pendingScroll) { push(pendingScroll); pendingScroll = null; }
+    }, 300);
+  }, true);
+
+  // Console mirrors the consoleTapJS wrap but feeds the recording buffer —
+  // __nusaConsole itself is untouched (it serves the devtools tool).
+  // Consecutive identical entries dedupe into a count.
+  let lastCon = null;
+  const flushCon = () => { if (lastCon) { const c = lastCon; lastCon = null; push(c); } };
+  const fmt = a => {
+    if (typeof a === 'string') return a;
+    if (a instanceof Error) return a.stack || a.message || String(a);
+    try { const s = JSON.stringify(a); return s === undefined ? String(a) : s; } catch (e) { return String(a); }
+  };
+  const pushCon = (level, text) => {
+    try {
+      if (text && text.length > 2000) text = text.slice(0, 2000) + '…';
+      if (lastCon && lastCon.level === level && lastCon.text === text) { lastCon.count++; lastCon.ts = Date.now(); return; }
+      flushCon();
+      lastCon = {t: 'console', ts: Date.now(), level: level, text: text, count: 1};
+    } catch (e) {}
+  };
+  for (const lvl of ['log', 'info', 'warn', 'error', 'debug']) {
+    const prev = console[lvl] && console[lvl].bind(console);
+    if (!prev) continue;
+    console[lvl] = function (...args) { pushCon(lvl, args.map(fmt).join(' ')); return prev(...args); };
+  }
+  window.addEventListener('error', e => pushCon('error', '[pageerror] ' + e.message + ' @' + (e.filename || '') + ':' + (e.lineno || 0)));
+  window.addEventListener('unhandledrejection', e => pushCon('error', '[unhandledrejection] ' + fmt(e.reason)));
+
+  // SPA navigations: History API patches plus popstate/hashchange.
+  let lastUrl = location.href;
+  const nav = () => {
+    const prev = lastUrl; lastUrl = location.href;
+    if (prev !== lastUrl) push({t: 'navigate', ts: Date.now(), navType: 'spa', prevUrl: prev, url: lastUrl});
+  };
+  for (const m of ['pushState', 'replaceState']) {
+    const orig = history[m];
+    if (orig) history[m] = function (...args) { const r = orig.apply(this, args); nav(); return r; };
+  }
+  window.addEventListener('popstate', nav);
+  window.addEventListener('hashchange', nav);
+
+  // Delivery: splice the buffer and hand it to the binding; a missing or
+  // throwing binding restores the events (cap honored) so the drain tick or
+  // a later flush still delivers them. __nusaRecTake is the Go-drain path —
+  // whichever path splices first wins, so no dedupe is needed.
+  const drain = () => { flushCon(); pend.clear(); return buf.splice(0, buf.length); };
+  window.__nusaRecTake = drain;
+  const flush = () => {
+    if (!buf.length && !lastCon) return;
+    const evs = drain();
+    let ok = false;
+    try { if (typeof window.__nusaRecPush === 'function') { window.__nusaRecPush(JSON.stringify(evs)); ok = true; } } catch (e) {}
+    if (!ok) { for (let i = evs.length - 1; i >= 0; i--) buf.unshift(evs[i]); if (buf.length > CAP) buf.splice(0, buf.length - CAP); }
+  };
+  setInterval(flush, 300);
+  window.addEventListener('pagehide', flush);
+})()`
+
 // snapshotJS serializes the visible DOM into a compact tree. Interactive
 // elements get [ref=eN]; landmarks keep their role; leaf text becomes a text
 // line; generic wrappers are flattened so the output stays small.

@@ -192,10 +192,10 @@ export function enhanceMedia(root) {
   }
 }
 
-export function decodeFileText(bytes, mime = '') {
+export function decodeFileText(bytes, mime = '', fatal = true) {
   const data = new Uint8Array(bytes);
   const encoding = data[0] === 255 && data[1] === 254 ? 'utf-16le' : data[0] === 254 && data[1] === 255 ? 'utf-16be' : (/charset=["']?([^;"'\s]+)/i.exec(mime)?.[1] || 'utf-8');
-  const text = new TextDecoder(encoding, { fatal: true }).decode(bytes);
+  const text = new TextDecoder(encoding, { fatal }).decode(bytes);
   if (text.includes('\0')) throw new TypeError('Binary file');
   return text;
 }

@@ -9,7 +9,7 @@ import { renderComposer } from "./composer.js";
 import { renderTopbar } from "./topbar.js";
 import {
   appendSource, baseName, buildSaveBody, makeSourcePrimary, projectSources, removeSourceAt,
-  staleProjectSnapshot,
+  staleProjectSnapshot, visibleProjectId,
 } from "./projectmodel.js";
 
 let editor = null;
@@ -43,7 +43,7 @@ export function upsertProject(project) {
     S.expandedProjects?.delete(project.id);
     for (const c of S.conversations || []) if (c.projectId === project.id) c.projectId = "";
     if (S.current?.projectId === project.id) { S.current.projectId = ""; renderTopbar(); }
-    if (S.selectedProjectId === project.id) { setSelectedProject(""); renderComposer(); }
+    if (S.selectedProjectId === project.id) { setSelectedProject(visibleProjectId(S.current, S.projects)); renderComposer(); }
     return;
   }
   const i = S.projects.findIndex((p) => p.id === project.id);
@@ -407,7 +407,7 @@ async function deleteProjectNow(id, existing, flags) {
     S.projects = (S.projects || []).filter((p) => p.id !== id);
     S.expandedProjects?.delete(id);
     clearProjectOnConversations(id, conversationIds);
-    if (S.selectedProjectId === id) { setSelectedProject(""); renderComposer(); }
+    if (S.selectedProjectId === id) { setSelectedProject(visibleProjectId(S.current, S.projects)); renderComposer(); }
     if (editor?.id === id) closeAllModals();
     renderSidebar();
     renderTopbar();
@@ -434,7 +434,9 @@ async function restoreProject(project, conversationIds, flags) {
     for (const c of S.conversations || []) if (ids.has(c.id)) c.projectId = project.id;
     if (S.current && ids.has(S.current.id)) S.current.projectId = project.id;
     if (flags.wasOpen) S.expandedProjects?.add(project.id);
-    if (flags.wasSelected) setSelectedProject(project.id);
+    // With a conversation open the scope tracks its project; only a draft
+    // view restores the project as the next-chat scope.
+    if (flags.wasSelected) setSelectedProject(S.current ? visibleProjectId(S.current, S.projects) : project.id);
     renderSidebar();
     renderComposer();
     renderTopbar();

@@ -27,12 +27,12 @@ const toolbarSrc = slice(browserSrc, 'function updateToolbar()', '\n// First met
 function world() {
   const sent = [];
   const calls = { applyDeviceChoice: 0, stopResizeWatch: 0 };
-  const watchEl = { innerHTML: '', classes: new Set() };
+  const watchEl = { innerHTML: '', classes: new Set(), dataset: {} };
   watchEl.classList = { toggle(c, on) { on ? watchEl.classes.add(c) : watchEl.classes.delete(c); } };
   const els = {};
   const el = (id) => els[id] ??= { value: '', disabled: false, dataset: {} };
   const B = {
-    open: true, annotate: false, status: 'live', gotFrame: true,
+    annotate: false, status: 'live', gotFrame: true,
     inputOwner: false, agentLock: false, meta: null, sawMeta: true,
     viewportGuest: false, holdViewport: false, nav: {}, navigating: false,
     session: { id: 's' },
@@ -40,6 +40,7 @@ function world() {
   };
   const ctx = {
     B,
+    P: { open: true },
     WebSocket: { OPEN: 1 },
     document: { activeElement: null },
     $: (sel) => (sel === '#browser-watch' ? watchEl : sel.startsWith('#browser-') || sel.startsWith('[data-action') ? el(sel) : null),
@@ -56,6 +57,7 @@ function world() {
     applyDeviceChoice() { calls.applyDeviceChoice++; },
     updateAnnotateUI() {},
     updateDeviceBar() {},
+    updateRecButtons() {},
     clamp: (v, lo, hi) => Math.max(lo, Math.min(v, hi)),
   };
   ctx.handleStreamMessage = vm.runInNewContext(`(${handleSrc})`, ctx);
@@ -137,7 +139,6 @@ test('a watcher cannot drive: toolbar affordances are disabled', () => {
     '[data-action="browser-reload"]', '#browser-url',
     '[data-action="browser-annotate"]', '[data-action="browser-device"]',
     '#browser-profile', '[data-action="browser-devtools"]',
-    '#browser-devtools-input', '[data-action="browser-devtools-run"]',
   ]) {
     assert.equal(el(sel).disabled, true, `${sel} must be disabled while watching`);
   }
@@ -149,7 +150,6 @@ test('a watcher cannot drive: toolbar affordances are disabled', () => {
     '[data-action="browser-reload"]', '#browser-url',
     '[data-action="browser-annotate"]', '[data-action="browser-device"]',
     '#browser-profile', '[data-action="browser-devtools"]',
-    '#browser-devtools-input', '[data-action="browser-devtools-run"]',
   ]) {
     assert.equal(el(sel).disabled, false, `${sel} must be enabled for the controller`);
   }

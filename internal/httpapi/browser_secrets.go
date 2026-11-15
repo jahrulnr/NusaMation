@@ -251,8 +251,14 @@ func (m *secretMaskWriter) flush() {
 	var decoded any
 	dec := json.NewDecoder(&m.buf)
 	dec.UseNumber()
+	// Recording read tools run without a live session — no registered
+	// secrets exist then, so the mask is a pass-through.
+	mask := func(text string) string { return text }
+	if m.sess != nil {
+		mask = m.sess.MaskSecrets
+	}
 	if err := dec.Decode(&decoded); err == nil {
-		decoded = maskJSONValue(decoded, m.sess.MaskSecrets, true)
+		decoded = maskJSONValue(decoded, mask, true)
 		var out bytes.Buffer
 		enc := json.NewEncoder(&out)
 		enc.SetEscapeHTML(false)

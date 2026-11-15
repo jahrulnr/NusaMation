@@ -82,6 +82,25 @@
 .stop-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; background: var(--danger-dim); color: var(--danger); font-size: 11px; font-weight: 600; border: 1px solid rgba(255,118,118,.2); }
 .composer-foot { display: flex; justify-content: center; gap: 14px; color: var(--muted-2); font-size: 10px; margin-top: 7px; }
 .composer-foot span { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Context usage: tiny ring chip in the composer foot + shared detail rows. */
+.usage-chip { display: inline-flex; align-items: center; gap: 5px; padding: 0; background: none; border: none; color: var(--muted-2); font: inherit; cursor: pointer; }
+.usage-chip:hover { color: var(--muted); }
+.usage-ring { width: 14px; height: 14px; }
+.usage-ring-bg { fill: none; stroke: var(--border); stroke-width: 2.4; }
+.usage-ring-fg { fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; transition: stroke-dasharray .3s; }
+.usage-chip.warn .usage-ring-fg, .usage-chip.warn { color: var(--accent-hot); stroke: none; }
+.usage-chip.warn .usage-ring-fg { stroke: var(--accent-hot); }
+.usage-chip.danger, .usage-chip.danger .usage-ring-fg { color: var(--danger); stroke: var(--danger); }
+.usage-cost { opacity: .75; }
+.usage-detail { margin: 8px 0 4px; font-size: 11px; }
+.usage-row { display: grid; grid-template-columns: 58px 1fr 44px; gap: 8px; align-items: center; padding: 3px 0; }
+.usage-k { color: var(--muted-2); }
+.usage-v { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.usage-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.usage-bar > span { display: block; height: 100%; background: var(--accent); }
+.usage-bar > span.warn { background: var(--accent-hot); }
+.usage-bar > span.danger { background: var(--danger); }
 .drop-overlay { position: absolute; inset: 10px; border: 1.5px dashed var(--accent-line); border-radius: 18px; background: rgba(8,9,11,.86); backdrop-filter: blur(8px); display: none; place-items: center; z-index: 20; color: var(--accent); font-weight: 600; }
 .drop-overlay.show { display: grid; }
 .offline-banner { position: absolute; top: var(--topbar-h); left: 0; right: 0; z-index: 15; display: flex; align-items: center; justify-content: center; gap: 7px; background: var(--danger-dim); color: #ffb9b9; border-bottom: 1px solid rgba(255,118,118,.15); font-size: 11px; padding: 6px 12px; }

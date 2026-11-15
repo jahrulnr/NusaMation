@@ -126,7 +126,7 @@ func (s *Server) handlePutConversationMeta(w http.ResponseWriter, r *http.Reques
 	if patch.Browser != nil {
 		// lastUrl and open merge independently. about:blank is the session
 		// default, so storing it would erase the page the user actually visited.
-		if patch.Browser.LastURL != "" && patch.Browser.LastURL != "about:blank" {
+		if patch.Browser.LastURL != "" && patch.Browser.LastURL != "about:blank" && !strings.HasSuffix(patch.Browser.LastURL, "/static/browser-start.html") {
 			if m.Browser == nil {
 				m.Browser = &convMetaBrowser{}
 			}

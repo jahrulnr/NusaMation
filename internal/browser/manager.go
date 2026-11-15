@@ -21,6 +21,7 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/cdproto/target"
@@ -68,6 +69,10 @@ type Options struct {
 	// (<dir>/<name>). Empty keeps the old temp-profile behavior: cookies and
 	// storage vanish with each Chromium restart.
 	ProfileDir string
+	// RecordingsDir roots one directory per session recording
+	// (<dir>/<recId>/ with meta.json, events.jsonl, artifacts/). Empty
+	// disables recording (tests).
+	RecordingsDir string
 	// Store records visit history and saved logins per profile; nil disables
 	// persistence (tests).
 	Store *store.Store
@@ -76,6 +81,9 @@ type Options struct {
 	// BrowserIdleTTL stops a profile's Chromium once it has had no sessions
 	// for this long; the next session relaunches it lazily.
 	BrowserIdleTTL time.Duration
+	// StartPage is where a session with no explicit URL opens — the app's own
+	// new-tab page. Empty falls back to about:blank.
+	StartPage string
 }
 
 type Pick struct {
@@ -108,9 +116,11 @@ type Manager struct {
 	save           SaveAttachmentFunc
 	picksDir       string
 	profileDir     string
+	recordingsDir  string
 	rec            *store.Store
 	idleTTL        time.Duration
 	browserIdleTTL time.Duration
+	startPage      string
 
 	mu           sync.Mutex
 	sessions     map[string]*Session
@@ -132,9 +142,11 @@ func NewManager(opts Options) *Manager {
 		save:           opts.SaveAttachment,
 		picksDir:       opts.DataDir,
 		profileDir:     opts.ProfileDir,
+		recordingsDir:  opts.RecordingsDir,
 		rec:            opts.Store,
 		idleTTL:        opts.IdleTTL,
 		browserIdleTTL: opts.BrowserIdleTTL,
+		startPage:      opts.StartPage,
 		sessions:       map[string]*Session{},
 		picks:          map[string]*Pick{},
 		browsers:       map[string]*browserProc{},
@@ -153,6 +165,19 @@ func NewManager(opts Options) *Manager {
 		cutoff := time.Now().Add(-7 * 24 * time.Hour).UnixMilli()
 		if err := sweepPickFiles(m.picksDir, cutoff); err != nil {
 			m.log.Warn("stale annotation picks not swept", "error", err)
+		}
+	}
+	if m.recordingsDir != "" {
+		// Browser sessions never survive a restart: metas still claiming a
+		// live status are stale, so mark them interrupted before sweeping —
+		// recovery stamps endedAt=now, which keeps them out of the cutoff.
+		now := time.Now()
+		if err := recoverRecordings(m.recordingsDir, now.UnixMilli()); err != nil {
+			m.log.Warn("stale recordings not recovered", "error", err)
+		}
+		cutoff := now.Add(-recRetention).UnixMilli()
+		if err := sweepRecordings(m.recordingsDir, cutoff, m.activeRecording); err != nil {
+			m.log.Warn("old recordings not swept", "error", err)
 		}
 	}
 	go m.sweepLoop()
@@ -216,7 +241,11 @@ func (m *Manager) CreateSession(ctx context.Context, conversationID, url string,
 func (m *Manager) CreateSessionProfile(ctx context.Context, conversationID, url string, width, height int, profile string) (*Session, error) {
 	profile = NormalizeProfile(profile)
 	if url == "" {
-		url = "about:blank"
+		if m.startPage != "" {
+			url = m.startPage
+		} else {
+			url = "about:blank"
+		}
 	}
 	browserCtx, err := m.ensureBrowser(ctx, profile)
 	if err != nil {
@@ -240,8 +269,10 @@ func (m *Manager) CreateSessionProfile(ctx context.Context, conversationID, url 
 		tabCtx:         tabCtx,
 		tabCancel:      tabCancel,
 		browserCtx:     browserCtx,
+		netPending:     map[network.RequestID]*NetEntry{},
 		ackCh:          make(chan int64, 32),
 		maintCh:        make(chan func(), 8),
+		inputWake:      make(chan struct{}, 1),
 	}
 	s.touch()
 	s.refreshNavState()
@@ -256,7 +287,10 @@ func (m *Manager) CreateSessionProfile(ctx context.Context, conversationID, url 
 	go s.watchDialogs()
 	go s.watchLoginBindings()
 	go s.watchLoginContexts()
+	go s.watchNetLog()
+	go s.watchObsBindings()
 	go s.maintLoop()
+	go s.inputWorker()
 	return s, nil
 }
 
@@ -276,16 +310,26 @@ func (m *Manager) openTab(browserCtx context.Context, url string, width, height 
 		if _, err := chromedp.Call(tabCtx, dom.Enable, dom.EnableParams{}); err != nil {
 			return err
 		}
+		// Network is always on at session level: the Chrome Dev tab and the
+		// session netlog see traffic even with no recording armed. The domain
+		// is per-CDP-session, so the DevTools proxy's own session is untouched.
+		if _, err := chromedp.Call(tabCtx, network.Enable, network.EnableParams{}); err != nil {
+			return err
+		}
 		if _, err := chromedp.Call(tabCtx, page.AddScriptToEvaluateOnNewDocument,
-			page.AddScriptToEvaluateOnNewDocumentParams{Source: consoleTapJS + ";\n" + selectShimJS + ";\n" + loginTapJS}); err != nil {
+			page.AddScriptToEvaluateOnNewDocumentParams{Source: consoleTapJS + ";\n" + selectShimJS + ";\n" + loginTapJS + ";\n" + recordingTapJS}); err != nil {
 			return err
 		}
 		// The hook only fires on later navigations; run it once for this load.
-		if _, err := chromedp.Call(tabCtx, runtime.Evaluate, runtime.EvaluateParams{Expression: consoleTapJS + ";\n" + selectShimJS + ";\n" + loginTapJS}); err != nil {
+		if _, err := chromedp.Call(tabCtx, runtime.Evaluate, runtime.EvaluateParams{Expression: consoleTapJS + ";\n" + selectShimJS + ";\n" + loginTapJS + ";\n" + recordingTapJS}); err != nil {
 			return err
 		}
 		if _, err := chromedp.Call(tabCtx, runtime.AddBinding,
 			runtime.AddBindingParams{Name: "__nusaReportLogin"}); err != nil {
+			return err
+		}
+		if _, err := chromedp.Call(tabCtx, runtime.AddBinding,
+			runtime.AddBindingParams{Name: "__nusaRecPush"}); err != nil {
 			return err
 		}
 		_, err := chromedp.Call(tabCtx, emulation.SetDeviceMetricsOverride,
@@ -362,7 +406,7 @@ func (m *Manager) ConversationSession(conversationID string) *Session {
 	var best *Session
 	var bestAt time.Time
 	for _, s := range m.sessions {
-		if s.conversationID != conversationID {
+		if s.ConversationID() != conversationID {
 			continue
 		}
 		s.mu.Lock()
@@ -519,6 +563,11 @@ func (m *Manager) launch(p *browserProc, done chan struct{}) {
 			chromedp.NoDefaultBrowserCheck,
 			chromedp.DisableGPU,
 			chromedp.Flag("remote-debugging-port", "0"),
+			// Keep the single visible tab unthrottled — the custom allocator
+			// skips the backgrounding opt-outs Chrome automation normally sets.
+			chromedp.Flag("disable-background-timer-throttling", true),
+			chromedp.Flag("disable-renderer-backgrounding", true),
+			chromedp.Flag("disable-backgrounding-occluded-windows", true),
 			remote.WebSocket,
 			chromedp.CombinedOutput(debug),
 		}
@@ -667,6 +716,7 @@ func (m *Manager) sweepLoop() {
 	defer close(m.sweepStopped)
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
+	lastRecSweep := time.Now()
 	for {
 		select {
 		case <-m.sweepStop:
@@ -696,6 +746,13 @@ func (m *Manager) sweepLoop() {
 		}
 		for _, p := range idleProcs {
 			m.killBrowser(p)
+		}
+		// Retention holds across long uptimes, not just at boot.
+		if m.recordingsDir != "" && time.Since(lastRecSweep) > time.Hour {
+			lastRecSweep = time.Now()
+			if err := sweepRecordings(m.recordingsDir, lastRecSweep.Add(-recRetention).UnixMilli(), m.activeRecording); err != nil {
+				m.log.Warn("old recordings not swept", "error", err)
+			}
 		}
 	}
 }

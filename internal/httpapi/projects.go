@@ -142,8 +142,15 @@ type dirEntry struct {
 	Path string `json:"path"`
 }
 
+type fileEntry struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	ModTime int64  `json:"mtime"`
+}
+
 func (s *Server) handleListDirs(w http.ResponseWriter, r *http.Request) {
-	listed, err := listChildDirs(r.URL.Query().Get("path"))
+	listed, err := listChildDirs(r.URL.Query().Get("path"), r.URL.Query().Get("files") == "1")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
@@ -151,7 +158,7 @@ func (s *Server) handleListDirs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, listed)
 }
 
-func listChildDirs(path string) (map[string]any, error) {
+func listChildDirs(path string, withFiles bool) (map[string]any, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		home, err := os.UserHomeDir()
@@ -174,24 +181,39 @@ func listChildDirs(path string) (map[string]any, error) {
 		return nil, err
 	}
 	dirs := []dirEntry{}
+	files := []fileEntry{}
 	for _, entry := range entries {
 		if !entry.IsDir() {
-			if entry.Type()&os.ModeSymlink == 0 {
+			if entry.Type()&os.ModeSymlink != 0 {
+				// IsDir does not follow links: a symlink to a folder still
+				// belongs in the picker, to a regular file in files.
+				info, err := os.Stat(filepath.Join(abs, entry.Name()))
+				if err == nil && info.IsDir() {
+					dirs = append(dirs, dirEntry{Name: entry.Name(), Path: filepath.Join(abs, entry.Name())})
+				} else if withFiles && err == nil && info.Mode().IsRegular() {
+					files = append(files, fileEntry{Name: entry.Name(), Path: filepath.Join(abs, entry.Name()), Size: info.Size(), ModTime: info.ModTime().UnixMilli()})
+				}
 				continue
 			}
-			// IsDir does not follow links; a symlink to a folder still belongs
-			// in the picker.
-			info, err := os.Stat(filepath.Join(abs, entry.Name()))
-			if err != nil || !info.IsDir() {
-				continue
+			if withFiles {
+				if info, err := entry.Info(); err == nil && info.Mode().IsRegular() {
+					files = append(files, fileEntry{Name: entry.Name(), Path: filepath.Join(abs, entry.Name()), Size: info.Size(), ModTime: info.ModTime().UnixMilli()})
+				}
 			}
+			continue
 		}
 		dirs = append(dirs, dirEntry{Name: entry.Name(), Path: filepath.Join(abs, entry.Name())})
 	}
 	slices.SortFunc(dirs, func(a, b dirEntry) int { return strings.Compare(a.Name, b.Name) })
+	listed := map[string]any{"path": abs, "dirs": dirs}
+	if withFiles {
+		slices.SortFunc(files, func(a, b fileEntry) int { return strings.Compare(a.Name, b.Name) })
+		listed["files"] = files
+	}
 	parent := ""
 	if filepath.Dir(abs) != abs {
 		parent = filepath.Dir(abs)
 	}
-	return map[string]any{"path": abs, "parent": parent, "dirs": dirs}, nil
+	listed["parent"] = parent
+	return listed, nil
 }

@@ -27,6 +27,22 @@ func (s *Server) handleConversationFile(w http.ResponseWriter, r *http.Request) 
 	if base == "" {
 		base = s.cfg.WorkspaceDir()
 	}
+	s.serveLocalFile(w, r, base)
+}
+
+// handleFsFile serves a local path without a conversation — the draft room's
+// file tab uses it (relative paths resolve against the home directory).
+func (s *Server) handleFsFile(w http.ResponseWriter, r *http.Request) {
+	base, err := os.UserHomeDir()
+	if err != nil {
+		base = s.cfg.WorkspaceDir()
+	}
+	s.serveLocalFile(w, r, base)
+}
+
+// serveLocalFile validates path against base, then streams it — the tail
+// shared by conversation and draft file serving.
+func (s *Server) serveLocalFile(w http.ResponseWriter, r *http.Request, base string) {
 	path, err := localFilePath(r.URL.Query().Get("path"), base)
 	if err != nil {
 		writeError(w, 400, "invalid_path", err.Error())

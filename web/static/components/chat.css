@@ -63,6 +63,7 @@
 .attach-thumb { width: 116px; height: 86px; border-radius: 9px; overflow: hidden; border: 1px solid var(--border); background: var(--panel-2); position: relative; }
 .attach-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .file-preview-body { padding: 16px; }
+.file-preview-truncated { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
 .file-preview-content pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 .file-preview-content iframe { width: 100%; height: min(65vh, 600px); border: 0; }
 .file-preview-content video, .file-preview-content audio { max-width: 100%; }

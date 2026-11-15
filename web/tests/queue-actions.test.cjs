@@ -13,7 +13,7 @@ function htmlFor(turn, label) {
     esc: (s) => String(s ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'),
     renderMarkdown: (s) => `<p>${String(s || '')}</p>`,
     messageHead: () => '', attachmentsHTML: () => '', annotationsHTML: () => '',
-    messageAnnotations: () => [], icon: (n) => `<i>${n}</i>`,
+    messageAnnotations: () => [], recordingHTML: () => '', messageRecording: () => null, icon: (n) => `<i>${n}</i>`,
     queuedTurnFor: () => turn, queueStatusLabel: () => label,
   });
   return userHTML({ id: 'm1', text: 'hello', channel: 'web' });

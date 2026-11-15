@@ -125,7 +125,9 @@ func New(cfg config.Config) (*App, error) {
 		SaveAttachment: chatSvc.SaveInboundAttachment,
 		DataDir:        filepath.Join(cfg.DataDir, "browser-picks"),
 		ProfileDir:     filepath.Join(cfg.DataDir, "browser-profiles"),
+		RecordingsDir:  filepath.Join(cfg.DataDir, "browser-recordings"),
 		Store:          st,
+		StartPage:      startPageURL(cfg.Addr),
 	})
 	if !cfg.DisableWhatsApp {
 		if err := registerWhatsApp(chanMgr, chatSvc, st, cfg, logger); err != nil {
@@ -345,6 +347,20 @@ func loopbackBase(addr net.Addr) string {
 		host = "127.0.0.1:8787"
 	}
 	return "http://" + host
+}
+
+// startPageURL is the embedded browser's new-tab page: the app's own static
+// file on the loopback-safe form of the configured address.
+func startPageURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return "http://127.0.0.1:8787/static/browser-start.html"
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/static/browser-start.html"
 }
 
 func (a *App) publicURL(addr net.Addr) string {

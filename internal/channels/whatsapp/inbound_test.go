@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -286,12 +287,7 @@ func TestJIDAliasesBridgePNAndLID(t *testing.T) {
 	c := &Channel{client: &whatsmeow.Client{Store: &wastore.Device{LIDs: fakeLIDStore{lid: pn, pn: lid}}}}
 
 	contains := func(list []string, want string) bool {
-		for _, v := range list {
-			if v == want {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(list, want)
 	}
 	if got := c.jidAliases(context.Background(), lid); !contains(got, pn.String()) || !contains(got, pn.User) {
 		t.Fatalf("lid aliases %#v missing pn forms", got)
