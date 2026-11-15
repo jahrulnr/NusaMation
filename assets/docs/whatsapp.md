@@ -134,7 +134,24 @@ printf '%s' '{"target":"123@s.whatsapp.net","type":"event","name":"Meeting","des
 
 # Sticker data must be a WebP file encoded as base64; optionally set animated=true.
 python3 -c 'import base64,json,sys; print(json.dumps({"target":sys.argv[1],"type":"sticker","data":base64.b64encode(open(sys.argv[2],"rb").read()).decode()}))' '123@s.whatsapp.net' sticker.webp | nusamation whatsapp send
+
+# Photo, video, audio or document from a file the server can read.
+printf '%s' '{"target":"123@s.whatsapp.net","type":"image","path":"C:\\Users\\me\\shot.png","caption":"Screenshot"}' | nusamation whatsapp send
+printf '%s' '{"target":"123@s.whatsapp.net","type":"document","path":"/tmp/report.pdf","name":"report.pdf"}' | nusamation whatsapp send
 ```
+
+Media types are `image`, `video`, `audio`, `document` (alias `file`). Give
+exactly one of `path` (absolute file on the server host, up to 25 MB) or
+`data` (base64), and optionally `mime`, `caption` and `name`. The attachment
+class follows the detected MIME type, so a PNG arrives as a photo, not a
+document or a sticker. Do not convert a photo to WebP just to send it.
+
+The usual route for a file produced during a turn is the reply attachment:
+write `[name](path)` or `![name](path)` in the final answer and NusaMation
+uploads it, then removes the link from the text. Copy the absolute path
+verbatim from the tool output; spaces, Windows backslashes and a `/C:/…` drive
+spelling are accepted. The file must be inside the workspace, the upload
+directory, or the conversation/agent working directory.
 
 Polls support 2–12 distinct options. Votes on a poll sent with this command
 are delivered to the agent as `[Poll vote: …]` and `[Poll ID: …]` context,

@@ -6,13 +6,16 @@ import (
 )
 
 func TestChatMarkdown(t *testing.T) {
-	in := "## Heading\n\n**bold** and __italic__ and [link](https://example.com)\n\n" + "\x1b[31mred\x1b[0m"
+	in := "## Heading\n\n**bold** and __italic__ and [link](https://example.com) and ![pic](https://example.com/a.png)\n\n" + "\x1b[31mred\x1b[0m"
 	out := ChatMarkdown(in)
 	if !strings.Contains(out, "*Heading*") || !strings.Contains(out, "*bold*") || !strings.Contains(out, "_italic_") {
 		t.Fatalf("markdown conversion = %q", out)
 	}
 	if !strings.Contains(out, "link (https://example.com)") || strings.Contains(out, "\x1b") {
 		t.Fatalf("link/ansi conversion = %q", out)
+	}
+	if !strings.Contains(out, "pic (https://example.com/a.png)") || strings.Contains(out, "!") {
+		t.Fatalf("image conversion = %q", out)
 	}
 }
 

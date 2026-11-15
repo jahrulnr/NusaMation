@@ -17,6 +17,7 @@ import (
 	"github.com/jahrulnr/nusamation/internal/acp"
 	"github.com/jahrulnr/nusamation/internal/channels"
 	"github.com/jahrulnr/nusamation/internal/store"
+	"github.com/jahrulnr/nusamation/internal/textfmt"
 )
 
 const maxOutboundMediaBytes = 25 << 20
@@ -74,6 +75,19 @@ func pathInRoots(p string, roots []string) bool {
 // FIFOs), and empty or oversized files.
 func (s *Service) resolveOutboundPath(raw string, roots []string) (string, bool) {
 	raw = strings.TrimSpace(raw)
+	if p, ok := s.resolveOutboundCandidate(raw, roots); ok {
+		return p, true
+	}
+	// A markdown destination is a URL, so agents sometimes percent-encode the
+	// space in a Windows profile path (C:/Users/My%20Name/shot.png) while a
+	// bare path keeps it literal. Try the decoded spelling before giving up.
+	if decoded, err := url.PathUnescape(raw); err == nil && decoded != raw {
+		return s.resolveOutboundCandidate(decoded, roots)
+	}
+	return "", false
+}
+
+func (s *Service) resolveOutboundCandidate(raw string, roots []string) (string, bool) {
 	var p string
 	switch {
 	case strings.HasPrefix(raw, "file://"):
@@ -101,10 +115,16 @@ func (s *Service) resolveOutboundPath(raw string, roots []string) (string, bool)
 			dec = strings.TrimPrefix(dec, "/")
 		}
 		p = dec
-	case filepath.IsAbs(raw):
-		p = raw
 	default:
-		return "", false
+		if runtime.GOOS == "windows" {
+			// Markdown's "/absolute/path" habit produces /C:/Users/… on
+			// Windows, which filepath does not treat as an absolute path.
+			raw = windowsDrivePath(raw)
+		}
+		if !filepath.IsAbs(raw) {
+			return "", false
+		}
+		p = raw
 	}
 	p = filepath.Clean(filepath.FromSlash(p))
 	if !filepath.IsAbs(p) || p == string(filepath.Separator) {
@@ -122,6 +142,25 @@ func (s *Service) resolveOutboundPath(raw string, roots []string) (string, bool)
 		return "", false
 	}
 	return resolved, true
+}
+
+// windowsDrivePath folds the Windows spellings agents copy from their tools
+// into a native path. Markdown's "/absolute/path" habit turns
+// C:\Users\me\shot.png into /C:/Users/me/shot.png, which filepath rejects as
+// absolute. Anything without a drive letter is left untouched.
+func windowsDrivePath(raw string) string {
+	p := strings.TrimSpace(raw)
+	if len(p) >= 3 && (p[0] == '/' || p[0] == '\\') {
+		p = p[1:]
+	}
+	if len(p) < 2 || !isDriveLetter(p[0]) || p[1] != ':' {
+		return raw
+	}
+	return p
+}
+
+func isDriveLetter(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
 // collectOutbound converts a non-text agent content block into deliverable
@@ -247,12 +286,14 @@ type errString string
 
 func (e errString) Error() string { return string(e) }
 
-// fileLinkRe matches [label](/abs/path) and [label](file:///abs/path)
-// markdown, plus Windows drive paths ([label](C:\abs) and
-// [label](file://C:/abs)).
+// fileLinkRe matches [label](path) and ![label](path) markdown for a local
+// file: POSIX (/srv/shot.png), Windows drive (C:\shot.png, C:/shot.png) and
+// file:// forms. The destination may contain spaces, quotes and angle
+// brackets because agents copy paths verbatim from their tools, and a Windows
+// profile path (C:\Users\Some Name\shot.png) usually contains a space.
 // fileURIRe matches bare file:///abs/path URIs written into the reply text.
 var (
-	fileLinkRe = regexp.MustCompile(`!?\[([^\]]{0,120})\]\(\s*<?((?:file://)?(?:/[^\s>)]+|(?i:[a-z]:[\\/][^\s>)]+)))>?\s*\)`)
+	fileLinkRe = regexp.MustCompile(`!?\[([^\]]{0,120})\]\(\s*([^()\n]+)\s*\)`)
 	fileURIRe  = regexp.MustCompile(`file:///[^\s)\]"'<>` + "`" + `]+`)
 )
 
@@ -275,7 +316,13 @@ func (s *Service) collectOutboundFromText(a *activeTurn) {
 	}
 	add := func(ref, name string) {
 		p, ok := s.resolveOutboundPath(ref, roots)
-		if !ok || seen[p] {
+		if !ok {
+			return
+		}
+		if seen[p] {
+			// The same file written a second way (C:\… vs C:/…) was already
+			// collected; its link still has to leave the delivered text.
+			a.markOutboundRef(normalizeRef(ref))
 			return
 		}
 		// Read eagerly so a file that disappears or becomes unreadable before
@@ -303,7 +350,15 @@ func (s *Service) collectOutboundFromText(a *activeTurn) {
 }
 
 func normalizeRef(ref string) string {
-	return strings.TrimSpace(strings.Trim(strings.TrimSpace(ref), "<>"))
+	return strings.TrimSpace(strings.Trim(strings.TrimSpace(ref), `<>"'`))
+}
+
+// formatDeliveredText removes accepted file references before markdown is
+// converted for the channel. The order matters: ChatMarkdown rewrites
+// [label](path) into "label (path)", which cleanDeliveredText no longer
+// recognizes, so the raw path would leak into the delivered message.
+func formatDeliveredText(text string, sent map[string]bool) string {
+	return textfmt.ChatMarkdown(cleanDeliveredText(text, sent))
 }
 
 // cleanDeliveredText strips file references from the text delivered to

@@ -70,6 +70,9 @@ func (c *Channel) indexMessage(ctx context.Context, evt *events.Message, chatNam
 }
 
 func (c *Channel) indexSent(ctx context.Context, chat types.JID, resp whatsmeow.SendResponse, msg *waE2E.Message, id types.MessageID) {
+	if c.store == nil {
+		return
+	}
 	if id == "" {
 		id = resp.ID
 	}

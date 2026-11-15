@@ -255,7 +255,7 @@ func (s *Service) deliverSegment(a *activeTurn, text string) {
 		return
 	}
 	s.collectOutboundFromText(a)
-	text = strings.TrimSpace(cleanDeliveredText(textfmt.ChatMarkdown(text), a.outboundRefs()))
+	text = strings.TrimSpace(formatDeliveredText(text, a.outboundRefs()))
 	if text == "" {
 		return
 	}
@@ -711,7 +711,7 @@ func (s *Service) updateDelivery(a *activeTurn, final bool) {
 		text = s.finalDigest(a)
 	} else if text != "" {
 		s.collectOutboundFromText(a)
-		text = strings.TrimSpace(cleanDeliveredText(textfmt.ChatMarkdown(text), a.outboundRefs()))
+		text = strings.TrimSpace(formatDeliveredText(text, a.outboundRefs()))
 	}
 	if strings.TrimSpace(text) == "" && status != "error" && !(segmented && deliveredSegment) {
 		text = "Done."

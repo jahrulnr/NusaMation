@@ -23,7 +23,10 @@ type OutboundRequest struct {
 	MessageID     string   `json:"messageId,omitempty"`
 	SenderID      string   `json:"senderId,omitempty"`
 	QuotedText    string   `json:"quotedText,omitempty"`
-	Data          string   `json:"data,omitempty"` // base64-encoded WebP
+	Data          string   `json:"data,omitempty"` // base64 payload for sticker and media types
+	Path          string   `json:"path,omitempty"` // local absolute file for media types
+	MIME          string   `json:"mime,omitempty"`
+	Caption       string   `json:"caption,omitempty"`
 	Animated      bool     `json:"animated,omitempty"`
 	Latitude      *float64 `json:"latitude,omitempty"`
 	Longitude     *float64 `json:"longitude,omitempty"`
@@ -36,6 +39,43 @@ type OutboundRequest struct {
 	JoinLink      string   `json:"joinLink,omitempty"`
 	Options       []string `json:"options,omitempty"`
 	MaxSelectable int      `json:"maxSelectable,omitempty"`
+}
+
+// isMediaType reports whether an explicit send delivers a real attachment.
+// Without these types an agent has no CLI route for a photo and falls back to
+// converting it into a sticker.
+func isMediaType(t string) bool {
+	switch t {
+	case "image", "video", "audio", "document", "file":
+		return true
+	}
+	return false
+}
+
+// mediaFromRequest turns an explicit media send into the channel's media
+// payload. A local path keeps large files out of the JSON body; base64 data is
+// the portable alternative when the file is not on the server host.
+func mediaFromRequest(req OutboundRequest) (channels.OutboundMedia, error) {
+	media := channels.OutboundMedia{
+		Path:    strings.TrimSpace(req.Path),
+		MIME:    strings.TrimSpace(req.MIME),
+		Caption: strings.TrimSpace(req.Caption),
+		Name:    strings.TrimSpace(req.Name),
+	}
+	if raw := strings.TrimSpace(req.Data); raw != "" {
+		data, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			return channels.OutboundMedia{}, errors.New("data must be valid base64")
+		}
+		media.Data = data
+	}
+	if len(media.Data) == 0 && media.Path == "" {
+		return channels.OutboundMedia{}, errors.New("media requires path or data")
+	}
+	if len(media.Data) > maxMediaBytes {
+		return channels.OutboundMedia{}, fmt.Errorf("media exceeds the %d byte limit", maxMediaBytes)
+	}
+	return media, nil
 }
 
 func locationMessage(req OutboundRequest) (*waE2E.LocationMessage, error) {
@@ -126,6 +166,13 @@ func (c *Channel) SendStructured(ctx context.Context, req OutboundRequest) (stri
 			}
 		}
 		return id, nil
+	}
+	if isMediaType(req.Type) {
+		media, err := mediaFromRequest(req)
+		if err != nil {
+			return "", err
+		}
+		return c.sendMedia(ctx, target, media)
 	}
 	var msg *waE2E.Message
 	switch req.Type {

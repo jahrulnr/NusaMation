@@ -2,12 +2,20 @@ package whatsapp
 
 import (
 	"context"
-	"github.com/jahrulnr/nusamation/internal/security"
-	"github.com/jahrulnr/nusamation/internal/store"
-	"go.mau.fi/whatsmeow/types"
-	"google.golang.org/protobuf/proto"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/jahrulnr/nusamation/internal/security"
+	"github.com/jahrulnr/nusamation/internal/store"
 )
 
 func TestBuildOutbound(t *testing.T) {
@@ -59,6 +67,113 @@ func TestBuildOutboundInvalid(t *testing.T) {
 		if _, err := buildOutbound(req); err == nil {
 			t.Fatalf("accepted %#v", req)
 		}
+	}
+}
+
+func TestMediaFromRequest(t *testing.T) {
+	media, err := mediaFromRequest(OutboundRequest{Type: "image", Path: "/tmp/shot.png", Caption: " hi ", Name: "shot.png"})
+	if err != nil || media.Path != "/tmp/shot.png" || media.Caption != "hi" || media.Name != "shot.png" || len(media.Data) != 0 {
+		t.Fatalf("path request: %#v err=%v", media, err)
+	}
+	media, err = mediaFromRequest(OutboundRequest{Type: "document", Data: "aGVsbG8=", MIME: "application/pdf"})
+	if err != nil || string(media.Data) != "hello" || media.MIME != "application/pdf" || media.Path != "" {
+		t.Fatalf("data request: %#v err=%v", media, err)
+	}
+	for _, req := range []OutboundRequest{
+		{Type: "image"},                         // neither path nor data
+		{Type: "image", Data: "not base64!"},    // invalid payload
+		{Type: "file", Path: " ", Data: "\t\n"}, // blank both
+	} {
+		if _, err := mediaFromRequest(req); err == nil {
+			t.Errorf("accepted %#v", req)
+		}
+	}
+	for _, typ := range []string{"image", "video", "audio", "document", "file"} {
+		if !isMediaType(typ) {
+			t.Errorf("%q should be a media type", typ)
+		}
+	}
+	for _, typ := range []string{"reply", "sticker", "poll", "reaction", "text", ""} {
+		if isMediaType(typ) {
+			t.Errorf("%q should not be a media type", typ)
+		}
+	}
+}
+
+// fakeMediaClient stands in for *whatsmeow.Client on the media path, so the
+// upload/send contract is testable without a WhatsApp connection.
+type fakeMediaClient struct {
+	uploadData []byte
+	uploadType whatsmeow.MediaType
+	to         types.JID
+	sent       *waE2E.Message
+	id         types.MessageID
+}
+
+func (f *fakeMediaClient) Upload(_ context.Context, data []byte, mediaType whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+	f.uploadData, f.uploadType = data, mediaType
+	return whatsmeow.UploadResponse{URL: "https://mms.example/x", DirectPath: "/x", FileLength: uint64(len(data))}, nil
+}
+
+func (f *fakeMediaClient) SendMessage(_ context.Context, to types.JID, msg *waE2E.Message, _ ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
+	f.to, f.sent = to, msg
+	return whatsmeow.SendResponse{ID: f.id}, nil
+}
+
+func TestMediaMessageShapes(t *testing.T) {
+	up := whatsmeow.UploadResponse{URL: "https://mms.example/x", DirectPath: "/x", FileLength: 12}
+	img := mediaMessage(up, whatsmeow.MediaImage, "image/png", "Screenshot", "shot.png").GetImageMessage()
+	if img.GetMimetype() != "image/png" || img.GetCaption() != "Screenshot" || img.GetFileLength() != 12 {
+		t.Fatalf("image message = %v", img)
+	}
+	doc := mediaMessage(up, whatsmeow.MediaDocument, "application/pdf", "", "report.pdf").GetDocumentMessage()
+	if doc.GetFileName() != "report.pdf" || doc.GetMimetype() != "application/pdf" || doc.GetCaption() != "" {
+		t.Fatalf("document message = %v", doc)
+	}
+	if got := mediaMessage(up, whatsmeow.MediaDocument, "application/octet-stream", "", "").GetDocumentMessage().GetFileName(); got != "file" {
+		t.Fatalf("unnamed document filename = %q", got)
+	}
+	audio := mediaMessage(up, whatsmeow.MediaAudio, "audio/ogg", "", "voice.ogg").GetAudioMessage()
+	if !audio.GetPTT() {
+		t.Fatal("ogg audio should render as a voice note")
+	}
+	if mediaMessage(up, whatsmeow.MediaAudio, "audio/mpeg", "", "song.mp3").GetAudioMessage().GetPTT() {
+		t.Fatal("mp3 audio must not be push-to-talk")
+	}
+}
+
+// A PNG from disk with a spaced filename must reach SendMessage as a real
+// ImageMessage. This is the regression for "agent writes an image path, no
+// file is delivered, and the CLI falls back to a sticker".
+func TestDeliverMediaPhotoWithoutWhatsApp(t *testing.T) {
+	dir := t.TempDir()
+	shot := filepath.Join(dir, "shot 1.png")
+	// A real PNG header is enough for http.DetectContentType.
+	data := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+	if err := os.WriteFile(shot, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &Channel{settings: Settings{Enabled: true}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	fake := &fakeMediaClient{id: "WA_ID"}
+	mime := http.DetectContentType(data)
+	if mime != "image/png" {
+		t.Fatalf("detected mime = %q", mime)
+	}
+	jid := types.NewJID("123", types.DefaultUserServer)
+	fileData, err := os.ReadFile(shot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := c.deliverMedia(context.Background(), jid, fake, fileData, mediaTypeFor(mime), mime, "Screenshot", filepath.Base(shot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "WA_ID" || fake.to != jid || fake.uploadType != whatsmeow.MediaImage {
+		t.Fatalf("id=%q to=%v upload=%v", id, fake.to, fake.uploadType)
+	}
+	img := fake.sent.GetImageMessage()
+	if img == nil || img.GetCaption() != "Screenshot" || string(fake.uploadData) != string(data) {
+		t.Fatalf("sent %v upload=%q", img, fake.uploadData)
 	}
 }
 

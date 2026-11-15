@@ -103,12 +103,15 @@ func (c *Channel) Name() string  { return "whatsapp" }
 func (c *Channel) Label() string { return "WhatsApp" }
 
 // ResponseRules tells the agent to write replies WhatsApp can render: only
-// WhatsApp markup, short messages, with files referenced by absolute path so
-// they are delivered as attachments.
+// WhatsApp markup, short messages, files referenced by path so they are
+// delivered as attachments, and the explicit media send routes.
 func (c *Channel) ResponseRules() string {
 	return "WhatsApp markup: *bold*, _italic_, ~strikethrough~, `code`, code blocks, quotes and simple lists. " +
 		"Avoid headings, tables, footnotes, HTML and Markdown links; write URLs in full. " +
-		"Text over 30,000 characters is truncated. Send an attachment with [name](/absolute/path) in the working directory; the link is removed from the message."
+		"Text over 30,000 characters is truncated. " +
+		"Attach a file by writing [name](path) or ![name](path) in the reply; copy the absolute path verbatim from your tools — spaces, backslashes and a leading /C:/ drive are fine (C:\\Users\\me\\shot.png). " +
+		"The link is removed and the file arrives as a real attachment. Never convert a photo into a sticker to send it. " +
+		"For a send outside the reply use: nusamation whatsapp send with {\"target\":\"…\",\"type\":\"image|video|audio|document\",\"path\":\"…\"}."
 }
 
 func (c *Channel) Start(ctx context.Context) error {
@@ -631,25 +634,32 @@ func (c *Channel) SendPoll(ctx context.Context, target channels.Target, question
 // SendMedia uploads an image, video, audio clip or document to WhatsApp
 // servers and delivers it to the target chat.
 func (c *Channel) SendMedia(ctx context.Context, target channels.Target, media channels.OutboundMedia) error {
+	_, err := c.sendMedia(ctx, target, media)
+	return err
+}
+
+// sendMedia is SendMedia with the sent message id, so an explicit
+// `whatsapp send` of a media type can report it.
+func (c *Channel) sendMedia(ctx context.Context, target channels.Target, media channels.OutboundMedia) (string, error) {
 	jid, err := c.parseTarget(target)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !c.settingsSnapshot().Enabled {
-		return errors.New("WhatsApp channel is disabled")
+		return "", errors.New("WhatsApp channel is disabled")
 	}
 	data := media.Data
 	if len(data) == 0 && strings.TrimSpace(media.Path) != "" {
 		data, err = os.ReadFile(media.Path)
 		if err != nil {
-			return fmt.Errorf("read media %q: %w", media.Path, err)
+			return "", fmt.Errorf("read media %q: %w", media.Path, err)
 		}
 	}
 	if len(data) == 0 {
-		return errors.New("media has no data or path")
+		return "", errors.New("media has no data or path")
 	}
 	if len(data) > maxMediaBytes {
-		return fmt.Errorf("media exceeds the %d byte limit", maxMediaBytes)
+		return "", fmt.Errorf("media exceeds the %d byte limit", maxMediaBytes)
 	}
 	mime := strings.TrimSpace(media.MIME)
 	if mime == "" {
@@ -657,18 +667,51 @@ func (c *Channel) SendMedia(ctx context.Context, target channels.Target, media c
 	}
 	mime = strings.TrimSpace(strings.Split(mime, ";")[0])
 	caption := strings.TrimSpace(media.Caption)
+	name := strings.TrimSpace(media.Name)
+	if name != "" {
+		name = filepath.Base(name)
+	} else if p := strings.TrimSpace(media.Path); p != "" {
+		name = filepath.Base(p)
+	}
 
 	c.mu.Lock()
 	client := c.client
 	c.mu.Unlock()
 	if client == nil || !client.IsLoggedIn() {
-		return errors.New("WhatsApp is not connected")
+		return "", errors.New("WhatsApp is not connected")
 	}
 	mediaType := mediaTypeFor(mime)
+	return c.deliverMedia(ctx, jid, client, data, mediaType, mime, caption, name)
+}
+
+// deliverMedia uploads and sends one attachment through the media client. It
+// takes mediaClient rather than *whatsmeow.Client so the message construction
+// and send call are testable without a WhatsApp connection.
+func (c *Channel) deliverMedia(ctx context.Context, jid types.JID, client mediaClient, data []byte, mediaType whatsmeow.MediaType, mime, caption, name string) (string, error) {
 	up, err := client.Upload(ctx, data, mediaType)
 	if err != nil {
-		return fmt.Errorf("upload media to WhatsApp: %w", err)
+		return "", fmt.Errorf("upload media to WhatsApp: %w", err)
 	}
+	msg := mediaMessage(up, mediaType, mime, caption, name)
+	resp, err := client.SendMessage(ctx, jid, msg)
+	if err == nil {
+		c.indexSent(ctx, jid, resp, msg, "")
+	}
+	return resp.ID, err
+}
+
+// mediaClient is the slice of *whatsmeow.Client the media path needs. Keeping
+// it an interface lets tests assert the built waE2E message without a real
+// WhatsApp connection.
+type mediaClient interface {
+	Upload(ctx context.Context, plaintext []byte, appInfo whatsmeow.MediaType) (whatsmeow.UploadResponse, error)
+	SendMessage(ctx context.Context, to types.JID, message *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error)
+}
+
+// mediaMessage builds the protobuf message for an uploaded attachment. The
+// attachment class follows the MIME type, so a PNG arrives as a photo and an
+// unknown type as a document with a filename.
+func mediaMessage(up whatsmeow.UploadResponse, mediaType whatsmeow.MediaType, mime, caption, name string) *waE2E.Message {
 	msg := &waE2E.Message{}
 	switch mediaType {
 	case whatsmeow.MediaImage:
@@ -716,12 +759,7 @@ func (c *Channel) SendMedia(ctx context.Context, target channels.Target, media c
 		}
 		msg.AudioMessage = m
 	default:
-		fileName := strings.TrimSpace(media.Name)
-		if fileName != "" {
-			fileName = filepath.Base(fileName)
-		} else if p := strings.TrimSpace(media.Path); p != "" {
-			fileName = filepath.Base(p)
-		}
+		fileName := strings.TrimSpace(name)
 		if fileName == "" {
 			fileName = "file"
 		}
@@ -740,11 +778,7 @@ func (c *Channel) SendMedia(ctx context.Context, target channels.Target, media c
 		}
 		msg.DocumentMessage = m
 	}
-	resp, err := client.SendMessage(ctx, jid, msg)
-	if err == nil {
-		c.indexSent(ctx, jid, resp, msg, "")
-	}
-	return err
+	return msg
 }
 
 func mediaTypeFor(mime string) whatsmeow.MediaType {

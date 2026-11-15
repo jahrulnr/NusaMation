@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -190,6 +191,57 @@ func TestCleanDeliveredText(t *testing.T) {
 	}
 }
 
+// A Windows path with a space in the profile directory is the form agents
+// copy from their tools; it must parse as one reference, not truncate at the
+// space.
+func TestFileLinkReSpacedAndWindowsPaths(t *testing.T) {
+	cases := []struct{ in, ref string }{
+		{`![shot](C:\Users\Bambang Irawan\.nusamation\workspace\shot.png)`, `C:\Users\Bambang Irawan\.nusamation\workspace\shot.png`},
+		{`[shot](/C:/Users/Bambang Irawan/.nusamation/workspace/shot.png)`, `/C:/Users/Bambang Irawan/.nusamation/workspace/shot.png`},
+		{`[shot](C:/Users/Bambang Irawan/shot.png)`, `C:/Users/Bambang Irawan/shot.png`},
+		{`[shot](<C:\Users\Me\shot one.png>)`, `C:\Users\Me\shot one.png`},
+		{`[shot]("C:\Users\Me\shot one.png")`, `C:\Users\Me\shot one.png`},
+		{`[shot](file:///tmp/a/shot%20one.png)`, `file:///tmp/a/shot%20one.png`},
+		{"see [settings](/settings) here", "/settings"},
+	}
+	for _, c := range cases {
+		sub := fileLinkRe.FindStringSubmatch(c.in)
+		if len(sub) < 3 || normalizeRef(sub[2]) != c.ref {
+			t.Errorf("fileLinkRe(%q) = %#v, want ref %q", c.in, sub, c.ref)
+		}
+	}
+}
+
+func TestWindowsDrivePath(t *testing.T) {
+	cases := map[string]string{
+		`/C:/Users/Me/shot.png`: `C:/Users/Me/shot.png`,
+		`\C:\Users\Me\shot.png`: `C:\Users\Me\shot.png`,
+		`C:\Users\Me\shot.png`:  `C:\Users\Me\shot.png`,
+		`/home/me/shot.png`:     `/home/me/shot.png`, // not a drive letter
+		`/x`:                    `/x`,                // too short to hold a drive
+		`screenshot.png`:        `screenshot.png`,    // relative stays relative
+	}
+	for in, want := range cases {
+		if got := windowsDrivePath(in); got != want {
+			t.Errorf("windowsDrivePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// Cleaning must run before markdown conversion: ChatMarkdown rewrites
+// [label](path) into "label (path)", which would leave the raw path in the
+// delivered message.
+func TestFormatDeliveredTextStripsBeforeConversion(t *testing.T) {
+	sent := map[string]bool{"/tmp/a/chart.png": true}
+	got := formatDeliveredText("see [chart.png](/tmp/a/chart.png) and ![img](/tmp/a/chart.png) end", sent)
+	if strings.Contains(got, "/tmp/a/chart.png") || strings.Contains(got, "](") {
+		t.Fatalf("delivered text kept the reference: %q", got)
+	}
+	if !strings.Contains(got, "chart.png") || !strings.Contains(got, "img") {
+		t.Fatalf("delivered text lost the labels: %q", got)
+	}
+}
+
 func testOutboundService(t *testing.T) (*Service, string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -238,6 +290,33 @@ func TestOutboundFromBlock(t *testing.T) {
 	}
 }
 
+// A reply attachment whose path contains a space must be collected as media
+// and removed from the delivered text — the Windows profile directory almost
+// always has one.
+func TestCollectOutboundFromTextSpacedPath(t *testing.T) {
+	svc, ws, _ := testOutboundService(t)
+	shot := filepath.Join(ws, "shot 1.png")
+	if err := os.WriteFile(shot, []byte("png-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(shot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &activeTurn{conv: store.Conversation{Cwd: ws}, turn: store.Turn{ID: "turn_x"}}
+	reply := "here ![shot](" + filepath.ToSlash(resolved) + ") and [shot](<" + resolved + ">)"
+	a.assistantAll.WriteString(reply)
+	svc.collectOutboundFromText(a)
+	got := a.outboundSnapshot()
+	if len(got) != 1 || got[0].Path != resolved || string(got[0].Data) != "png-bytes" {
+		t.Fatalf("spaced attachment not collected: %#v", got)
+	}
+	text := formatDeliveredText(reply, a.outboundRefs())
+	if strings.Contains(text, "shot 1.png") || strings.Contains(text, "](") {
+		t.Fatalf("delivered text kept the reference: %q", text)
+	}
+}
+
 func TestResolveOutboundPath(t *testing.T) {
 	svc, ws, _ := testOutboundService(t)
 	a := &activeTurn{conv: store.Conversation{Cwd: ws}}
@@ -267,6 +346,10 @@ func TestResolveOutboundPath(t *testing.T) {
 	spacedResolved, _ := filepath.EvalSymlinks(spaced)
 	if p, ok := resolve("file://" + filepath.ToSlash(ws) + "/a%20b.pdf"); !ok || p != spacedResolved {
 		t.Fatalf("percent-encoded path failed: %q ok=%v", p, ok)
+	}
+	// A markdown destination is a URL, so a bare path may arrive encoded too.
+	if p, ok := resolve(strings.ReplaceAll(filepath.ToSlash(spacedResolved), " ", "%20")); !ok || p != spacedResolved {
+		t.Fatalf("percent-encoded bare path failed: %q ok=%v", p, ok)
 	}
 	cases := []string{
 		"file:///etc/passwd",

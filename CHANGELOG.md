@@ -4,6 +4,18 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-11-15
+
+### Added
+
+- `nusamation whatsapp send` and `POST /api/channels/whatsapp/send` accept `image`, `video`, `audio` and `document`/`file` operations with a server-readable `path` or base64 `data`, plus optional `mime`, `caption` and `name`. The attachment class follows the detected MIME type, so a photo can be delivered as a real photo instead of an agent-converted WebP sticker.
+
+### Fixed
+
+- Reply attachments whose path contains spaces or a Windows spelling are now collected and delivered: `C:\Users\Some Name\shot.png`, `C:/Users/Some Name/shot.png`, `![alt](C:\…)` and the Markdown-induced `/C:/Users/Name/shot.png` all resolve. Previously the path was truncated at the first space or rejected as non-absolute on Windows, so nothing was sent and the raw Markdown image stayed in the message.
+- File references are stripped from the delivered text before Markdown is converted to WhatsApp markup; the conversion used to rewrite `[label](path)` into `label (path)`, leaving the machine path in the chat even when the attachment was sent.
+- A markdown destination that percent-encodes spaces (`C:/Users/My%20Name/shot.png`) is decoded when the literal path does not exist.
+
 ## [0.2.9] - 2026-11-15
 
 ### Added

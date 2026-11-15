@@ -10,7 +10,7 @@ import (
 
 var (
 	ansiRe    = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
-	linkRe    = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
+	linkRe    = regexp.MustCompile(`!?\[([^\]]+)\]\(([^)\s]+)\)`)
 	boldStar  = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
 	boldUnder = regexp.MustCompile(`__([^_\n]+)__`)
 	headRe    = regexp.MustCompile(`(?m)^#{1,6}\s+(.+)$`)

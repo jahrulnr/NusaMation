@@ -104,6 +104,16 @@ func TestWhatsAppSendEndpoint(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"messageId":"WAID"`) || f.req.Type != "poll" || len(f.req.Options) != 2 {
 		t.Fatalf("status %d body %s req %#v", rec.Code, rec.Body.String(), f.req)
 	}
+	// A media send round-trips a Windows path with spaces and backslashes.
+	mediaBody := `{"target":"123@s.whatsapp.net","type":"image","path":"C:\\Users\\Bambang Irawan\\shot one.png","caption":"Screenshot"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/channels/whatsapp/send", strings.NewReader(mediaBody))
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	req.Header.Set("X-CSRF-Token", session.CSRF)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || f.req.Type != "image" || f.req.Path != `C:\Users\Bambang Irawan\shot one.png` || f.req.Caption != "Screenshot" {
+		t.Fatalf("media status %d body %s req %#v", rec.Code, rec.Body.String(), f.req)
+	}
 	f.err = errors.New("poll sent, metadata failed")
 	req = httptest.NewRequest(http.MethodPost, "/api/channels/whatsapp/send", strings.NewReader(body))
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
