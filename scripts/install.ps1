@@ -196,28 +196,34 @@ New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
 if (-not $NoService) {
     $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     $action = New-ScheduledTaskAction -Execute $binary -Argument '-hide-console'
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $me
-    # Self-heal: retry every five minutes for as long as the user is logged on.
-    # MultipleInstances=IgnoreNew makes each tick a no-op while the server is
-    # healthy, so the repetition only acts when the process is gone (crash,
-    # restart budget exhausted, or the logon trigger never fired).
+    # Two triggers instead of mutating a CimInstance: Windows PowerShell and
+    # PowerShell 7 both reject property assignment on the objects these cmdlets
+    # return, and a repetition only works when it is part of the trigger that
+    # was built by the cmdlet itself.
     #
-    # A repetition needs an explicit Duration to be armed at all: PowerShell
-    # omits the element and Task Scheduler then registers a trigger that never
-    # repeats. Ten years is "long enough"; the window restarts at every logon.
-    $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
-        -RepetitionInterval (New-TimeSpan -Minutes 5) `
-        -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
+    # - AtLogOn: the normal start.
+    # - Once + RepetitionInterval: the watchdog. MultipleInstances=IgnoreNew
+    #   makes each tick a no-op while the server is healthy, and
+    #   -StartWhenAvailable turns the missed start after a reboot into an
+    #   immediate run, so a dead server is back within five minutes instead of
+    #   waiting for the next logon.
+    $triggers = @(
+        (New-ScheduledTaskTrigger -AtLogOn -User $me)
+        (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+            -RepetitionInterval (New-TimeSpan -Minutes 5) `
+            -RepetitionDuration (New-TimeSpan -Days 3650))
+    )
     $principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited
     # -AllowStartIfOnBatteries matters on laptops: the default settings silently
     # skip a logon start when the machine is unplugged, and stop a running
     # server when it switches to battery - a server has no reason to care.
     $settings = New-ScheduledTaskSettingsSet -Hidden `
         -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -StartWhenAvailable `
         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
         -MultipleInstances IgnoreNew
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal -Settings $settings -Force | Out-Null
     Start-ScheduledTask -TaskName $taskName
     Write-Host "Registered and started scheduled task '$taskName' (logon autostart for $me, runs hidden)."
 

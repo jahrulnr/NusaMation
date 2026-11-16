@@ -47,32 +47,51 @@ Add-Content -Path (Join-Path $tampered $asset) -Value 'tampered' # corrupt after
 # --- stubs ---------------------------------------------------------------
 # The installer runs in its own script scope, so $script: variables set
 # inside these stubs would not be visible here; use marker files instead.
+#
+# The stubs are declared globally on purpose: command resolution inside the
+# installer would otherwise reach the real ScheduledTasks cmdlets and register
+# (and start) a real task pointing at a temp binary. The real cmdlets also
+# return CimInstance objects, so the value-returning stubs hand back objects
+# instead of nothing - the installer passes them straight into the next call.
 $markerDir = Join-Path $testRoot 'markers'
 New-Item -ItemType Directory -Path $markerDir | Out-Null
 $urlsFile = Join-Path $markerDir 'urls.txt'
+$global:markerDir = $markerDir
+$global:urlsFile = $urlsFile
 
-function Invoke-WebRequest {
+function global:Invoke-WebRequest {
     param([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
-    Add-Content -Path $urlsFile -Value $Uri
+    if ($Uri -match '/api/health') {
+        return [pscustomobject]@{ StatusCode = 200 }
+    }
+    Add-Content -Path $global:urlsFile -Value $Uri
     $name = ($Uri -split '/')[-1]
     $src = Join-Path $env:FAKE_RELEASE $name
     if (-not (Test-Path $src)) { throw "stub: missing asset $name" }
     Copy-Item $src $OutFile
 }
-function New-ScheduledTaskAction {
-    param([string]$Execute, [string]$Argument)
-    Set-Content -Path (Join-Path $markerDir 'action.txt') -Value "$Execute`t$Argument"
+function global:New-ScheduledTaskAction {
+    param($Execute, $Argument)
+    Set-Content -Path (Join-Path $global:markerDir 'action.txt') -Value "$Execute`t$Argument"
+    [pscustomobject]@{ Execute = $Execute; Argument = $Argument }
 }
-# The real cmdlets return CimInstance objects whose properties the installer
-# mutates (a logon trigger gets a Repetition pattern). Returning $null made the
-# stub reject that assignment, so the shape has to match.
-function New-ScheduledTaskTrigger { [pscustomobject]@{ Repetition = $null; UserId = $null } }
-function New-ScheduledTaskSettingsSet { [pscustomobject]@{} }
-function Register-ScheduledTask { Set-Content -Path (Join-Path $markerDir 'registered') -Value '1' }
-function Start-ScheduledTask { Set-Content -Path (Join-Path $markerDir 'started') -Value '1' }
-function Get-ScheduledTask { $null }
-function Stop-ScheduledTask { }
-function Unregister-ScheduledTask { }
+function global:New-ScheduledTaskTrigger {
+    param($AtLogOn, $Once, $At, $User, $RepetitionInterval, $RepetitionDuration)
+    [pscustomobject]@{ Repetition = $null; UserId = $User; Once = [bool]$Once }
+}
+function global:New-ScheduledTaskPrincipal { param($UserId, $LogonType, $RunLevel) [pscustomobject]@{ UserId = $UserId } }
+function global:New-ScheduledTaskSettingsSet { param() [pscustomobject]@{} }
+function global:Register-ScheduledTask {
+    param($TaskName, $Action, $Trigger, $Principal, $Settings, [switch]$Force)
+    Set-Content -Path (Join-Path $global:markerDir 'registered') -Value '1'
+}
+function global:Start-ScheduledTask {
+    param($TaskName)
+    Set-Content -Path (Join-Path $global:markerDir 'started') -Value '1'
+}
+function global:Get-ScheduledTask { param($TaskName) $null }
+function global:Stop-ScheduledTask { param($TaskName) }
+function global:Unregister-ScheduledTask { param($TaskName, [switch]$Confirm) }
 
 # --- isolated environment -------------------------------------------------
 $oldLocal = $env:LOCALAPPDATA
