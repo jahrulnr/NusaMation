@@ -22,6 +22,10 @@ All notable changes to the Go core will be documented in this file. The format i
 
 - The side panel now opens on a launcher with **Browser**, **Terminal** and **File manager** cards instead of auto-starting a browser session — no Chrome process spawns until a view is picked, and a home chip in the tab strip returns to the launcher. The fixed primary Browser tab is gone: the browser is an ordinary on-demand tab (closable, created from a card or the **+** menu), and closing the active tab falls back to a live browser tab or the launcher instead of forcing the browser open.
 
+### Fixed
+
+- Agent start failures always include the agent's own stderr. A failed write to a dead agent's stdin could return before the exit path drained the pipe, so the caller saw a bare "ACP process exited" and the log line explaining the failure was lost. The Windows test suite also failed on the port check: a bind conflict is now reported as `errors.Is(err, syscall.EADDRINUSE)` for Winsock's `WSAEADDRINUSE` (10048) as well as the POSIX code.
+
 ## [0.2.10] - 2026-11-15
 
 ### Added

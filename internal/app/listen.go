@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -99,14 +98,38 @@ func listenRetryable(err error) bool {
 		isPermissionErrno(errno)
 }
 
+// bindError is a listen failure carrying a platform-neutral verdict. Windows
+// and Unix report "address already in use" through different errno values
+// (WSAEADDRINUSE 10048 vs EADDRINUSE 98), and the Windows syscall.EADDR*
+// constants never equal a live socket error, so errors.Is(err,
+// syscall.EADDRINUSE) is false there. Is makes that check work everywhere
+// while Unwrap still exposes the original error.
+type bindError struct {
+	addr  string
+	err   error
+	hint  string
+	inUse bool
+}
+
+func (e *bindError) Error() string {
+	return "listen on " + e.addr + ": " + e.err.Error() + e.hint
+}
+
+func (e *bindError) Unwrap() error { return e.err }
+
+func (e *bindError) Is(target error) bool {
+	return e.inUse && target == syscall.EADDRINUSE
+}
+
 func listenError(addr string, err error) error {
 	hint := ""
 	errno, _ := bindErrno(err)
+	inUse := isInUseErrno(errno) || errors.Is(err, syscall.EADDRINUSE)
 	switch {
 	case (errors.Is(err, os.ErrPermission) || isPermissionErrno(errno)) && runtime.GOOS == "windows":
 		hint = " — the port may be inside a reserved range (check: netsh int ipv4 show excludedportrange protocol=tcp)"
-	case isInUseErrno(errno) || errors.Is(err, syscall.EADDRINUSE):
+	case inUse:
 		hint = " — another process holds it (check: netstat -ano)"
 	}
-	return fmt.Errorf("listen on %s: %w%s", addr, err, hint)
+	return &bindError{addr: addr, err: err, hint: hint, inUse: inUse}
 }

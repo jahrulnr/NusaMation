@@ -115,3 +115,23 @@ func TestListenErrorHints(t *testing.T) {
 		t.Fatalf("WSAEADDRINUSE hint missing: %s", got)
 	}
 }
+
+// TestListenErrorIsAddrInUseAcrossPlatforms pins the contract the callers and
+// the retry test rely on: errors.Is(err, syscall.EADDRINUSE) must answer "the
+// port is taken" for both the POSIX code and Winsock's WSAEADDRINUSE (10048).
+// Windows' syscall.EADDR* constants are invented values that never equal a live
+// socket error, so this used to fail only on the Windows runner.
+func TestListenErrorIsAddrInUseAcrossPlatforms(t *testing.T) {
+	mk := func(errno syscall.Errno) error {
+		return &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", errno)}
+	}
+	for _, errno := range []syscall.Errno{syscall.EADDRINUSE, errnoWSAAddrInUse} {
+		err := listenError("127.0.0.1:8787", mk(errno))
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			t.Errorf("errno %d: errors.Is(err, EADDRINUSE) = false", int(errno))
+		}
+	}
+	if errors.Is(listenError("127.0.0.1:8787", mk(syscall.EINVAL)), syscall.EADDRINUSE) {
+		t.Error("EINVAL must not claim the port is in use")
+	}
+}

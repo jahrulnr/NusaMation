@@ -90,6 +90,23 @@ func TestStartIncludesStderrWhenProcessExits(t *testing.T) {
 	}
 }
 
+// A write to a dead agent's stdin can fail before the exit path has drained
+// stderr, so the start error used to come back as a bare "ACP process exited"
+// whenever that race lost. Call now waits for the exit before returning the
+// sentinel; a handful of iterations is enough to catch a regression because
+// the unfixed code failed roughly one run in ten.
+func TestStartIncludesStderrRepeatedly(t *testing.T) {
+	testutil.RequirePosixShell(t)
+	for i := 0; i < 50; i++ {
+		_, err := Start(context.Background(), ClientConfig{
+			Command: "sh", Args: []string{"-c", "echo 'TERM is dumb' >&2; exit 1"},
+		}, silentHandler{})
+		if err == nil || !strings.Contains(err.Error(), "TERM is dumb") {
+			t.Fatalf("iteration %d: err = %v", i, err)
+		}
+	}
+}
+
 // The exit path drains stderr before reporting the death, so lines written
 // right up to the process exit always land in the ring.
 func TestStderrWrittenBeforeExitIsCaptured(t *testing.T) {

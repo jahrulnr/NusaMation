@@ -481,6 +481,18 @@ func (p *Process) Call(ctx context.Context, method string, params any, out any) 
 	payload := map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(rawID), "method": method, "params": params}
 	if err := p.writeJSON(payload); err != nil {
 		p.removePending(key)
+		// A failed write means the far end is gone, but the exit path may not
+		// have run yet — and its drain is what fills the stderr ring a start
+		// error reports. Returning here immediately made ErrProcessExited
+		// racy: the sentinel claims the process is gone while its last words
+		// are still unread. Wait for the exit (bounded by the call's context)
+		// so the sentinel is true and the log is complete.
+		if errors.Is(err, ErrProcessExited) {
+			select {
+			case <-p.done:
+			case <-ctx.Done():
+			}
+		}
 		return err
 	}
 	if sent := requestSent(ctx); sent != nil {
