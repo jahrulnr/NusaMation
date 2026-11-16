@@ -162,7 +162,7 @@ onComposerSwitch((key) => {
     if (st && next && !paneTabsByConv.has(next)) {
       paneTabsByConv.delete("");
       paneTabsByConv.set(next, st);
-      for (const t of [st.primary, ...st.tabs]) {
+      for (const t of st.tabs) {
         t.convId = next;
         t.roots = null; // draft-scoped roots — refetch under the real room
         // Browser sessions created on the draft are conversationId "" — claim
@@ -187,7 +187,7 @@ onComposerSwitch((key) => {
       // An attach run killed by the key switch never re-fires — restart it
       // for the browser tab still on screen or the pane dead-ends on
       // "connecting" forever.
-      const live = st.active === st.primary.id ? st.primary : st.tabs.find((t) => t.id === st.active);
+      const live = st.tabs.find((t) => t.id === st.active);
       if (live?.kind === "browser" && B === live.state && !B.session) {
         attachOrCreate({ fresh: B.newTab });
       }
@@ -208,8 +208,7 @@ export function openBrowserPane(initialURL, opts = {}) {
   P.conversationId = composerKey;
   const st = convTabs(P.conversationId);
   // Later opens re-point B at the browser tab that was last on screen in this
-  // room — never absorb the previous room's B into this room's primary.
-  if (!st.primary.state) st.primary.state = freshBrowserState();
+  // room — never absorb the previous room's B into this room's tabs.
   B = browserStateOf(st);
   B.paneGen = ++paneEpoch;
   B.savedURL = "";
@@ -316,10 +315,12 @@ function adoptBrowserTab(opts = {}) {
 // browserStateOf resolves the state object the pane should render for st —
 // the last browser tab that was on screen, defaulting to the primary one.
 function browserStateOf(st) {
-  const t = st.browserTab === st.primary ? st.primary : st.tabs.find((x) => x === st.browserTab);
-  const owner = (t && t.kind === "browser") ? t : st.primary;
-  st.browserTab = owner;
-  return owner.state || (owner.state = freshBrowserState());
+  const t = st.tabs.includes(st.browserTab) ? st.browserTab : st.tabs.find((x) => x.kind === "browser");
+  st.browserTab = t || null;
+  if (t) return t.state || (t.state = freshBrowserState());
+  // No browser tab — B rests on a parked placeholder so incidental writes to
+  // B.* always land on a valid state object.
+  return st.idle || (st.idle = freshBrowserState());
 }
 
 // disposeBrowserState kills a tab's live resources and deletes its session
@@ -381,8 +382,8 @@ function buildPane(pane) {
   pane.dataset.built = "1";
   pane.innerHTML = `
     <div class="browser-resize" id="browser-resize" title="Drag to resize"></div>
-    <div class="browser-tabs" role="tablist" aria-label="Browser views">
-      <button class="browser-tab active" role="tab" aria-selected="true" data-action="browser-tab">Browser</button>
+    <div class="browser-tabs" role="tablist" aria-label="Panel views">
+      <button class="browser-tab pane-home-tab" role="tab" aria-selected="false" data-action="pane-home" title="Pane home — pick a view" aria-label="Pane home">${icon("panel-left", "sm")}</button>
       <span class="browser-tabs-end"><button class="icon-btn sm" data-action="browser-new-tab" title="New tab" aria-label="New tab" aria-haspopup="true" aria-expanded="false">${icon("plus", "sm")}</button><button class="icon-btn sm browser-tabs-close" data-action="browser-close" title="Close pane" aria-label="Close pane">${icon("x", "sm")}</button></span>
     </div>
     <div class="browser-toolbar">
@@ -416,7 +417,31 @@ function buildPane(pane) {
       <div class="browser-state" id="browser-state"></div>
       <div class="browser-watch" id="browser-watch"></div>
     </div>
-    <div class="pane-tools" id="pane-tools"></div>`;
+    <div class="pane-tools" id="pane-tools">
+      <div class="pane-home" id="pane-home" hidden>
+        <div class="pane-home-head">
+          <div class="pane-home-title">Side panel</div>
+          <div class="pane-home-sub">Pick a view — nothing runs until you open one.</div>
+        </div>
+        <div class="pane-home-cards">
+          <button class="pane-card" data-action="pane-card" data-kind="browser">
+            <span class="pane-card-icon">${icon("globe")}</span>
+            <span class="pane-card-text"><span class="pane-card-title">Browser</span><span class="pane-card-desc">Embedded web browsing</span></span>
+            ${icon("chevron-right", "sm pane-card-go")}
+          </button>
+          <button class="pane-card" data-action="pane-card" data-kind="terminal">
+            <span class="pane-card-icon">${icon("terminal")}</span>
+            <span class="pane-card-text"><span class="pane-card-title">Terminal</span><span class="pane-card-desc">Shell rooted in this workspace</span></span>
+            ${icon("chevron-right", "sm pane-card-go")}
+          </button>
+          <button class="pane-card" data-action="pane-card" data-kind="files">
+            <span class="pane-card-icon">${icon("folder")}</span>
+            <span class="pane-card-text"><span class="pane-card-title">File manager</span><span class="pane-card-desc">Browse and preview files</span></span>
+            ${icon("chevron-right", "sm pane-card-go")}
+          </button>
+        </div>
+      </div>
+    </div>`;
   bindPane(pane);
 }
 
@@ -611,7 +636,7 @@ async function attachOrCreate(opts = {}) {
     const bound = new Set();
     if (!opts.fresh) {
       const st = curTabs();
-      for (const t of [st.primary, ...st.tabs]) {
+      for (const t of st.tabs) {
         if (t?.state && t.state !== b && t.state.session?.id) bound.add(t.state.session.id);
       }
     }
@@ -728,9 +753,9 @@ export async function showAgentBrowser(sessionId, pointer, tool, convId) {
     // tab — put that tab on screen instead of hijacking the visible one.
     // deferAttach: the fetch below (re)attaches the driven session itself.
     const st = curTabs();
-    const owner = [st.primary, ...st.tabs].find((t) => t?.kind === "browser" && t.state?.session?.id === sessionId);
+    const owner = st.tabs.find((t) => t?.kind === "browser" && t.state?.session?.id === sessionId);
     if (owner && st.active !== owner.id) activatePaneTab(owner.id, { deferAttach: true });
-    else if (curTabs().active !== "browser" && st.tabs.find((t) => t.id === st.active)?.kind !== "browser")
+    else if (!owner && st.tabs.find((t) => t.id === st.active)?.kind !== "browser")
       activatePaneTab(st.browserTab?.id || "browser", { deferAttach: true });
   }
   // Drive-side device/pointer state applies to the session's owning tab —
@@ -769,7 +794,7 @@ export async function showAgentBrowser(sessionId, pointer, tool, convId) {
       // its own — stealing the on-screen tab's session would orphan the page
       // the user was browsing.
       const st = convTabs(P.conversationId);
-      let owner = [st.primary, ...st.tabs].find((t) => t?.kind === "browser" && t.state?.session?.id === d.session.id);
+      let owner = st.tabs.find((t) => t?.kind === "browser" && t.state?.session?.id === d.session.id);
       if (!owner) {
         const n = st.tabs.filter((t) => t.kind === "browser").length + 1;
         owner = { id: uid("tab"), kind: "browser", title: n === 1 ? "Browser" : `Browser ${n}`, convId: P.conversationId, el: null, state: freshBrowserState() };
@@ -1186,11 +1211,10 @@ export function selectBrowserTab(devtools = false) {
       frame.src = `${base}inspector.html?${scheme}=${encodeURIComponent(location.host + base + "socket")}`;
     }
   }
-  for (const [action, active] of [["browser-tab", !devtools], ["browser-devtools", devtools]]) {
-    const tab = $(`[data-action="${action}"]`);
-    tab?.classList.toggle("active", active);
-    tab?.setAttribute("aria-selected", String(active));
-  }
+  const devBtn = $(`[data-action="browser-devtools"]`);
+  devBtn?.classList.toggle("active", devtools);
+  devBtn?.setAttribute("aria-selected", String(devtools));
+  renderPaneTabs(); // the active browser tab shows inactive while DevTools owns the surface
 }
 
 /* ---------------- profile picker ---------------- */
@@ -2369,8 +2393,9 @@ onBrowserMetaRestored((key, browser) => {
 });
 
 /* ---------------- pane tabs ----------------
- * Extra views in the pane's tab strip — extra browsers, shells, and file
- * browsing next to the primary Browser tab. Tabs are keyed per conversation:
+ * Views in the pane's tab strip — browsers, shells, and file browsing. The
+ * pane opens on a launcher; every view (browser included) is an on-demand
+ * tab, so nothing runs until picked. Tabs are keyed per conversation:
  * a room switch hides but does not kill the other room's tabs, so a terminal
  * keeps its shell alive through its socket and a browser tab keeps its
  * server-side session. Tool-tab elements live under #pane-tools inside the
@@ -2386,7 +2411,7 @@ onBrowserMetaRestored((key, browser) => {
 // browser tab carries its own full view-model in `state` — B is whichever of
 // those states is on screen. `browserTab` points at the last browser tab that
 // was active, so pane reopen lands on it.
-const paneTabsByConv = new Map(); // convKey → {tabs:[tab], active:"browser"|id, primary:{...}, browserTab}
+const paneTabsByConv = new Map(); // convKey → {tabs:[tab], active:"home"|tabId, browserTab, idle}
 
 const TAB_KINDS = {
   browser: { icon: "globe", label: "Browser" },
@@ -2397,8 +2422,9 @@ const TAB_KINDS = {
 function convTabs(key) {
   let st = paneTabsByConv.get(key);
   if (!st) {
-    const primary = { id: "browser", kind: "browser", title: "Browser", convId: key, state: null, closable: false };
-    st = { tabs: [], active: "browser", primary, browserTab: primary };
+    // No fixed Browser tab — the browser is an on-demand tab like any tool.
+    // `idle` is a parked placeholder B rests on while no browser tab exists.
+    st = { tabs: [], active: "home", browserTab: null, idle: null };
     paneTabsByConv.set(key, st);
   }
   return st;
@@ -2408,17 +2434,19 @@ function convTabs(key) {
 // convTabs directly. Read paths must not resurrect entries dropped for a
 // deleted conversation.
 function curTabs() {
-  return paneTabsByConv.get(P.conversationId || "") || { tabs: [], active: "browser" };
+  return paneTabsByConv.get(P.conversationId || "") || { tabs: [], active: "home" };
 }
 
 export function renderPaneTabs() {
   const strip = $(".browser-tabs");
   if (!strip) return;
   const st = curTabs();
-  const browserActive = st.active === "browser" && !B.devtools;
-  const parts = [`<button class="browser-tab${browserActive ? " active" : ""}" role="tab" aria-selected="${browserActive}" data-action="browser-tab">Browser</button>`];
+  const homeActive = st.active === "home";
+  const parts = [`<button class="browser-tab pane-home-tab${homeActive ? " active" : ""}" role="tab" aria-selected="${homeActive}" data-action="pane-home" title="Pane home — pick a view" aria-label="Pane home">${icon("panel-left", "sm")}</button>`];
   for (const t of st.tabs) {
-    const active = st.active === t.id;
+    // An active browser tab renders inactive while its DevTools drawer owns
+    // the surface — re-clicking it exits back to the page view.
+    const active = st.active === t.id && !(t.kind === "browser" && t.state === B && B.devtools);
     const title = t.kind === "browser" ? (t.state?.nav?.title || t.state?.nav?.url || t.title) : t.title;
     parts.push(`<span class="browser-tab pane-tab${active ? " active" : ""}" role="tab" aria-selected="${active}"><button class="pane-tab-body" data-action="pane-tab" data-tab="${t.id}" title="${esc(title)}">${icon(TAB_KINDS[t.kind]?.icon || "file", "sm")}<span class="pane-tab-label">${esc(title)}</span></button><button class="pane-tab-x" data-action="pane-tab-close" data-tab="${t.id}" aria-label="Close ${esc(title)}">${icon("x", "sm")}</button></span>`);
   }
@@ -2430,6 +2458,8 @@ export function renderPaneTabs() {
 // Elements stay mounted so terminals and file views hold their state.
 function syncTabEls() {
   const host = $("#pane-tools");
+  const home = $("#pane-home");
+  if (home) home.hidden = curTabs().active !== "home";
   for (const [key, st] of paneTabsByConv) {
     const current = key === (P.conversationId || "");
     for (const t of st.tabs) {
@@ -2442,21 +2472,46 @@ function syncTabEls() {
 
 export function activatePaneTab(id = "browser", opts = {}) {
   const st = convTabs(P.conversationId);
-  if (id !== "browser" && !st.tabs.some((t) => t.id === id)) id = "browser";
-  const target = id === "browser" ? st.primary : st.tabs.find((t) => t.id === id);
+  if (id === "browser") {
+    // "browser" is a magic id: the browser surface is on demand — reuse the
+    // last browser tab (or the first), creating one when the room has none.
+    let t = st.browserTab;
+    if (!t || t.kind !== "browser" || !st.tabs.includes(t)) t = st.tabs.find((x) => x.kind === "browser");
+    if (!t) {
+      t = { id: uid("tab"), kind: "browser", title: "Browser", convId: P.conversationId, el: null, state: freshBrowserState() };
+      st.tabs.push(t);
+    }
+    st.browserTab = t;
+    id = t.id;
+  }
+  if (id !== "home" && !st.tabs.some((t) => t.id === id)) id = "home";
+  if (id === "home") {
+    // The launcher surface: no tool owns the pane and the browser runtime
+    // stays parked, so opening the pane never spawns Chrome on its own.
+    st.active = "home";
+    parkBrowserTab();
+    $("#browser-pane")?.classList.toggle("tool-active", true);
+    syncTabEls();
+    renderPaneTabs();
+    return;
+  }
+  const target = st.tabs.find((t) => t.id === id);
   st.active = id;
   if (target?.kind === "browser") {
-    // Re-clicking the live browser tab exits DevTools back to the page view.
     if (opts.exitDevTools) selectBrowserTab(false);
     if (target.state !== B) {
       st.browserTab = target;
       parkBrowserTab();
       B = target.state || (target.state = freshBrowserState());
       adoptBrowserTab(opts);
-    } else if (B.parked) {
-      // Same state object — its runtime was shelved while a tool tab (or the
-      // hidden pane) owned the surface. Re-attach without swapping state.
-      adoptBrowserTab(opts);
+    } else {
+      // Re-clicking the live browser tab exits DevTools back to the page view.
+      if (B.devtools) selectBrowserTab(false);
+      if (B.parked) {
+        // Same state object — its runtime was shelved while a tool tab (or
+        // the hidden pane) owned the surface. Re-attach without swapping.
+        adoptBrowserTab(opts);
+      }
     }
   } else {
     // A non-browser tab owns the surface — park the browser runtime so its
@@ -2477,6 +2532,17 @@ export function openNewTabMenu(anchor) {
     menuItem("terminal", "Terminal", "pane-new", 'data-kind="terminal"')}${
     menuItem("globe", "Browser", "pane-new", 'data-kind="browser"')}${
     menuItem("folder", "File manager", "pane-new", 'data-kind="files"')}</div>`, { width: 200 });
+}
+
+// openPaneCard launches a home card: the browser card re-uses the primary tab
+// (adopting its live session when one exists); tool cards re-activate an
+// existing tab of that kind instead of spawning duplicates.
+export function openPaneCard(kind) {
+  if (kind === "browser") { activatePaneTab("browser"); return; }
+  const st = convTabs(P.conversationId);
+  const existing = st.tabs.find((t) => t.kind === kind);
+  if (existing) activatePaneTab(existing.id);
+  else addPaneTab(kind);
 }
 
 export function addPaneTab(kind) {
@@ -2502,20 +2568,29 @@ export function closePaneTab(id) {
   const idx = st.tabs.findIndex((t) => t.id === id);
   if (idx < 0) return;
   const tab = st.tabs[idx];
-  // Swapping away first lets parkBrowserTab shelve the live view properly —
-  // disposing while B still points at the dead state would tear down the
-  // visible surface mid-swap.
-  if (st.active === id && tab.kind === "browser") activatePaneTab("browser");
+  // Activating the surviving neighbor first lets parkBrowserTab shelve the
+  // live view properly — disposing while B still points at the dead state
+  // would tear down the visible surface mid-swap.
+  const next = st.tabs[idx + 1] || st.tabs[idx - 1];
+  if (st.active === id) activatePaneTab(next ? next.id : preferredPaneTab(st, tab));
   disposeTab(tab);
   st.tabs.splice(idx, 1);
-  if (st.active === id) activatePaneTab("browser");
+  if (st.active === id) activatePaneTab(preferredPaneTab(st)); // nothing else was open
   else renderPaneTabs();
+}
+
+// preferredPaneTab picks where the pane lands when the active tab goes away:
+// a live browser tab keeps its session on screen (primary first); with no
+// live browser the launcher is the honest fallback — it never spawns Chrome.
+function preferredPaneTab(st, exclude) {
+  const live = st.tabs.find((t) => t !== exclude && t?.kind === "browser" && t.state?.session);
+  return live ? live.id : "home";
 }
 
 function disposeTab(tab) {
   if (tab.kind === "browser") {
     const st = paneTabsByConv.get(tab.convId || "");
-    if (st?.browserTab === tab) st.browserTab = st.primary;
+    if (st?.browserTab === tab) st.browserTab = st.tabs.find((x) => x !== tab && x.kind === "browser") || null;
     if (tab.state === B) B = freshBrowserState();
     disposeBrowserState(tab.state);
     tab.state = null;
@@ -2527,14 +2602,15 @@ function disposeTab(tab) {
 }
 
 // dropPaneTabs kills every tab of one conversation (deleted or reset) —
-// including the primary browser state — so its sessions do not linger.
+// including its parked placeholder — so its sessions do not linger.
 export function dropPaneTabs(key) {
   const st = paneTabsByConv.get(key);
   if (!st) return;
   st.tabs.forEach(disposeTab);
-  if (st.primary.state === B) B = freshBrowserState();
-  disposeBrowserState(st.primary.state);
-  st.primary.state = null;
+  if (st.idle === B) B = freshBrowserState();
+  disposeBrowserState(st.idle);
+  st.idle = null;
+  st.browserTab = null;
   paneTabsByConv.delete(key);
   // No activatePaneTab here — the room is gone; activating would just
   // recreate the entry we are dropping via convTabs' create semantics.
@@ -2547,8 +2623,9 @@ export function dropPaneTabs(key) {
 function resetAllPaneTabs() {
   for (const st of paneTabsByConv.values()) {
     st.tabs.forEach(disposeTab);
-    if (st.primary.state !== B) disposeBrowserState(st.primary.state);
-    st.primary.state = null;
+    if (st.idle !== B) disposeBrowserState(st.idle);
+    st.idle = null;
+    st.browserTab = null;
   }
   paneTabsByConv.clear();
   $("#browser-pane")?.classList.remove("tool-active");

@@ -93,6 +93,13 @@ default is set. Different WhatsApp chats can use different agents, but each
 chat links to one active NusaMation conversation at a time. Group messages must
 also satisfy the configured group policy.
 
+`/model` lists the session's model values; `/model <value>` switches, and
+`/model <value>[k=v,...]` applies extra session options after the switch (for
+example `/model claude-opus-4.5[effort=high]`). `/mode` lists or sets the
+session mode, `/set <key> <value>` changes any advertised option, and
+`/approve`/`/deny` list pending approvals or act on a unique id prefix.
+`/help` lists these plus commands the current session advertises.
+
 
 ## Applying changes
 

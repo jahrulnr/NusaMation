@@ -58,7 +58,7 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | `POST` | `/conversations/{id}/turns/{turnId}/cancel` | cancels that queued turn without touching the running one → `{turn}`; 404 unknown turn, 409 when it is no longer queued. Optional `{dropMessage:true}` also deletes the user message that queued it (used by "edit queued message"). |
 | `POST` | `/conversations/{id}/retry` | re-queues the last user message |
 | `POST` | `/conversations/{id}/prepare` | starts or resumes the ACP session and returns live configuration options |
-| `POST` | `/conversations/{id}/config` | `{configId, value}` or `{model}` |
+| `POST` | `/conversations/{id}/config` | `{configId, value}`, `{model}`, or `{selector:"value[k=v,...]"}` — selector applies the model first, then re-reads options and applies modifiers; the response `result` reports applied/failed modifiers and ambiguity errors carry `candidates` |
 | `POST` | `/conversations/{id}/elicitations/{requestId}` | `{action:"accept"|"decline"|"cancel", content?}` answers a pending agent input request |
 | `POST` | `/conversations/{id}/agent` | `{agentId}`; starts a handoff recap |
 | `GET` | `/conversations/{id}/meta` | file-backed UI meta: `{title?, browser?:{lastUrl, open?}, draft?:{text, attachments, references, sendDelivery, replyToChannel, updatedAt}}`; missing file → `{meta:{}}` |

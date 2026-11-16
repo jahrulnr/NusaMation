@@ -4,6 +4,17 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+### Added
+
+- Model selector grammar `value[k=v,...]` shared by channels, HTTP and the CLI: `/model` on a chat channel lists raw model values (no indexes, substring filtering, modifier examples from real option keys) and `/model <selector>` applies the model first, re-reads the session's config options, then applies `k=v` modifiers — with ambiguity reported as candidates and partial failures reported without claiming success. `POST /api/conversations/{id}/config` accepts `{selector:"value[k=v,...]"}`, and `nusamation model <conversation-id> [selector]` prints or applies the active selector through the running server's loopback auth.
+- `/mode` lists or sets the session mode (`session/set_mode` for legacy agents, config option otherwise), and `/set <key> <value>` sets any advertised config option resolved by id, category, then name.
+- `/approve` and `/deny` without an argument list pending approvals with id prefixes; a unique prefix resolves the approval.
+- `/help` merges commands advertised by the current ACP session (dropped when the session metadata is stale) and suggests corrections for misspelled NusaMation commands.
+
+### Changed
+
+- The side panel now opens on a launcher with **Browser**, **Terminal** and **File manager** cards instead of auto-starting a browser session — no Chrome process spawns until a view is picked, and a home chip in the tab strip returns to the launcher. The fixed primary Browser tab is gone: the browser is an ordinary on-demand tab (closable, created from a card or the **+** menu), and closing the active tab falls back to a live browser tab or the launcher instead of forcing the browser open.
+
 ## [0.2.10] - 2026-11-15
 
 ### Added

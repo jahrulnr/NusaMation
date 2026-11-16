@@ -237,6 +237,7 @@ func (s *server) handle(msg message) {
 			ModeID string `json:"modeId"`
 		}
 		_ = json.Unmarshal(msg.Params, &req)
+		trace("set_mode " + req.ModeID)
 		s.mu.Lock()
 		s.values["mode"] = req.ModeID
 		s.mu.Unlock()

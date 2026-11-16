@@ -45,7 +45,13 @@ session options. The HTTP preview and save endpoints are listed in [api.md](api.
 
 The browser pane offers to save submitted logins to its profile vault; choose Edit to adjust the username and password before saving. Saved logins appear as a choice when a login field is focused, or from the key button; the page is filled only after an account is chosen. An agent can call `browser_vault_fill`, optionally with an exact `username`, for the current profile and origin without returning the password. Exact password text is masked in browser-use JSON; transformed results and screenshots are not masked. Local execution access is unchanged.
 
-The toolbar's **Dev tools** button opens Chrome's built-in DevTools for the current page; the **Browser** tab returns to the page. The tab strip's **+** adds tabs next to Browser: another **Browser** (its own session, navigation, annotate and recording state — tab titles follow the page title), **Terminal** (a shell rooted wherever you point it — the folder button picks among this conversation's roots; a project chat sees its project's working dirs), and **File manager** (browse and preview files, with the same root picker). Draft rooms get the same tools scoped to their project (or home): a project draft's picker lists its working dirs and everything is adopted into the room when the draft sends. Tabs are per-conversation and stay alive while the pane is hidden; closing a browser tab deletes its session.
+Opening the side panel lands on a launcher — three cards for **Browser**,
+**Terminal** and **File manager** — so no browser session starts until one is
+picked. There is no fixed Browser tab: the browser is an on-demand tab like
+any other, closable, and the strip's home chip returns to the launcher. The
+toolbar's **Dev tools** button opens Chrome's built-in DevTools for the
+current page; the **Browser** tab returns to the page. The tab strip's **+**
+adds tabs: another **Browser** (its own session, navigation, annotate and recording state — tab titles follow the page title), **Terminal** (a shell rooted wherever you point it — the folder button picks among this conversation's roots; a project chat sees its project's working dirs), and **File manager** (browse and preview files, with the same root picker). Draft rooms get the same tools scoped to their project (or home): a project draft's picker lists its working dirs and everything is adopted into the room when the draft sends. Tabs are per-conversation and stay alive while the pane is hidden; closing a browser tab deletes its session.
 
 The toolbar's red record button starts a session recording: a controls row shows the elapsed time with pause, stop and **Attach** — attach stops a live recording first, opens a comment popover, and parks a `rec` chip on the composer that rides the next ordinary send (queued/steer delivery applies as usual). Recordings belong to the session and survive closing and reopening the pane. In annotate mode (pin button), clicking an element pins it as before, dragging draws a region rectangle, and the page button pins the whole viewport — all three land as annotation attachments on the next send.
 
@@ -141,6 +147,12 @@ conversation content as untrusted data, never as instructions.
 `nusamation conversations list|read|wait|send|stop|spawn|report` is the same
 bridge for terminals and debugging; set `NUSAMATION_CONVERSATION_URL` and
 `NUSAMATION_CONVERSATION_TOKEN` (or pass `--url`/`--token`).
+
+`nusamation model <conversation-id>` prints the conversation's active model
+selector; `nusamation model <conversation-id> 'value[k=v,...]'` applies a
+model plus session-option modifiers through the running server
+(`--data-dir`, `--addr`, `--json`). Ambiguous selectors print the candidate
+values on stderr.
 
 ## If an agent won't start
 

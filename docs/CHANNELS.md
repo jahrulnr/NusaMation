@@ -48,6 +48,22 @@ The handler deduplicates by `(channel, MessageID, ThreadID)`, finds/creates a li
 - `/new` → create a new conversation, move the current chat link from the old conversation to the new one. The old transcript stays available on web.
 - `/agent` → switch the linked conversation's agent and start a fresh ACP session with a transcript recap on the next message.
 
+## Channel commands
+
+Slash-prefixed messages are handled by the chat service, not the agent.
+
+- `/new [slug]` — start a fresh conversation and move this chat's link to it.
+- `/agent [slug]` — list enabled agents, or switch the linked conversation's agent.
+- `/model [selector]` — list available model values, or apply a selector `value[k=v,...]`. The left side matches model values case-insensitively; `k=v` modifiers are applied against the catalog re-read after the model switch. Ambiguous matches list candidates. Examples: `/model claude-opus-4.5`, `/model claude-opus-4.5[effort=high]`.
+- `/mode [value]` — list modes, or set the active mode. Agents exposing a `mode` config option get `session/set_config_option`; legacy agents get `session/set_mode`.
+- `/set <key> <value>` — set any advertised config option; `<key>` resolves by option id, then category, then name.
+- `/approve [id-prefix]` `/deny [id-prefix]` — without an argument, list pending approvals with id prefixes. A unique prefix resolves the approval.
+- `/stop` — cancel the current turn.
+- `/status` — show linked agent, model, mode and session state.
+- `/help` — list the commands above plus commands the current ACP session advertises (shown only while the session still owns them).
+
+Unknown commands close to a NusaMation command get a "did you mean" hint; everything else is forwarded to the agent as text.
+
 ## Routing
 
 Each conversation stores:

@@ -300,3 +300,48 @@ func TestParseCommandAndHelpers(t *testing.T) {
 		t.Fatal("invalid config value accepted")
 	}
 }
+
+func TestHelpTextMergesLiveAgentCommands(t *testing.T) {
+	svc := &Service{}
+	conv := store.Conversation{ACPSessionID: "sess-1"}
+	conv.Metadata = mustJSON(map[string]any{
+		"commandsSessionId": "sess-1",
+		"commands": json.RawMessage(`[
+			{"name":"compact","description":"Compact the context","input":{"hint":"[focus]"}},
+			{"name":"init"}
+		]`),
+	})
+	out := svc.helpText(conv, true)
+	if !strings.Contains(out, "/model") || !strings.Contains(out, "/mode") || !strings.Contains(out, "/set") {
+		t.Fatalf("own commands missing from help: %s", out)
+	}
+	if !strings.Contains(out, "/compact — Compact the context [focus]") || !strings.Contains(out, "/init") {
+		t.Fatalf("agent commands missing from help: %s", out)
+	}
+
+	// A stale commands blob — from a previous ACP session — must not surface.
+	conv.ACPSessionID = "sess-2"
+	out = svc.helpText(conv, true)
+	if strings.Contains(out, "/compact") {
+		t.Fatalf("stale agent commands leaked into help: %s", out)
+	}
+
+	// Malformed or absent blobs are ignored, never fatal.
+	conv.Metadata = mustJSON(map[string]any{"commandsSessionId": "sess-2", "commands": json.RawMessage(`{"oops":1}`)})
+	out = svc.helpText(conv, true)
+	if strings.Contains(out, "Agent commands:") {
+		t.Fatalf("malformed commands should not render: %s", out)
+	}
+}
+
+func TestSuggestCommandOnlyCoversOwnCommands(t *testing.T) {
+	if got := suggestCommand("modl"); got != "model" {
+		t.Fatalf("suggestCommand(modl) = %q", got)
+	}
+	if got := suggestCommand("compact"); got != "" {
+		t.Fatalf("agent command names must not be suggested: %q", got)
+	}
+	if got := suggestCommand("xyzzy"); got != "" {
+		t.Fatalf("distant input must not guess: %q", got)
+	}
+}

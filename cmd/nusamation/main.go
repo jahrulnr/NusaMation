@@ -47,6 +47,9 @@ func main() {
 		case "conversations":
 			fail("conversations", conversationsCmd(args[1:]))
 			return
+		case "model":
+			fail("model", modelCmd(args[1:]))
+			return
 		}
 	}
 	cfg, err := config.Parse(args)
@@ -84,6 +87,7 @@ Commands:
   config        Manage stored settings (list, get, add, set, remove)
   whatsapp      Manage WhatsApp channel settings and send messages
   conversations Manage conversation control through the loopback bridge
+  model         Show or change a conversation's model selector on a running server
   reset-password  Reset the admin password
   version       Print version
 

@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -207,6 +208,88 @@ func (s *Service) SetConfig(ctx context.Context, conversationID, configID string
 	})
 	s.emit("conversation.updated", conversationID, updated)
 	return updated, nil
+}
+
+// SetSelector applies a "model[k=v,...]" selector in two phases: the model is
+// switched first, then each modifier is resolved against the catalog the
+// switch produced — options can appear, disappear, or reset when the model
+// changes, so validating modifiers up front would reject legitimate values.
+// A modifier failure never rolls the model back; the result reports exactly
+// what landed.
+func (s *Service) SetSelector(ctx context.Context, conversationID, raw string) (SelectorResult, error) {
+	var res SelectorResult
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return res, errors.New("a model value or selector is required")
+	}
+	opts, err := s.ConversationConfig(ctx, conversationID)
+	if err != nil {
+		return res, err
+	}
+	modelOpt, ok := configByCategory(opts, "model")
+	if !ok {
+		return res, errors.New("this agent has no model option")
+	}
+	choice, rerr := ResolveModel(opts, raw)
+	var mods []Modifier
+	if rerr != nil {
+		model, m, perr := ParseSelector(raw)
+		switch {
+		case perr != nil:
+			return res, perr
+		case model == raw:
+			// No bracket suffix: report the original resolve error.
+		default:
+			choice, rerr = ResolveModel(opts, model)
+			if rerr == nil {
+				mods = m
+			}
+		}
+	}
+	if rerr != nil {
+		var amb *AmbiguousError
+		if errors.As(rerr, &amb) {
+			res.Candidates = amb.Candidates
+		}
+		return res, rerr
+	}
+	updated, err := s.SetConfig(ctx, conversationID, modelOpt.ID, choice.Value)
+	if err != nil {
+		return res, err
+	}
+	res.Model = updated.Model
+	if res.Model == "" {
+		res.Model = choice.Value
+	}
+	if len(mods) == 0 {
+		return res, nil
+	}
+	opts, err = s.ConversationConfig(ctx, conversationID)
+	if err != nil {
+		return res, err
+	}
+	for _, m := range mods {
+		opt, ok := ResolveModifierKey(opts, m.Key)
+		if !ok {
+			res.Failed = append(res.Failed, ModifierFailure{Modifier: m, Reason: "unknown option"})
+			continue
+		}
+		value, offers := ResolveModifierValue(opt, m.Value)
+		if offers != nil {
+			res.Failed = append(res.Failed, ModifierFailure{Modifier: m, OptionID: opt.ID, Reason: "not available", Offers: offers})
+			continue
+		}
+		v := any(value)
+		if strings.EqualFold(opt.Type, "boolean") {
+			v = value == "true"
+		}
+		if _, err := s.SetConfig(ctx, conversationID, opt.ID, v); err != nil {
+			res.Failed = append(res.Failed, ModifierFailure{Modifier: m, OptionID: opt.ID, Reason: shortErr(err)})
+			continue
+		}
+		res.Applied = append(res.Applied, Modifier{Key: opt.ID, Value: value})
+	}
+	return res, nil
 }
 
 func (s *Service) SetModel(ctx context.Context, conversationID, model string) (store.Conversation, error) {

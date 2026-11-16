@@ -459,16 +459,29 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		ConfigID string          `json:"configId"`
 		Value    json.RawMessage `json:"value"`
 		Model    string          `json:"model"`
+		Selector string          `json:"selector"`
 	}
 	if err := readJSON(w, r, &in, 64<<10); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid config payload.")
 		return
 	}
 	var conv store.Conversation
+	var result *chat.SelectorResult
 	var err error
-	if in.Model != "" {
+	switch {
+	case in.Selector != "":
+		var res chat.SelectorResult
+		res, err = s.chat.SetSelector(r.Context(), r.PathValue("id"), in.Selector)
+		result = &res
+		if err != nil && len(res.Candidates) > 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": err.Error(), "code": "config_failed", "candidates": res.Candidates,
+			})
+			return
+		}
+	case in.Model != "":
 		conv, err = s.chat.SetModel(r.Context(), r.PathValue("id"), in.Model)
-	} else {
+	default:
 		var value any
 		if len(in.Value) == 0 {
 			writeError(w, http.StatusBadRequest, "bad_request", "A config value is required.")
@@ -484,8 +497,18 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "config_failed", err.Error())
 		return
 	}
+	if conv.ID == "" {
+		if conv, err = s.store.GetConversation(r.Context(), r.PathValue("id")); err != nil {
+			writeError(w, http.StatusBadRequest, "config_failed", err.Error())
+			return
+		}
+	}
 	configs, _ := s.chat.ConversationConfig(r.Context(), conv.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"conversation": conv, "configs": configs})
+	out := map[string]any{"conversation": conv, "configs": configs}
+	if result != nil {
+		out["result"] = result
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleSwitchAgent(w http.ResponseWriter, r *http.Request) {
