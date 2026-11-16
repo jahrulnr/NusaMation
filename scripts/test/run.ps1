@@ -63,8 +63,11 @@ function New-ScheduledTaskAction {
     param([string]$Execute, [string]$Argument)
     Set-Content -Path (Join-Path $markerDir 'action.txt') -Value "$Execute`t$Argument"
 }
-function New-ScheduledTaskTrigger { param() }
-function New-ScheduledTaskSettingsSet { param() }
+# The real cmdlets return CimInstance objects whose properties the installer
+# mutates (a logon trigger gets a Repetition pattern). Returning $null made the
+# stub reject that assignment, so the shape has to match.
+function New-ScheduledTaskTrigger { [pscustomobject]@{ Repetition = $null; UserId = $null } }
+function New-ScheduledTaskSettingsSet { [pscustomobject]@{} }
 function Register-ScheduledTask { Set-Content -Path (Join-Path $markerDir 'registered') -Value '1' }
 function Start-ScheduledTask { Set-Content -Path (Join-Path $markerDir 'started') -Value '1' }
 function Get-ScheduledTask { $null }
@@ -80,6 +83,10 @@ $oldVersion = $env:NUSAMATION_VERSION
 $oldRepo = $env:NUSAMATION_REPO
 $oldRelease = $env:FAKE_RELEASE
 $userPathBefore = [Environment]::GetEnvironmentVariable('Path', 'User')
+# The installer also writes a HKCU Run key. Snapshot it so a test run can never
+# leave the developer's own autostart pointing at a temp directory.
+$runKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$runKeyBefore = (Get-ItemProperty $runKeyPath -Name NusaMation -ErrorAction SilentlyContinue).NusaMation
 
 try {
     $env:LOCALAPPDATA = Join-Path $testRoot 'local'
@@ -150,8 +157,18 @@ try {
     # 5. Uninstall removes binary and PATH entry but keeps data.
     $env:FAKE_RELEASE = $release
     & $installer | Out-Null
+    if ((Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name NusaMation -ErrorAction SilentlyContinue).NusaMation) {
+        Pass 'run key registered as fallback autostart'
+    } else {
+        Fail 'run key missing'
+    }
     & $installer -Uninstall | Out-Null
     if (-not (Test-Path $binary)) { Pass 'uninstall removed binary' } else { Fail 'uninstall left the binary' }
+    if (-not (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name NusaMation -ErrorAction SilentlyContinue).NusaMation) {
+        Pass 'uninstall removed the run key'
+    } else {
+        Fail 'uninstall left the run key'
+    }
     if (([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -notcontains $installDir.TrimEnd('\')) {
         Pass 'uninstall removed PATH entry'
     } else {
@@ -168,6 +185,12 @@ finally {
     $env:NUSAMATION_REPO = $oldRepo
     $env:FAKE_RELEASE = $oldRelease
     [Environment]::SetEnvironmentVariable('Path', $userPathBefore, 'User')
+    if ($runKeyBefore) {
+        New-Item -Path $runKeyPath -Force | Out-Null
+        Set-ItemProperty -Path $runKeyPath -Name NusaMation -Value $runKeyBefore
+    } else {
+        Remove-ItemProperty -Path $runKeyPath -Name NusaMation -ErrorAction SilentlyContinue
+    }
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
