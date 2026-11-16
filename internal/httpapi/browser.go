@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jahrulnr/nusamation/internal/browser"
 	"github.com/jahrulnr/nusamation/internal/store"
@@ -228,6 +229,44 @@ func (s *Server) handleBrowserSessionCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"session": sess.View(true)})
+}
+
+// handleBrowserInstallOffer lists the ways this host can get a Chromium
+// executable — the pane's error state renders them as install buttons.
+func (s *Server) handleBrowserInstallOffer(w http.ResponseWriter, r *http.Request) {
+	if s.browser == nil {
+		writeError(w, http.StatusServiceUnavailable, "browser_unavailable", "The embedded browser is not enabled.")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.browser.InstallOffer())
+}
+
+// handleBrowserInstall runs one offered method synchronously and reports the
+// resolved executable plus the installer log tail. The method id is whitelisted
+// inside browser.Install — this endpoint never runs user-supplied commands.
+func (s *Server) handleBrowserInstall(w http.ResponseWriter, r *http.Request) {
+	if s.browser == nil {
+		writeError(w, http.StatusServiceUnavailable, "browser_unavailable", "The embedded browser is not enabled.")
+		return
+	}
+	var in struct {
+		Method string `json:"method"`
+	}
+	if err := readJSON(w, r, &in, 64<<10); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid install payload.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+	log := browser.NewTailWriter(32 << 10)
+	execPath, err := s.browser.Install(ctx, strings.TrimSpace(in.Method), log)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error": err.Error(), "code": "install_failed", "log": log.String(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "execPath": execPath, "log": log.String()})
 }
 
 func (s *Server) handleBrowserSessionList(w http.ResponseWriter, r *http.Request) {

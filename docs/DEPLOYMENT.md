@@ -54,6 +54,35 @@ If you already run NusaMation manually, stop it before installing; otherwise the
 
 `make uninstall` stops and removes the unit and binary but keeps `~/.nusamation` and `~/.config/nusamation`. `make purge` also deletes both of those directories. Use `purge` deliberately.
 
+## Windows (install.ps1)
+
+`install.ps1` puts the binary under `%LOCALAPPDATA%\NusaMation\bin`, adds it to the user `PATH`, and registers a hidden **NusaMation** scheduled task that runs the binary at logon (`-hide-console`) under the installing user's interactive session — no stored password, no SYSTEM context, `schtasks /End /TN NusaMation` stops the real process. The task also ignores AC/battery state, so a laptop that boots unplugged still starts it and is not killed when it switches to battery. After starting it, the installer polls `http://127.0.0.1:8787/api/health` and prints diagnostics if nothing answers; the registered principal/trigger are recorded in `%LOCALAPPDATA%\NusaMation\bin\install-info.txt` for post-mortem.
+
+Autostart has two independent paths and one guard:
+
+- The logon trigger **repeats every five minutes**. A healthy server makes the tick a no-op (`MultipleInstances=IgnoreNew`); a server that was killed or crashed is back within five minutes instead of waiting for the next logon.
+- A `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` entry starts the same binary. It exists for images where Task Scheduler never fires — the usual casualty of stripped or custom Windows builds.
+- The app holds a **per-data-directory instance lock** (named mutex on Windows, `flock` on `nusamation.lock` elsewhere) *before* it opens the database. Both autostart paths racing at logon is therefore harmless: the loser prints "already running" and exits 0, and two processes can never share one SQLite/WAL pair.
+
+Startup bind failures are retried in-process for a few minutes before the app exits, so a port that is still being released — or sits inside a reserved range right after boot — usually heals itself; if it does not, the reason lands in `logs\nusamation.log` instead of vanishing into the hidden task's stderr.
+
+### `localhost:8787` unreachable after a Windows reboot
+
+```powershell
+Get-Process nusamation -ErrorAction SilentlyContinue     # is it running at all?
+Get-ScheduledTaskInfo NusaMation                         # LastTaskResult
+(Get-ScheduledTask NusaMation).Principal.UserId; (Get-ScheduledTask NusaMation).Triggers[0].UserId; whoami
+netstat -ano | findstr :8787                             # anything listening?
+netsh int ipv4 show excludedportrange protocol=tcp       # 8787 inside a reserved range?
+Get-Content ~\.nusamation\logs\nusamation.log -Tail 30
+```
+
+- **Not running / trigger user mismatch** — the task was registered for a different account (install ran under another context). Re-run `install.ps1` as the daily user, or check `install-info.txt`.
+- **Task says `Running` but nothing listens** — Task Scheduler can hold a stale instance after an unclean shutdown; `schtasks /Run` then queues or refuses it (`LastTaskResult` `0x800710E0`) and `/End` + `/Run` cannot clear it. Re-run `install.ps1`: it stops the instance, waits for the executable to be replaceable and registers the task again, which resets the stuck state.
+- **Process disappears and comes back a few minutes later** — that is the five-minute repetition trigger, not a crash loop. If it never comes back, check `Get-ScheduledTaskInfo NusaMation` and whether the `HKCU\...\Run` value `NusaMation` still exists; either path alone is enough to start it.
+- **Process dies instantly, log says `listen on ... access` / reserved range** — Hyper-V/WSL/WinNAT reserved the port this boot. Reserve it permanently (admin): `net stop winnat`, then `netsh int ipv4 add excludedportrange protocol=tcp startport=8787 numberofports=1`, then `net start winnat` — the exclusion removes 8787 from the dynamic pool while explicit binds remain allowed, so winnat stops rolling over it on every boot.
+- **Something else holds :8787** — `netstat -ano` gives the PID; taskkill it or move NusaMation with `NUSAMATION_ADDR`.
+
 ## system-wide systemd
 
 Use this when NusaMation should run as a dedicated service account shared by multiple users or managed by root:

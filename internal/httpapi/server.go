@@ -197,6 +197,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/uploads", s.protected(s.handleUpload))
 	mux.HandleFunc("GET /api/uploads/{id}", s.protected(s.handleGetUpload))
 
+	mux.HandleFunc("GET /api/browser/install", s.protected(s.handleBrowserInstallOffer))
+	mux.HandleFunc("POST /api/browser/install", s.protected(s.handleBrowserInstall))
 	mux.HandleFunc("POST /api/browser/sessions", s.protected(s.handleBrowserSessionCreate))
 	mux.HandleFunc("GET /api/browser/sessions", s.protected(s.handleBrowserSessionList))
 	mux.HandleFunc("GET /api/browser/sessions/{id}", s.protected(s.handleBrowserSessionGet))

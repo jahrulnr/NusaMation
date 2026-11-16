@@ -47,8 +47,8 @@ function switchWorld() {
   const B = { recReady: null, recNote: '', nav: { url: '' } };
   const P = { open: true, conversationId: 'convA' };
   const paneTabsByConv = new Map();
-  const primary = { id: 'browser', kind: 'browser', convId: 'convA', state: B };
-  paneTabsByConv.set('convA', { tabs: [], active: 'browser', primary, browserTab: primary });
+  const browserTab = { id: 'tab_1', kind: 'browser', convId: 'convA', state: B };
+  paneTabsByConv.set('convA', { tabs: [browserTab], active: 'tab_1', browserTab, idle: null });
   const calls = { close: 0, tabs: 0, api: [] };
   const ctx = {
     B,
@@ -90,24 +90,27 @@ test('a room switch hides the pane but keeps the room\'s tab states', () => {
   ctx.fire('convB');
   assert.equal(calls.close, 1);
   assert.equal(P.conversationId, 'convB');
-  assert.equal(paneTabsByConv.get('convA').primary.state, B, 'the state object survives the switch');
+  assert.equal(paneTabsByConv.get('convA').browserTab.state, B, 'the state object survives the switch');
 });
 
 test('a draft pane carries its tabs into the adopting conversation', () => {
   const { P, ctx, paneTabsByConv } = switchWorld();
   P.conversationId = '';
-  const st = { tabs: [{ convId: '' }], active: 'browser', primary: { convId: '' }, browserTab: null };
+  const browserTab = { id: 'tab_1', kind: 'browser', convId: '', state: {} };
+  const toolTab = { id: 'tab_2', kind: 'terminal', convId: '' };
+  const st = { tabs: [browserTab, toolTab], active: 'tab_1', browserTab, idle: null };
   paneTabsByConv.set('', st);
   ctx.fire('convB'); // convB has no tab set of its own — adoption applies
   assert.equal(paneTabsByConv.get('convB'), st, 'the whole tab set moves to the new room');
-  assert.equal(st.primary.convId, 'convB');
-  assert.equal(st.tabs[0].convId, 'convB');
+  assert.equal(browserTab.convId, 'convB');
+  assert.equal(toolTab.convId, 'convB');
 });
 
 test('a draft pane does not clobber a room that already has tabs', () => {
   const { P, calls, ctx, paneTabsByConv } = switchWorld();
   P.conversationId = '';
-  const st = { tabs: [{ convId: '' }], active: 'browser', primary: { convId: '' }, browserTab: null };
+  const browserTab = { id: 'tab_1', kind: 'browser', convId: '', state: {} };
+  const st = { tabs: [browserTab], active: 'tab_1', browserTab, idle: null };
   paneTabsByConv.set('', st);
   const convATabs = paneTabsByConv.get('convA');
   ctx.fire('convA');
@@ -119,15 +122,14 @@ test('a draft pane does not clobber a room that already has tabs', () => {
 test('draft adoption claims draft-owned browser sessions for the new room', () => {
   const { P, calls, ctx, paneTabsByConv } = switchWorld();
   P.conversationId = '';
-  const st = {
-    tabs: [],
-    active: 'browser',
-    primary: { id: 'browser', kind: 'browser', convId: '', state: { session: { id: 'bs_draft', conversationId: '' } } },
-    browserTab: null,
+  const browserTab = {
+    id: 'tab_1', kind: 'browser', convId: '',
+    state: { session: { id: 'bs_draft', conversationId: '' } },
   };
+  const st = { tabs: [browserTab], active: 'tab_1', browserTab, idle: null };
   paneTabsByConv.set('', st);
   ctx.fire('convB');
-  assert.equal(st.primary.state.session.conversationId, 'convB');
+  assert.equal(browserTab.state.session.conversationId, 'convB');
   assert.equal(calls.api.length, 1);
   assert.equal(calls.api[0].path, '/browser/sessions/bs_draft/claim');
   assert.equal(calls.api[0].opts.method, 'POST');
@@ -137,12 +139,11 @@ test('draft adoption claims draft-owned browser sessions for the new room', () =
 test('already-owned sessions are not claimed again', () => {
   const { P, calls, ctx, paneTabsByConv } = switchWorld();
   P.conversationId = '';
-  const st = {
-    tabs: [],
-    active: 'browser',
-    primary: { id: 'browser', kind: 'browser', convId: '', state: { session: { id: 'bs_owned', conversationId: 'convOther' } } },
-    browserTab: null,
+  const browserTab = {
+    id: 'tab_1', kind: 'browser', convId: '',
+    state: { session: { id: 'bs_owned', conversationId: 'convOther' } },
   };
+  const st = { tabs: [browserTab], active: 'tab_1', browserTab, idle: null };
   paneTabsByConv.set('', st);
   ctx.fire('convB');
   assert.equal(calls.api.length, 0);
@@ -151,7 +152,7 @@ test('already-owned sessions are not claimed again', () => {
 test('draft adoption clears a ready recording for the new room', () => {
   const { B, P, ctx, paneTabsByConv } = switchWorld();
   P.conversationId = '';
-  paneTabsByConv.set('', { tabs: [], active: 'browser', primary: { convId: '' }, browserTab: null });
+  paneTabsByConv.set('', { tabs: [], active: 'home', browserTab: null, idle: null });
   B.recReady = { id: 'rec_1' };
   B.recNote = 'x';
   ctx.fire('convB');

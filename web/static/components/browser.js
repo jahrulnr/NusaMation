@@ -676,7 +676,7 @@ async function attachOrCreate(opts = {}) {
     if (!still()) return;
     await createSession(gen, key, still);
   } catch (e) {
-    if (still()) setStatus("error", e.message || "Could not reach the browser service.");
+    if (still()) setStatus("error", e.message || "Could not reach the browser service.", e.code);
   }
 }
 
@@ -706,7 +706,7 @@ async function createSession(gen, key, still) {
     B.restoreURL = "";
     attach(d.session);
   } catch (e) {
-    if (still()) setStatus("error", e.message || "The browser could not be started.");
+    if (still()) setStatus("error", e.message || "The browser could not be started.", e.code);
   }
 }
 
@@ -2335,10 +2335,65 @@ function renderState() {
       ${icon("alert", "sm")}
       <b>Browser unavailable</b>
       ${B.statusText ? `<p>${esc(B.statusText)}</p>` : ""}
+      ${installOfferHTML()}
       <button class="btn btn-secondary btn-sm" data-action="browser-reconnect">${icon("refresh", "sm")} Try again</button>
     </div>`;
   } else {
     el.innerHTML = `<span>${esc(B.statusText || "…")}</span>`;
+  }
+}
+
+/* ---------------- install offer ----------------
+ * A missing Chromium executable is the one browser error the user can fix
+ * from the pane. The offer is host-global (not per tab): fetched once when a
+ * browser_unavailable error lands, rendered as install buttons.
+ */
+let installOffer = null;   // last /browser/install GET result (or null=unknown)
+let offerLoading = null;   // in-flight fetch promise
+let installBusy = "";      // method id currently installing
+let installLog = "";       // log tail from a failed install
+
+function loadInstallOffer() {
+  if (installOffer || offerLoading) return;
+  offerLoading = api("/browser/install").then((d) => {
+    installOffer = d;
+  }).catch(() => {
+    installOffer = { missing: true, methods: [] }; // offer fetch failed — hide buttons, keep hint
+  }).finally(() => { offerLoading = null; renderState(); });
+}
+
+function installOfferHTML() {
+  if (B.closedCode !== "browser_unavailable") return "";
+  if (installBusy) {
+    const m = installOffer?.methods?.find((x) => x.id === installBusy);
+    return `<span class="spinner"></span><span>Installing ${esc(m ? m.label : installBusy)}…</span>`;
+  }
+  loadInstallOffer();
+  if (!installOffer || installOffer.missing === false) return "";
+  const methods = (installOffer.methods || []).map((m) =>
+    `<button class="browser-offer-method" data-action="browser-install" data-method="${esc(m.id)}"><b>${esc(m.label)}${m.needsRoot ? " (root)" : ""}</b><small>${esc(m.detail)}</small></button>`).join("");
+  const log = installLog ? `<pre class="browser-install-log">${esc(installLog)}</pre>` : "";
+  return `<div class="browser-offer">${methods}
+    <div class="browser-offer-hint">${methods ? "…or install " : "Install "}Chromium/Chrome manually, then set -browser-exec / NUSAMATION_BROWSER_EXEC or put it on PATH.${installOffer.proot ? " proot: only the package-manager option works — there is no linux/arm64 Chrome build." : ""}</div>
+    ${log}</div>`;
+}
+
+// browserInstall runs one offered method server-side, then retries the attach
+// that failed — the user never leaves the pane.
+export async function browserInstall(method) {
+  if (installBusy || !method) return;
+  installBusy = method;
+  installLog = "";
+  renderState();
+  try {
+    await api("/browser/install", { method: "POST", body: { method } });
+    installOffer = null; // a Chromium executable now resolves — drop the offer
+    installBusy = "";
+    attachOrCreate({ fresh: B.newTab });
+  } catch (e) {
+    installBusy = "";
+    installLog = (e.data && e.data.log) || e.message || "Install failed.";
+    renderState();
   }
 }
 

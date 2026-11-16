@@ -50,6 +50,9 @@ func main() {
 		case "model":
 			fail("model", modelCmd(args[1:]))
 			return
+		case "browser":
+			fail("browser", browserCmd(args[1:]))
+			return
 		}
 	}
 	cfg, err := config.Parse(args)
@@ -68,6 +71,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := app.Run(ctx, cfg); err != nil {
+		// A second launcher (logon task plus Run key, or a manual start while
+		// the server is up) is a no-op, not a failure: exit 0 so a supervisor
+		// never treats it as a crashed instance worth restarting.
+		if errors.Is(err, app.ErrAlreadyRunning) {
+			fmt.Fprintf(os.Stderr, "%s is already running for %s\n", config.AppName, cfg.DataDir)
+			return
+		}
 		fmt.Fprintln(os.Stderr, "fatal:", err)
 		os.Exit(1)
 	}
@@ -88,6 +98,7 @@ Commands:
   whatsapp      Manage WhatsApp channel settings and send messages
   conversations Manage conversation control through the loopback bridge
   model         Show or change a conversation's model selector on a running server
+  browser       Show or install the embedded browser's Chromium executable
   reset-password  Reset the admin password
   version       Print version
 

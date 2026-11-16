@@ -8,9 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -73,6 +73,11 @@ type Options struct {
 	// (<dir>/<recId>/ with meta.json, events.jsonl, artifacts/). Empty
 	// disables recording (tests).
 	RecordingsDir string
+	// InstallDir roots the self-contained Chrome for Testing download
+	// (<dir>/chrome-headless-shell-<plat>/) that `browser install` and the
+	// pane's install offer produce; resolveExecPath probes it after PATH.
+	// Empty disables the download install method.
+	InstallDir string
 	// Store records visit history and saved logins per profile; nil disables
 	// persistence (tests).
 	Store *store.Store
@@ -117,6 +122,7 @@ type Manager struct {
 	picksDir       string
 	profileDir     string
 	recordingsDir  string
+	installRoot    string
 	rec            *store.Store
 	idleTTL        time.Duration
 	browserIdleTTL time.Duration
@@ -143,6 +149,7 @@ func NewManager(opts Options) *Manager {
 		picksDir:       opts.DataDir,
 		profileDir:     opts.ProfileDir,
 		recordingsDir:  opts.RecordingsDir,
+		installRoot:    opts.InstallDir,
 		rec:            opts.Store,
 		idleTTL:        opts.IdleTTL,
 		browserIdleTTL: opts.BrowserIdleTTL,
@@ -568,8 +575,19 @@ func (m *Manager) launch(p *browserProc, done chan struct{}) {
 			chromedp.Flag("disable-background-timer-throttling", true),
 			chromedp.Flag("disable-renderer-backgrounding", true),
 			chromedp.Flag("disable-backgrounding-occluded-windows", true),
+			chromedp.Flag("disable-dev-shm-usage", true),
 			remote.WebSocket,
 			chromedp.CombinedOutput(debug),
+		}
+		// proot (and other namespace-less containers) cannot build Chrome's
+		// sandbox — without these flags the launch dies with a userns error or
+		// "running as root without --no-sandbox". NUSAMATION_BROWSER_NO_SANDBOX
+		// forces the same for unlisted restricted environments.
+		if ProotLike() || os.Getenv("NUSAMATION_BROWSER_NO_SANDBOX") != "" {
+			args = append(args,
+				chromedp.Flag("no-sandbox", true),
+				chromedp.Flag("disable-setuid-sandbox", true),
+			)
 		}
 		if m.profileDir != "" {
 			dir := filepath.Join(m.profileDir, p.name)
@@ -667,25 +685,17 @@ func (m *Manager) killBrowser(p *browserProc) {
 }
 
 func (m *Manager) resolveExecPath() (string, error) {
-	if m.execPath != "" {
-		return m.execPath, nil
-	}
-	for _, name := range execCandidates {
-		if p, err := exec.LookPath(name); err == nil {
-			return p, nil
-		}
-	}
-	searched := strings.Join(execCandidates, ", ")
-	if fb := execFallbackPaths(); len(fb) > 0 {
-		searched += ", standard install locations"
-		for _, p := range fb {
-			if st, err := os.Stat(p); err == nil && !st.IsDir() {
-				return p, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("%w: no Chromium executable found (searched: %s); set -browser-exec or NUSAMATION_BROWSER_EXEC",
-		ErrUnavailable, searched)
+	return resolveExec(m.execPath, m.installRoot)
+}
+
+// InstallOffer reports whether a Chromium executable resolves and, when not,
+// the install methods viable on this host.
+func (m *Manager) InstallOffer() InstallOffer { return Offer(m.execPath, m.installRoot) }
+
+// Install runs one offered method then re-resolves; log receives the
+// installer output shown to the user on failure.
+func (m *Manager) Install(ctx context.Context, method string, log io.Writer) (string, error) {
+	return Install(ctx, m.execPath, m.installRoot, method, log)
 }
 
 func (m *Manager) removeSession(s *Session) {

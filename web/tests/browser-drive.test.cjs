@@ -70,8 +70,7 @@ function paneWorld({ composerKey, conversationId, open, bootSkipKeys = [], apiSe
   const calls = { open: 0, attach: [], attachOrCreate: 0, tabs: [] };
   const B = { session: null, deviceChoice: 'relative', pendingPointer: null, holdViewport: false };
   const P = { open, conversationId };
-  const primary = { id: 'browser', kind: 'browser', state: B };
-  const st = { tabs: [], active: 'browser', primary, browserTab: primary };
+  const st = { tabs: [], active: 'home', browserTab: null, idle: null };
   const showAgentBrowser = vm.runInNewContext(`(${showAgentBrowserSrc})`, {
     composerKey,
     B,
@@ -172,7 +171,7 @@ function openWorld({ composerKey, bootSkipKeys = [] }) {
     saveBrowserOpen: (k, v) => calls.saveOpen.push([k, v]),
     buildPane() {},
     setPaneVisible() {},
-    convTabs() { return { tabs: [], active: 'browser', primary: { id: 'browser', kind: 'browser', state: null }, browserTab: null }; },
+    convTabs() { return { tabs: [], active: 'home', browserTab: null, idle: null }; },
     freshBrowserState: () => B,
     browserStateOf: () => B,
     adoptBrowserTab() {},
@@ -210,7 +209,7 @@ test('an explicit open lifts the close suppression for that room', () => {
     saveBrowserOpen() {},
     buildPane() {},
     setPaneVisible() {},
-    convTabs() { return { tabs: [], active: 'browser', primary: { id: 'browser', kind: 'browser', state: null }, browserTab: null }; },
+    convTabs() { return { tabs: [], active: 'home', browserTab: null, idle: null }; },
     freshBrowserState: () => B,
     browserStateOf: () => B,
     adoptBrowserTab() {},

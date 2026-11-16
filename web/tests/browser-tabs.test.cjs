@@ -80,8 +80,8 @@ test('activating a tool tab shelves the browser runtime', () => {
   assert.equal(w.calls.park, 1);
   assert.equal(w.st.active, 'tab_3');
   // B still points at the browser state — the browser tab is remembered, not lost.
-  assert.equal(w.B(), w.states.primary);
-  assert.equal(w.st.browserTab, w.st.primary);
+  assert.equal(w.B(), w.states.browserA);
+  assert.equal(w.st.browserTab, w.st.tabs[0]);
 });
 
 test('activating home shelves the browser runtime without adopting anything', () => {

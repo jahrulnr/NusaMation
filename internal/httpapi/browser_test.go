@@ -1,6 +1,15 @@
 package httpapi
 
-import "testing"
+import (
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/jahrulnr/nusamation/internal/browser"
+)
 
 func TestNormalizeBrowserURL(t *testing.T) {
 	cases := []struct {
@@ -43,5 +52,43 @@ func TestNormalizeBrowserURL(t *testing.T) {
 		if implicit != c.implicit {
 			t.Errorf("normalizeBrowserURL(%q) implicit=%v, want %v", c.in, implicit, c.implicit)
 		}
+	}
+}
+
+func TestBrowserInstallHandlersNeedManager(t *testing.T) {
+	s := &Server{}
+	rr := httptest.NewRecorder()
+	s.handleBrowserInstallOffer(rr, httptest.NewRequest(http.MethodGet, "/api/browser/install", nil))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET offer without manager = %d", rr.Code)
+	}
+	rr = httptest.NewRecorder()
+	s.handleBrowserInstall(rr, httptest.NewRequest(http.MethodPost, "/api/browser/install", strings.NewReader(`{"method":"download"}`)))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("POST install without manager = %d", rr.Code)
+	}
+}
+
+func TestBrowserInstallValidatesPayloadAndMethod(t *testing.T) {
+	mgr := browser.NewManager(browser.Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	t.Cleanup(mgr.Close)
+	s := &Server{browser: mgr}
+
+	rr := httptest.NewRecorder()
+	s.handleBrowserInstall(rr, httptest.NewRequest(http.MethodPost, "/api/browser/install", strings.NewReader(`{oops`)))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("bad JSON = %d", rr.Code)
+	}
+
+	// A non-whitelisted method must never run — the handler surfaces the
+	// browser layer's rejection, not a shell.
+	rr = httptest.NewRecorder()
+	s.handleBrowserInstall(rr, httptest.NewRequest(http.MethodPost, "/api/browser/install",
+		strings.NewReader(`{"method":"apt-get install -y curl"}`)))
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("non-whitelisted method = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "install_failed") {
+		t.Fatalf("expected install_failed envelope, got %s", rr.Body.String())
 	}
 }

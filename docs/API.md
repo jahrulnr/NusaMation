@@ -192,12 +192,14 @@ Local artifact paths resolve on the server. Relative paths use the conversation 
 
 ## Embedded browser
 
-Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser context per session, under a per-profile Chromium process — every named profile gets its own persistent user-data dir under `<data>/browser-profiles/<name>`, so cookies, storage, history, and saved logins survive restarts and stay isolated between profiles). Requires a Chrome/Chromium binary (`-browser-exec` / `NUSAMATION_BROWSER_EXEC`, otherwise PATH discovery; on Windows the standard install locations under `Program Files` and `LOCALAPPDATA` are also searched for Chrome, Chromium, and Edge).
+Web-only embedded Chromium pane (lazy headless Chromium, one isolated browser context per session, under a per-profile Chromium process — every named profile gets its own persistent user-data dir under `<data>/browser-profiles/<name>`, so cookies, storage, history, and saved logins survive restarts and stay isolated between profiles). Requires a Chrome/Chromium binary (`-browser-exec` / `NUSAMATION_BROWSER_EXEC`, otherwise PATH discovery, then the `<data>/chrome/` self-install dir; on Windows the standard install locations under `Program Files` and `LOCALAPPDATA` are also searched for Chrome, Chromium, and Edge). When no executable resolves, the pane's error state offers to install one (`download` = Chrome for Testing `chrome-headless-shell` unpacked under `<data>/chrome/`, or `pkg:<pm>` = the detected distro package manager — the only path on linux/arm64 such as proot-distro, where Chromium also launches with `--no-sandbox`); `nusamation browser status|install` is the CLI equivalent.
 
 Each Chromium process opens a local debugging port so its bundled DevTools can inspect the current page. The pane serves the frontend through the authenticated session route.
 
 | Method | Path | Notes |
 |---|---|---|
+| `GET` | `/browser/install` | → `{missing, execPath?, searched?, platform, proot?, methods:[{id,label,detail,needsRoot?}]}` — viable install methods when no Chromium executable resolves |
+| `POST` | `/browser/install` | `{method}` runs one offered method synchronously → `{ok, execPath, log}`; 502 `install_failed` with the installer log tail when the method fails or still leaves no executable; non-whitelisted methods never run |
 | `POST` | `/browser/sessions` | `{url?, conversationId?, profile?, width?, height?}` → `{session}` (201); `profile` selects the persistent browser profile (default `"default"`) |
 | `GET` | `/browser/sessions` | `{sessions}` incl. `status:"crashed"` tombstones |
 | `GET` | `/browser/sessions/{id}` | `{session}` with live nav state |

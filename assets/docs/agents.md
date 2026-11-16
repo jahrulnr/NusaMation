@@ -47,7 +47,13 @@ The browser pane offers to save submitted logins to its profile vault; choose Ed
 
 Opening the side panel lands on a launcher — three cards for **Browser**,
 **Terminal** and **File manager** — so no browser session starts until one is
-picked. There is no fixed Browser tab: the browser is an on-demand tab like
+picked. If no Chrome/Chromium binary is installed, the pane's error state
+offers to install one — a Chrome for Testing `chrome-headless-shell` download
+under `<data>/chrome/` (no root), or the detected distro package manager (the
+only option on linux/arm64 such as proot-distro, where Chromium also launches
+with `--no-sandbox`); `nusamation browser status` and `nusamation browser
+install` are the CLI equivalent. There is no fixed Browser tab: the browser is
+an on-demand tab like
 any other, closable, and the strip's home chip returns to the launcher. The
 toolbar's **Dev tools** button opens Chrome's built-in DevTools for the
 current page; the **Browser** tab returns to the page. The tab strip's **+**
@@ -153,6 +159,14 @@ selector; `nusamation model <conversation-id> 'value[k=v,...]'` applies a
 model plus session-option modifiers through the running server
 (`--data-dir`, `--addr`, `--json`). Ambiguous selectors print the candidate
 values on stderr.
+
+`nusamation browser status` shows which Chromium executable resolves for the
+embedded browser pane; `nusamation browser install [method]` installs one
+(`--data-dir`, `--browser-exec`). Methods are the same ones the pane's error
+state offers: a Chrome for Testing `chrome-headless-shell` download under
+`<data>/chrome/`, or the detected distro package manager when no build exists
+for the platform (linux/arm64, e.g. proot-distro on Android — where Chromium
+also launches with `--no-sandbox`).
 
 ## If an agent won't start
 

@@ -35,6 +35,7 @@ import (
 	"github.com/jahrulnr/nusamation/internal/mcp/conversation"
 	"github.com/jahrulnr/nusamation/internal/mcp/grants"
 	"github.com/jahrulnr/nusamation/internal/notify"
+	"github.com/jahrulnr/nusamation/internal/procsys"
 	"github.com/jahrulnr/nusamation/internal/realtime"
 	"github.com/jahrulnr/nusamation/internal/security"
 	"github.com/jahrulnr/nusamation/internal/store"
@@ -57,7 +58,27 @@ type App struct {
 	logFile            *os.File
 }
 
+// ErrAlreadyRunning is returned when another process already owns this data
+// directory. Callers exit successfully: a second launcher is a no-op, not a
+// failure.
+var ErrAlreadyRunning = errors.New("nusamation is already running for this data directory")
+
 func Run(ctx context.Context, cfg config.Config) error {
+	// Claim the instance lock before opening the store. Two processes sharing
+	// one SQLite database and WAL is the failure this prevents, and taking it
+	// here also covers two autostart mechanisms racing at logon.
+	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", cfg.DataDir, err)
+	}
+	release, ok, err := procsys.AcquireSingleton(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("claim instance lock: %w", err)
+	}
+	if !ok {
+		return ErrAlreadyRunning
+	}
+	defer release()
+
 	a, err := New(cfg)
 	if err != nil {
 		return err
@@ -126,9 +147,14 @@ func New(cfg config.Config) (*App, error) {
 		DataDir:        filepath.Join(cfg.DataDir, "browser-picks"),
 		ProfileDir:     filepath.Join(cfg.DataDir, "browser-profiles"),
 		RecordingsDir:  filepath.Join(cfg.DataDir, "browser-recordings"),
+		InstallDir:     filepath.Join(cfg.DataDir, "chrome"),
 		Store:          st,
 		StartPage:      startPageURL(cfg.Addr),
 	})
+	if offer := browserMgr.InstallOffer(); offer.Missing {
+		logger.Warn("no Chromium/Chrome found — the embedded browser pane is unavailable",
+			"hint", "run `nusamation browser install` or use the install offer in the side panel")
+	}
 	if !cfg.DisableWhatsApp {
 		if err := registerWhatsApp(chanMgr, chatSvc, st, cfg, logger); err != nil {
 			logger.Warn("WhatsApp channel disabled", "error", err)
@@ -164,9 +190,12 @@ func (a *App) Serve(ctx context.Context) error {
 		return err
 	}
 	handler := api.Handler()
-	ln, err := net.Listen("tcp", a.cfg.Addr)
+	ln, err := listenTCP(ctx, a.cfg.Addr, a.log)
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", a.cfg.Addr, err)
+		// stderr is invisible under the hidden Windows task — the file log is
+		// the only place a startup failure can be diagnosed from.
+		a.log.Error("server cannot start", "error", err)
+		return err
 	}
 	if exe, err := os.Executable(); err == nil {
 		base := loopbackBase(ln.Addr())

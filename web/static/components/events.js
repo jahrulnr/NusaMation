@@ -9,7 +9,7 @@ import { closePopover } from "./popover.js";
 import { openToolMenu, previewAnnotation, previewFile, renderChat, renderPlanDock, toolPreFor } from "./chat.js";
 import { changeElicitationPage, renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js";
 import { autoGrow, editAnnotationComment, editRecordingComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, openUsageDetail, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js";
-import { activatePaneTab, addPaneTab, annotatePage, browserDeviceMode, browserEscape, browserHistory, browserReconnect, browserTakeover, cancelAnnotation, closeBrowserPane, closePaneTab, openBrowserMenu, openNewTabMenu, openPaneCard, openProfilePicker, openSavedLogins, recordingAttach, recordingAttachSubmit, recordingDismiss, recordingPause, recordingResume, recordingStart, recordingStop, submitAnnotation, toggleAnnotate, toggleBrowserPane, toggleDeviceBar, toggleDevtools } from "./browser.js";
+import { activatePaneTab, addPaneTab, annotatePage, browserDeviceMode, browserEscape, browserHistory, browserInstall, browserReconnect, browserTakeover, cancelAnnotation, closeBrowserPane, closePaneTab, openBrowserMenu, openNewTabMenu, openPaneCard, openProfilePicker, openSavedLogins, recordingAttach, recordingAttachSubmit, recordingDismiss, recordingPause, recordingResume, recordingStart, recordingStop, submitAnnotation, toggleAnnotate, toggleBrowserPane, toggleDeviceBar, toggleDevtools } from "./browser.js";
 import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, newProjectChat, openControlActivity, openConversationMenu, openMoreMenu, openRoutingMenu, openTeamPanel, renameConversation, selectConversation, setRoute, togglePin, toggleRouting } from "./conversations.js";
 import { renderOffline } from "./shell.js";
 import { scheduleDraftSave } from "./convmeta.js";
@@ -591,6 +591,7 @@ export function bindEvents() {
       case "browser-device": toggleDeviceBar(); break;
       case "browser-device-mode": browserDeviceMode(target.dataset.device); break;
       case "browser-close": closeBrowserPane(); break;
+      case "browser-install": browserInstall(target.dataset.method); break;
       case "browser-devtools": toggleDevtools(); break;
       case "browser-new-tab": openNewTabMenu(target); break;
       case "pane-home": activatePaneTab("home"); break;
