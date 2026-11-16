@@ -76,7 +76,7 @@ function global:New-ScheduledTaskAction {
     [pscustomobject]@{ Execute = $Execute; Argument = $Argument }
 }
 function global:New-ScheduledTaskTrigger {
-    param($AtLogOn, $Once, $At, $User, $RepetitionInterval, $RepetitionDuration)
+    param([switch]$AtLogOn, [switch]$Once, $At, $User, $RepetitionInterval, $RepetitionDuration)
     [pscustomobject]@{ Repetition = $null; UserId = $User; Once = [bool]$Once }
 }
 function global:New-ScheduledTaskPrincipal { param($UserId, $LogonType, $RunLevel) [pscustomobject]@{ UserId = $UserId } }
