@@ -70,8 +70,7 @@ const (
 
 // bindErrno unwraps a net.Listen failure to its syscall.Errno, if any.
 func bindErrno(err error) (syscall.Errno, bool) {
-	var errno syscall.Errno
-	if errors.As(err, &errno) {
+	if errno, ok := errors.AsType[syscall.Errno](err); ok {
 		return errno, true
 	}
 	return 0, false

@@ -4,6 +4,8 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-11-17
+
 ### Added
 
 - Windows service resilience: the server now retries `net.Listen` for a few minutes when the bind fails transiently (port still releasing, or inside a dynamically reserved WinNAT/Hyper-V range) instead of exiting into the scheduled task's restart limit; fatal bind errors are also written to `logs\nusamation.log` (previously only stderr, invisible under the hidden task) with remediation hints. `install.ps1` registers the task under an explicit `DOMAIN\user` Interactive principal (matches the logon trigger on Microsoft-account systems), health-checks `http://127.0.0.1:8787` after starting and prints diagnostics on failure, and records the registration in `install-info.txt`.

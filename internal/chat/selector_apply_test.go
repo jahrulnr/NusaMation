@@ -94,7 +94,7 @@ func selectorTrace(t *testing.T, path string) []string {
 		t.Fatal(err)
 	}
 	var out []string
-	for _, l := range strings.Split(string(raw), "\n") {
+	for l := range strings.SplitSeq(string(raw), "\n") {
 		if l = strings.TrimSpace(l); l != "" {
 			out = append(out, l)
 		}
@@ -194,8 +194,7 @@ func TestSetSelectorPartialFailure(t *testing.T) {
 func TestSetSelectorAmbiguous(t *testing.T) {
 	fx := newSelectorFixture(t, nil)
 	res, err := fx.svc.SetSelector(context.Background(), fx.conv.ID, "fake")
-	var amb *AmbiguousError
-	if !errors.As(err, &amb) {
+	if _, ok := errors.AsType[*AmbiguousError](err); !ok {
 		t.Fatalf("expected AmbiguousError, got %v", err)
 	}
 	if len(res.Candidates) != 2 {

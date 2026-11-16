@@ -61,7 +61,7 @@ func ParseSelector(raw string) (model string, mods []Modifier, err error) {
 	if model == "" {
 		return "", nil, fmt.Errorf("invalid selector %q: the model part is empty", raw)
 	}
-	for _, part := range strings.Split(raw[i+1:len(raw)-1], ",") {
+	for part := range strings.SplitSeq(raw[i+1:len(raw)-1], ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue

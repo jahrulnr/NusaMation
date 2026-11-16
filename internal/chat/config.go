@@ -247,8 +247,7 @@ func (s *Service) SetSelector(ctx context.Context, conversationID, raw string) (
 		}
 	}
 	if rerr != nil {
-		var amb *AmbiguousError
-		if errors.As(rerr, &amb) {
+		if amb, ok := errors.AsType[*AmbiguousError](rerr); ok {
 			res.Candidates = amb.Candidates
 		}
 		return res, rerr
