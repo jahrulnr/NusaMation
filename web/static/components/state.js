@@ -79,6 +79,10 @@ export const S = {
   historyHasMore: false,
   historyLoading: false,
   historyError: "",
+  historyAutoPages: 0,
+  historyStuck: false,
+  historyAdjustTop: 0,
+  historyAdjustAt: 0,
   preparing: "",
   prepareController: null,
   slowTimer: null,
@@ -188,6 +192,10 @@ export function switchComposer(key) {
   S.historyHasMore = false;
   S.historyLoading = false;
   S.historyError = "";
+  S.historyAutoPages = 0;
+  S.historyStuck = false;
+  S.historyAdjustTop = 0;
+  S.historyAdjustAt = 0;
   for (const fn of composerSwitchListeners) {
     try { fn(composerKey); } catch (e) { console.warn("composer switch listener failed", e); }
   }

@@ -95,6 +95,30 @@ test('near-top scrolling still offers history loading', () => {
   assert.equal(S.scrollPinned, false);
 });
 
+test('a stale gesture still loads history near the top', () => {
+  const { sc, S, calls, ctx } = world();
+  const obj = ctx;
+  S.historyHasMore = true;
+  obj.setScrollAt(0); // no gesture in the last second — pagination must still run
+  sc.scrollTop = 120;
+  obj.handleChatScroll();
+  assert.equal(calls.older, 1);
+  assert.equal(S.scrollPinned, true, 'a stale gesture must not change the pin');
+});
+
+test('the prepend re-anchor does not trigger another page', () => {
+  const { sc, S, calls, ctx } = world();
+  const obj = ctx;
+  S.historyHasMore = true;
+  S.historyAdjustTop = 120;
+  S.historyAdjustAt = 9990; // now() is 10000 — an event from the just-finished prepend
+  sc.scrollTop = 120;
+  obj.noteChatScrollGesture();
+  obj.handleChatScroll();
+  assert.equal(calls.older, 0);
+  assert.equal(S.historyAdjustAt, 0, 'the marker is consumed by one event');
+});
+
 test('the wheel handler unpins on deltaY<0 even without a scroll event', () => {
   assert.match(shellSrc, /deltaY < 0\) S\.scrollPinned = false/);
 });

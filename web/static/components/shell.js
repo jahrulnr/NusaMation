@@ -25,9 +25,19 @@ export function handleChatScroll() {
   const top = sc.scrollTop;
   const movedUp = lastChatTop >= 0 && top < lastChatTop - 1;
   lastChatTop = top;
-  if (Date.now() - userScrollAt > 1000) return;
-  if (movedUp) S.scrollPinned = false;
-  else S.scrollPinned = sc.scrollHeight - top - sc.clientHeight < 40;
+  if (Date.now() - userScrollAt <= 1000) {
+    if (movedUp) S.scrollPinned = false;
+    else S.scrollPinned = sc.scrollHeight - top - sc.clientHeight < 40;
+  }
+  // A history prepend re-anchors scrollTop; that event is not a new request.
+  if (S.historyAdjustAt && Date.now() - S.historyAdjustAt < 500 && Math.abs(top - S.historyAdjustTop) <= 2) {
+    S.historyAdjustAt = 0;
+    return;
+  }
+  // Pagination is not gesture-gated. A scrollbar drag or a momentum trail can
+  // reach the top more than a second after the last wheel/pointerdown, and a
+  // programmatic top has no gesture at all; gating this behind the pin
+  // timestamp made those near-top scrolls silently skip the fetch.
   if (top < 160 && S.historyHasMore && !S.historyError && !S.loadingConversation) loadOlderMessages();
 }
 

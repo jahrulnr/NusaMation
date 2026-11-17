@@ -50,3 +50,16 @@ streaming player identity. It requires FFmpeg for tiny MP4/WAV fixtures. Screens
 and server logs go to `/tmp/nusamation-resources` (`RESOURCE_SCREENSHOTS` overrides
 it). `NUSAMATION_BINARY` can select another freshly built binary. The server and
 its temporary data are removed after the test. No installed instance is changed.
+
+For history autofill on a tool-heavy turn, run `make build` then:
+
+```sh
+NUSAMATION_PLAYWRIGHT=/tmp/nusamation-stress/node_modules/playwright CHROME=/usr/bin/google-chrome node web/tests/browser-history.cjs
+```
+
+The fixture seeds a temporary database whose newest 150 messages are all tool
+rows from one running turn, so the transcript collapses to a single activity
+group that fits the viewport. It asserts the page fetches an older page on its
+own — without any scroll — and ends up scrollable with the turn's user message
+present. Screenshot: `/tmp/nusamation-history-desktop.png`. No installed
+instance is changed.

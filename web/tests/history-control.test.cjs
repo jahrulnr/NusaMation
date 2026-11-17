@@ -79,6 +79,13 @@ test('a failed fetch keeps a retry affordance the auto-load cannot give', () => 
   assert.match(el.innerHTML, /Retry/);
 });
 
+test('the autofill cap leaves a manual way past a short transcript', () => {
+  const { el, ctx } = controlWorld({ historyStuck: true, messages: [{ id: 'm1' }] });
+  ctx.renderHistoryControl();
+  assert.match(el.innerHTML, /data-action="load-older"/);
+  assert.match(el.innerHTML, /Load earlier messages/);
+});
+
 test('an in-flight fetch shows the skeleton', () => {
   const { el, ctx } = controlWorld({ historyLoading: true, messages: [{ id: 'm1' }] });
   ctx.renderHistoryControl();

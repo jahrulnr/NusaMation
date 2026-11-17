@@ -425,7 +425,13 @@ export function bindEvents() {
       case "retry": await retryTurn(); break;
       case "retry-boot": startApp(); break;
       case "retry-load": await loadConversation(id, false); break;
-      case "load-older": await loadOlderMessages(); break;
+      case "load-older":
+        // A manual click is a fresh budget: the autofill cap or a failed page
+        // must not leave the transcript permanently short.
+        S.historyAutoPages = 0;
+        S.historyStuck = false;
+        await loadOlderMessages();
+        break;
       case "attach": $("#file-input")?.click(); break;
       case "reply-toggle": S.replyToChannel = !S.replyToChannel; renderComposer(); focusComposer(); scheduleDraftSave(); break;
       case "remove-attachment": S.attachments = S.attachments.filter((a) => (a.upload || a).id !== id); renderPendingAttachments(); scheduleDraftSave(); break;

@@ -40,6 +40,39 @@ export async function selectConversation(id, push = true) {
   await loadConversation(id, push);
 }
 
+// A tool-heavy turn can fill the whole initial window (150 newest messages)
+// with collapsed tool/thought rows. The transcript then fits the viewport, so
+// no scroll event fires and the near-top trigger never runs — the view is
+// stuck on "Working · N tool calls" with the turn's user message unreachable.
+// Autofill loads pages until the transcript can scroll, bounded so a single
+// pathologically long turn cannot hammer the endpoint; past the bound the
+// control offers a manual button instead of a dead end.
+const HISTORY_AUTOFILL_MAX = 8;
+
+function scheduleHistoryAutofill() {
+  if (typeof requestAnimationFrame !== "function") return;
+  requestAnimationFrame(() => { autoLoadOlderMessages(); });
+}
+
+export function autoLoadOlderMessages() {
+  if (!S.current || !S.historyHasMore || S.historyLoading || S.historyError || !S.messages.length) return false;
+  const sc = $("#chat-scroll");
+  if (!sc) return false;
+  // A scrollable transcript already exposes the near-top trigger; fetching
+  // pages while the reader is mid-thread would move their content.
+  if (sc.scrollHeight > sc.clientHeight + 8) return false;
+  if (S.historyAutoPages >= HISTORY_AUTOFILL_MAX) {
+    if (!S.historyStuck) {
+      S.historyStuck = true;
+      renderHistoryControl();
+    }
+    return false;
+  }
+  S.historyAutoPages += 1;
+  loadOlderMessages();
+  return true;
+}
+
 export async function loadConversation(id, push = true) {
   const seq = ++S.loadSeq;
   S.loadingConversation = true;
@@ -110,6 +143,7 @@ export async function loadConversation(id, push = true) {
     closeMobileSidebar();
     if (!S.active) prepareComposer();
     if (streamGap) scheduleStreamResync(id);
+    scheduleHistoryAutofill();
   } catch (e) {
     if (seq !== S.loadSeq) return;
     S.loadingConversation = false;
@@ -153,6 +187,12 @@ export async function loadOlderMessages() {
     S.scrollPinned = false;
     renderChat();
     sc.scrollTop = oldTop + (sc.scrollHeight - oldHeight);
+    // The prepend re-anchors the viewport; that programmatic scroll must not
+    // read as another near-top request. Mark the position so the handler can
+    // ignore this one event.
+    S.historyAdjustTop = sc.scrollTop;
+    S.historyAdjustAt = Date.now();
+    scheduleHistoryAutofill();
   } catch (e) {
     if (seq !== S.loadSeq || S.current?.id !== id) return;
     S.historyLoading = false;
@@ -170,7 +210,8 @@ export function renderHistoryControl() {
   // the scroll handler deliberately does not retry.
   el.innerHTML = S.historyLoading
     ? `<div class="history-skeleton" role="status" aria-label="Loading earlier messages"><span class="skeleton-line"></span><span class="skeleton-line short"></span></div>`
-    : S.historyError ? `<button class="btn btn-secondary btn-sm" data-action="load-older">Retry loading earlier messages</button>` : "";
+    : S.historyError ? `<button class="btn btn-secondary btn-sm" data-action="load-older">Retry loading earlier messages</button>`
+    : S.historyStuck && S.historyHasMore && S.messages.length ? `<button class="btn btn-secondary btn-sm" data-action="load-older">Load earlier messages</button>` : "";
 }
 
 export function setRoute(id) {

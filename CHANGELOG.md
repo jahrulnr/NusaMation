@@ -10,6 +10,10 @@ All notable changes to the Go core will be documented in this file. The format i
 
 - `browser_use` network control, so an agent can verify UI behaviour against mocks without launching a second browser. `browser_route` intercepts requests through CDP's Fetch domain and can fulfill a synthetic response (status, headers, body, JSON content type inferred), abort, delay, or rewrite a URL; rules are first-match-wins, session-scoped, and interception is armed only while at least one rule exists. `browser_network_log` and `browser_wait_for_response` expose the session's network ring with URL glob/regex, method, status, and failure filters. `browser_add_init_script` installs JavaScript at document start (with optional immediate run) for pre-boot stubs. `browser_route_ws` rewrites WebSocket construction to a local fake hub through a document-start shim, because CDP cannot intercept a WebSocket handshake; `browser_route` rejects `resourceType: websocket` and points at it. A request rule's first hit is recorded as an `agent` `route` timeline event.
 
+### Fixed
+
+- A tool-heavy turn that filled the whole 150-message initial window left the transcript shorter than the viewport, so no scroll event could fire and earlier messages never loaded. The chat now pages in older messages by itself until the transcript can scroll (bounded to eight pages, with a manual **Load earlier messages** button past the bound), and the near-top fetch no longer depends on a recent wheel/pointer gesture — a scrollbar drag or a programmatic top now loads too. A history prepend's re-anchor scroll is ignored so it cannot trigger a second fetch.
+
 ## [0.2.11] - 2026-11-17
 
 ### Added
