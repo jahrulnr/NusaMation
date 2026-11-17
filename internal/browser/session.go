@@ -202,6 +202,23 @@ type Session struct {
 	netLog     []*NetEntry
 	netSeq     int64
 
+	// routeMu guards the browser_use route rules and the Fetch-domain state
+	// for the current tab. routeWatching means a dispatcher goroutine already
+	// drains Fetch events for this tab; re-enabling the domain must not start
+	// a second one.
+	routeMu       sync.Mutex
+	routes        []*routeRule
+	routeArmed    bool
+	routeWatching bool
+
+	// initMu guards the document-start scripts: the agent's init scripts and
+	// the generated WebSocket shim, both target-scoped and re-installed after
+	// a tab swap.
+	initMu      sync.Mutex
+	initScripts []*initScript
+	wsRoutes    []*wsRoute
+	wsShimID    page.ScriptIdentifier
+
 	// obs is a bounded ring of one-line "what happened since your last call"
 	// notes for the browser_use agent: the always-on __nusaRecPush binding
 	// feed (user clicks, inputs, console errors, SPA navs) plus synthesized
@@ -1306,6 +1323,10 @@ func (s *Session) swapTab(tabCtx context.Context, tabCancel context.CancelFunc, 
 	go s.watchLoginContexts()
 	go s.maintLoop()
 	go s.inputWorker()
+	// Rules are session-scoped; the Fetch domain and its dispatcher were tied
+	// to the tab that just closed.
+	s.rearmRoutes()
+	s.reinstallDocumentScripts()
 	s.refreshNavState()
 	if hasStream {
 		go s.castLoop(castCtx, castCancel)

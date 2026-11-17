@@ -75,6 +75,10 @@ func TestToolListUsesBrowserPrefix(t *testing.T) {
 	for _, want := range []string{
 		"browser_get_recording_status", "browser_get_recording_summary",
 		"browser_get_timeline", "browser_get_annotation", "browser_get_artifact",
+		"browser_route", "browser_route_list", "browser_route_clear",
+		"browser_route_ws", "browser_route_ws_clear",
+		"browser_network_log", "browser_wait_for_response",
+		"browser_add_init_script", "browser_remove_init_script",
 	} {
 		if !seen[want] {
 			t.Fatalf("recording read tool %q missing from toolList()", want)

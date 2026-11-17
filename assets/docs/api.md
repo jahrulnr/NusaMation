@@ -33,7 +33,14 @@ The same endpoint answers the recording read tools —
 (`name`; `downloads/<guid>` for captured downloads). The bearer token's
 conversation selects the recording — the live session's active one first,
 else the newest finished — so a request never names a recording, and the
-calls never launch a session.
+calls never launch a session. It also serves the network-control tools:
+`browser_route` (`fulfill`/`abort`/`delay`/`continue`, optional `times`;
+400 `invalid_route`), `browser_route_list`, `browser_route_clear`,
+`browser_route_ws`/`browser_route_ws_clear` (document-start WebSocket shim,
+`reload` defaults true), `browser_add_init_script`/`browser_remove_init_script`,
+`browser_network_log` (`pattern`/`regex`/`method`/`status`/`errors`/`after`/`limit`),
+and `browser_wait_for_response` (408 `wait_timeout`; 400 `invalid_pattern`).
+Rules are session-scoped and interception is armed only while a rule exists.
 
 The browser stream sends `login_offer` when a submitted login can be saved.
 The authenticated pane can retrieve that offer's username and password for

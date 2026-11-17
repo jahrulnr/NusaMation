@@ -45,6 +45,19 @@ session options. The HTTP preview and save endpoints are listed in [api.md](api.
 
 The browser pane offers to save submitted logins to its profile vault; choose Edit to adjust the username and password before saving. Saved logins appear as a choice when a login field is focused, or from the key button; the page is filled only after an account is chosen. An agent can call `browser_vault_fill`, optionally with an exact `username`, for the current profile and origin without returning the password. Exact password text is masked in browser-use JSON; transformed results and screenshots are not masked. Local execution access is unchanged.
 
+The pane's agent tools can also intercept traffic: `browser_route` can serve a
+synthetic response, fail a request, delay it, or rewrite its URL, and
+`browser_route_ws` can point a matching WebSocket at a fake hub the agent runs
+locally. A route that fires for the first time appears on an active recording
+as a `route` event, so a synthetic response is distinguishable from real
+traffic. Interception belongs to the browser session: it survives navigation,
+and it disappears when the session closes. Adding or clearing a WebSocket route
+reloads the page by default because that shim has to run before the app boots;
+pass `reload: false` to apply it on the next navigation instead. `browser_add_init_script`
+installs JavaScript before any page script for the same class of stubs, and
+`browser_network_log`/`browser_wait_for_response` read the requests the pane
+already made.
+
 Opening the side panel lands on a launcher — three cards for **Browser**,
 **Terminal** and **File manager** — so no browser session starts until one is
 picked. If no Chrome/Chromium binary is installed, the pane's error state

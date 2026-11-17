@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jahrulnr/nusamation/internal/browser"
 	"github.com/jahrulnr/nusamation/internal/mcp/grants"
@@ -106,6 +108,15 @@ func TestNormalizeBrowserUseTool(t *testing.T) {
 		"browser_emulate":               "emulate",
 		"browser_profile":               "profile",
 		"browser_lock":                  "lock",
+		"browser_route":                 "route",
+		"browser_route_list":            "route_list",
+		"browser_route_clear":           "route_clear",
+		"browser_network_log":           "network_log",
+		"browser_wait_for_response":     "wait_response",
+		"browser_add_init_script":       "add_init_script",
+		"browser_remove_init_script":    "remove_init_script",
+		"browser_route_ws":              "route_ws",
+		"browser_route_ws_clear":        "route_ws_clear",
 		"browser_get_recording_status":  "recording_status",
 		"browser_get_recording_summary": "recording_summary",
 		"browser_get_timeline":          "timeline",
@@ -123,6 +134,8 @@ func TestNormalizeBrowserUseTool(t *testing.T) {
 	}
 	for _, op := range []string{"navigate", "navigate_back", "navigate_forward", "snapshot", "tree",
 		"console", "wait", "move", "hover", "click", "type", "press", "scroll", "emulate", "eval", "select", "fill", "lock", "profile",
+		"route", "route_list", "route_clear", "network_log", "wait_response",
+		"add_init_script", "remove_init_script", "route_ws", "route_ws_clear",
 		"recording_status", "recording_summary", "timeline", "annotation", "artifact"} {
 		if !knownBrowserUseTool(op) {
 			t.Errorf("knownBrowserUseTool(%q) = false", op)
@@ -169,6 +182,21 @@ func TestBrowserUseInvalid(t *testing.T) {
 		{"annotation ok", browserUseRequest{AnnotationID: "pk_1"}, "annotation", ""},
 		{"artifact needs name", browserUseRequest{}, "artifact", "name"},
 		{"artifact ok", browserUseRequest{Name: "shot.png"}, "artifact", ""},
+		{"route needs pattern", browserUseRequest{RouteAction: "fulfill"}, "route", "pattern is required"},
+		{"route needs action", browserUseRequest{Pattern: "**/api/**"}, "route", "action is required"},
+		{"route ok", browserUseRequest{Pattern: "**/api/**", RouteAction: "fulfill"}, "route", ""},
+		{"route rejects negative times", browserUseRequest{Pattern: "**", RouteAction: "continue", Times: -1}, "route", "times"},
+		{"route_clear without id ok", browserUseRequest{}, "route_clear", ""},
+		{"network log limit too high", browserUseRequest{Limit: 301}, "network_log", "limit"},
+		{"network log negative after", browserUseRequest{After: -1}, "network_log", "after"},
+		{"wait response timeout too high", browserUseRequest{Timeout: 31}, "wait_response", "timeout"},
+		{"wait response ok", browserUseRequest{Pattern: "**/api/**", Timeout: 5}, "wait_response", ""},
+		{"init script needs source", browserUseRequest{}, "add_init_script", "source"},
+		{"init script ok", browserUseRequest{Source: "window.x=1"}, "add_init_script", ""},
+		{"remove init script needs id", browserUseRequest{}, "remove_init_script", "id is required"},
+		{"route ws needs pattern", browserUseRequest{TargetURL: "ws://127.0.0.1/ws"}, "route_ws", "pattern"},
+		{"route ws needs target", browserUseRequest{Pattern: "**/ws"}, "route_ws", "target"},
+		{"route ws ok", browserUseRequest{Pattern: "**/ws", Target: "ws://127.0.0.1/ws"}, "route_ws", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -217,3 +245,114 @@ func TestBrowserErrorActionability(t *testing.T) {
 
 //go:fix inline
 func ptr(f float64) *float64 { return new(f) }
+
+func TestURLMatcher(t *testing.T) {
+	all, err := urlMatcher("", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !all("http://anything.test/x") {
+		t.Fatal("empty pattern should match everything")
+	}
+	match, err := urlMatcher("**/api/**", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !match("http://host/api/chat") || match("http://host/static/app.js") {
+		t.Fatal("glob matcher is wrong")
+	}
+	if _, err := urlMatcher("([", true); err == nil {
+		t.Fatal("invalid regex should fail")
+	}
+}
+
+func TestFilterNetEntries(t *testing.T) {
+	entries := []browser.NetEntry{
+		{Seq: 1, Method: "GET", URL: "http://host/api/a", Status: 200, Type: "XHR"},
+		{Seq: 2, Method: "GET", URL: "http://host/static/app.js", Status: 200, Type: "Script"},
+		{Seq: 3, Method: "POST", URL: "http://host/api/b", Status: 500, Type: "Fetch"},
+		{Seq: 4, Method: "POST", URL: "http://host/api/c", Error: "net::ERR_FAILED"},
+	}
+	match, _ := urlMatcher("**/api/**", false)
+
+	all := filterNetEntries(entries, browserUseRequest{}, match)
+	if len(all) != 3 || all[0].Seq != 1 || all[2].Seq != 4 {
+		t.Fatalf("pattern filter = %+v", all)
+	}
+	posts := filterNetEntries(entries, browserUseRequest{Method: "post"}, match)
+	if len(posts) != 2 || posts[0].Seq != 3 {
+		t.Fatalf("method filter = %+v", posts)
+	}
+	failures := filterNetEntries(entries, browserUseRequest{Errors: true}, match)
+	if len(failures) != 2 || failures[0].Seq != 3 || failures[1].Seq != 4 {
+		t.Fatalf("errors filter = %+v", failures)
+	}
+	status := filterNetEntries(entries, browserUseRequest{RouteStatus: 500}, match)
+	if len(status) != 1 || status[0].Seq != 3 {
+		t.Fatalf("status filter = %+v", status)
+	}
+	after := filterNetEntries(entries, browserUseRequest{After: 3}, match)
+	if len(after) != 1 || after[0].Seq != 4 {
+		t.Fatalf("after cursor = %+v", after)
+	}
+}
+
+func TestScanNetEntriesPicksNewestAndAdvances(t *testing.T) {
+	entries := []browser.NetEntry{
+		{Seq: 1, URL: "http://host/api/a", Status: 200},
+		{Seq: 2, URL: "http://host/static/app.js", Status: 200},
+		{Seq: 3, URL: "http://host/api/b", Status: 201},
+	}
+	match, _ := urlMatcher("**/api/**", false)
+	found, cursor, observed, ok := scanNetEntries(entries, 0, browserUseRequest{}, match)
+	if !ok || found.Seq != 3 {
+		t.Fatalf("newest match = %+v ok=%v, want seq 3", found, ok)
+	}
+	if cursor != 3 || observed != 3 {
+		t.Fatalf("cursor=%d observed=%d, want 3/3", cursor, observed)
+	}
+	// The cursor is past every entry, so nothing new matches.
+	if _, cursor2, observed2, ok2 := scanNetEntries(entries, cursor, browserUseRequest{}, match); ok2 || cursor2 != 3 || observed2 != 0 {
+		t.Fatalf("second scan = ok:%v cursor:%d observed:%d", ok2, cursor2, observed2)
+	}
+}
+
+func TestBrowserNetworkLogKeepsNewestPage(t *testing.T) {
+	var entries []browser.NetEntry
+	for i := 1; i <= 10; i++ {
+		entries = append(entries, browser.NetEntry{Seq: int64(i), URL: "http://host/api/x", Status: 200})
+	}
+	out, next, err := browserNetworkLog(entries, browserUseRequest{Limit: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 3 || out[0].Seq != 8 || out[2].Seq != 10 {
+		t.Fatalf("page = %+v, want seq 8..10", out)
+	}
+	if next != 10 {
+		t.Fatalf("next = %d, want 10", next)
+	}
+	out, next, err = browserNetworkLog(entries, browserUseRequest{Pattern: "**/nothing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 0 || next != 0 {
+		t.Fatalf("empty result = %+v next=%d", out, next)
+	}
+	if _, _, err := browserNetworkLog(entries, browserUseRequest{Pattern: "([", Regex: true}); err == nil {
+		t.Fatal("bad pattern should fail")
+	}
+}
+
+func TestBrowserWaitResponseTimeout(t *testing.T) {
+	start := time.Now()
+	_, err := browserWaitResponse(context.Background(), &browser.Session{}, browserUseRequest{
+		Pattern: "**/api/**", Timeout: 0.05,
+	})
+	if _, ok := errors.AsType[*waitResponseTimeout](err); !ok {
+		t.Fatalf("error = %v, want waitResponseTimeout", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("timeout took %s", elapsed)
+	}
+}

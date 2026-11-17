@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -141,6 +143,115 @@ func (s *Server) handleBrowserUse(w http.ResponseWriter, r *http.Request) {
 		} else {
 			detail = "input unlocked"
 		}
+	case "route":
+		state, err := sess.AddRoute(browser.RouteRule{
+			Pattern:      in.Pattern,
+			Regex:        in.Regex,
+			Method:       in.Method,
+			ResourceType: in.ResourceType,
+			Action:       in.RouteAction,
+			Status:       in.RouteStatus,
+			Headers:      in.Headers,
+			Body:         in.Body,
+			BodyBase64:   in.BodyBase64,
+			DelayMS:      in.DelayMS,
+			TargetURL:    in.TargetURL,
+			ErrorReason:  in.ErrorReason,
+			Times:        in.Times,
+		})
+		if err != nil {
+			if errors.Is(err, browser.ErrRouteInvalid) {
+				writeError(w, http.StatusBadRequest, "invalid_route", err.Error())
+				return
+			}
+			s.browserError(w, err, false)
+			return
+		}
+		raw, _ := json.Marshal(map[string]any{"rule": state})
+		evalResult = raw
+	case "route_list":
+		raw, _ := json.Marshal(map[string]any{
+			"rules":          sess.Routes(),
+			"webSocketRules": sess.WSRoutes(),
+			"initScripts":    sess.InitScripts(),
+		})
+		evalResult = raw
+	case "route_clear":
+		cleared := sess.ClearRoutes(in.ID)
+		raw, _ := json.Marshal(map[string]any{"cleared": cleared, "rules": sess.Routes()})
+		evalResult = raw
+	case "network_log":
+		entries, next, err := browserNetworkLog(sess.NetLog(), in)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_pattern", err.Error())
+			return
+		}
+		raw, _ := json.Marshal(map[string]any{"entries": entries, "next": next})
+		evalResult = raw
+	case "add_init_script":
+		script, err := sess.AddInitScript(r.Context(), in.Source, in.ID, in.RunImmediately)
+		if err != nil {
+			if errors.Is(err, browser.ErrRouteInvalid) {
+				writeError(w, http.StatusBadRequest, "invalid_init_script", err.Error())
+				return
+			}
+			s.browserError(w, err, false)
+			return
+		}
+		raw, _ := json.Marshal(map[string]any{"script": script})
+		evalResult = raw
+	case "remove_init_script":
+		removed := sess.RemoveInitScript(in.ID)
+		raw, _ := json.Marshal(map[string]any{
+			"removed": removed,
+			"scripts": sess.InitScripts(),
+		})
+		evalResult = raw
+	case "route_ws":
+		reload := in.Reload == nil || *in.Reload
+		state, err := sess.AddWSRoute(r.Context(), browser.WSRouteRule{
+			Pattern: in.Pattern,
+			Target:  in.Target,
+		}, reload)
+		if err != nil {
+			if errors.Is(err, browser.ErrRouteInvalid) {
+				writeError(w, http.StatusBadRequest, "invalid_route", err.Error())
+				return
+			}
+			s.browserError(w, err, false)
+			return
+		}
+		raw, _ := json.Marshal(map[string]any{
+			"route":          state,
+			"reload":         reload,
+			"webSocketRules": sess.WSRoutes(),
+		})
+		evalResult = raw
+	case "route_ws_clear":
+		reload := in.Reload == nil || *in.Reload
+		cleared, err := sess.ClearWSRoutes(r.Context(), reload)
+		if err != nil {
+			s.browserError(w, err, false)
+			return
+		}
+		raw, _ := json.Marshal(map[string]any{"cleared": cleared, "reload": reload})
+		evalResult = raw
+	case "wait_response":
+		entry, err := browserWaitResponse(r.Context(), sess, in)
+		if err != nil {
+			var timeout *waitResponseTimeout
+			switch {
+			case errors.As(err, &timeout):
+				writeError(w, http.StatusRequestTimeout, "wait_timeout", err.Error())
+			case errors.Is(err, browser.ErrRouteInvalid):
+				writeError(w, http.StatusBadRequest, "invalid_pattern", err.Error())
+			default:
+				s.browserError(w, err, false)
+			}
+			return
+		}
+		raw, _ := json.Marshal(entry)
+		evalResult = raw
 	case "emulate":
 		if _, err := sess.ApplyDevicePatch(in.Preset, in.devicePatch()); err != nil {
 			if errors.Is(err, browser.ErrUnknownPreset) {
@@ -371,6 +482,30 @@ type browserUseRequest struct {
 	Mobile       *bool                `json:"mobile"`
 	UA           *string              `json:"ua"`
 	Touch        *bool                `json:"touch"`
+
+	// Route and network tools. Pattern is the URL matcher for route,
+	// network_log, and wait_response; RouteAction is the rule's disposition.
+	Pattern        string            `json:"pattern"`
+	Method         string            `json:"method"`
+	Regex          bool              `json:"regex"`
+	ResourceType   string            `json:"resourceType"`
+	RouteAction    string            `json:"action"`
+	RouteStatus    int64             `json:"status"`
+	Headers        map[string]string `json:"headers"`
+	Body           string            `json:"body"`
+	BodyBase64     bool              `json:"bodyBase64"`
+	DelayMS        int               `json:"delayMs"`
+	TargetURL      string            `json:"targetUrl"`
+	Target         string            `json:"target"`
+	Source         string            `json:"source"`
+	RunImmediately bool              `json:"runImmediately"`
+	Reload         *bool             `json:"reload"`
+	ErrorReason    string            `json:"errorReason"`
+	Times          int               `json:"times"`
+	ID             string            `json:"id"`
+	Errors         bool              `json:"errors"`
+	After          int64             `json:"after"`
+	Timeout        float64           `json:"timeout"`
 }
 
 // normalizeBrowserUseTool maps Playwright-flavoured tool names onto the
@@ -421,6 +556,24 @@ func normalizeBrowserUseTool(name string) string {
 		return "emulate"
 	case "browser_lock":
 		return "lock"
+	case "browser_route":
+		return "route"
+	case "browser_route_list":
+		return "route_list"
+	case "browser_route_clear":
+		return "route_clear"
+	case "browser_network_log":
+		return "network_log"
+	case "browser_wait_for_response":
+		return "wait_response"
+	case "browser_add_init_script":
+		return "add_init_script"
+	case "browser_remove_init_script":
+		return "remove_init_script"
+	case "browser_route_ws":
+		return "route_ws"
+	case "browser_route_ws_clear":
+		return "route_ws_clear"
 	case "browser_get_recording_status":
 		return "recording_status"
 	case "browser_get_recording_summary":
@@ -441,6 +594,8 @@ func knownBrowserUseTool(name string) bool {
 	case "navigate", "navigate_back", "navigate_forward", "snapshot", "tree",
 		"console", "wait", "move", "hover", "click", "type", "press", "scroll",
 		"emulate", "eval", "select", "fill", "lock", "profile", "vault_fill",
+		"route", "route_list", "route_clear", "network_log", "wait_response",
+		"add_init_script", "remove_init_script", "route_ws", "route_ws_clear",
 		"recording_status", "recording_summary", "timeline", "annotation", "artifact":
 		return true
 	default:
@@ -540,6 +695,45 @@ func (in browserUseRequest) invalid(tool string) string {
 		if in.Mode == nil {
 			return "mode is required."
 		}
+	case "route":
+		if strings.TrimSpace(in.Pattern) == "" {
+			return "pattern is required."
+		}
+		if strings.TrimSpace(in.RouteAction) == "" {
+			return "action is required — fulfill, abort, delay, or continue."
+		}
+		if in.Times < 0 {
+			return "times must be 0 or positive."
+		}
+	case "add_init_script":
+		if strings.TrimSpace(in.Source) == "" {
+			return "source is required."
+		}
+	case "remove_init_script":
+		if strings.TrimSpace(in.ID) == "" {
+			return "id is required."
+		}
+	case "route_ws":
+		if strings.TrimSpace(in.Pattern) == "" {
+			return "pattern is required."
+		}
+		if strings.TrimSpace(in.Target) == "" {
+			return "target is required — an absolute ws:// or wss:// URL."
+		}
+	case "network_log":
+		if in.Limit < 0 || in.Limit > netLogCapLimit {
+			return "limit must be 0-300."
+		}
+		if in.After < 0 {
+			return "after must be 0 or positive."
+		}
+	case "wait_response":
+		if in.Timeout < 0 || in.Timeout > 30 {
+			return "timeout must be 0-30 seconds."
+		}
+		if in.After < 0 {
+			return "after must be 0 or positive."
+		}
 	case "annotation":
 		if strings.TrimSpace(in.AnnotationID) == "" {
 			return "annotation_id is required."
@@ -580,6 +774,150 @@ func browserWait(r *http.Request, sess *browser.Session, in browserUseRequest) e
 		text, gone = in.TextGone, true
 	}
 	return sess.WaitForText(r.Context(), text, gone)
+}
+
+const (
+	// netLogDefaultLimit is one browser_network_log page when the agent does
+	// not ask for a size; netLogCapLimit is the whole session ring.
+	netLogDefaultLimit = 50
+	netLogCapLimit     = 300
+	// waitResponsePoll is how often the wait tool re-reads the net ring. The
+	// ring is appended under a mutex, so polling is cheap and needs no extra
+	// plumbing from the network watchers.
+	waitResponsePoll = 50 * time.Millisecond
+)
+
+// waitResponseTimeout reports a wait that saw no matching response. It is a
+// distinct type because the HTTP bridge answers 408, not 500.
+type waitResponseTimeout struct{ msg string }
+
+func (e *waitResponseTimeout) Error() string { return e.msg }
+
+// urlMatcher compiles an optional URL pattern; no pattern matches everything.
+func urlMatcher(pattern string, regex bool) (func(string) bool, error) {
+	if strings.TrimSpace(pattern) == "" {
+		return func(string) bool { return true }, nil
+	}
+	re, err := browser.GlobURL(pattern, regex)
+	if err != nil {
+		return nil, err
+	}
+	return re.MatchString, nil
+}
+
+// netEntryMatches applies the shared network_log/wait_response filters.
+func netEntryMatches(e browser.NetEntry, in browserUseRequest, match func(string) bool) bool {
+	if !match(e.URL) {
+		return false
+	}
+	if in.Method != "" && !strings.EqualFold(in.Method, e.Method) {
+		return false
+	}
+	if in.RouteStatus != 0 && e.Status != in.RouteStatus {
+		return false
+	}
+	if in.Errors && e.Error == "" && e.Status < 400 {
+		return false
+	}
+	return true
+}
+
+// browserNetworkLog returns the newest matching entries and the cursor for the
+// next page. Entries are oldest-first; a page larger than limit keeps the
+// newest end and reports the newest sequence as next.
+func browserNetworkLog(entries []browser.NetEntry, in browserUseRequest) ([]browser.NetEntry, int64, error) {
+	match, err := urlMatcher(in.Pattern, in.Regex)
+	if err != nil {
+		return nil, 0, err
+	}
+	limit := in.Limit
+	if limit <= 0 {
+		limit = netLogDefaultLimit
+	}
+	limit = min(limit, netLogCapLimit)
+	out := filterNetEntries(entries, in, match)
+	next := in.After
+	if len(out) > 0 {
+		next = out[len(out)-1].Seq
+	}
+	if len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out, next, nil
+}
+
+// filterNetEntries applies the network filters to a snapshot, oldest first.
+func filterNetEntries(entries []browser.NetEntry, in browserUseRequest, match func(string) bool) []browser.NetEntry {
+	var out []browser.NetEntry
+	for _, e := range entries {
+		if e.Seq <= in.After || !netEntryMatches(e, in, match) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// scanNetEntries returns the newest matching entry above the cursor, the new
+// cursor (newest sequence seen, matched or not), and how many entries were
+// observed. It is the polling step of browserWaitResponse.
+func scanNetEntries(entries []browser.NetEntry, cursor int64, in browserUseRequest, match func(string) bool) (browser.NetEntry, int64, int, bool) {
+	var found browser.NetEntry
+	newest, observed := cursor, 0
+	ok := false
+	for _, e := range entries {
+		if e.Seq <= cursor {
+			continue
+		}
+		newest = e.Seq
+		observed++
+		if !netEntryMatches(e, in, match) {
+			continue
+		}
+		found, ok = e, true
+	}
+	return found, newest, observed, ok
+}
+
+// browserWaitResponse returns the newest matching response already seen, or
+// waits for one to arrive. Scanning history first makes the tool useful right
+// after a click, when the response has usually landed before the call.
+func browserWaitResponse(ctx context.Context, sess *browser.Session, in browserUseRequest) (browser.NetEntry, error) {
+	match, err := urlMatcher(in.Pattern, in.Regex)
+	if err != nil {
+		return browser.NetEntry{}, err
+	}
+	timeout := 10 * time.Second
+	if in.Timeout > 0 {
+		timeout = min(time.Duration(in.Timeout*float64(time.Second)), 30*time.Second)
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(waitResponsePoll)
+	defer ticker.Stop()
+	cursor := in.After
+	observed := 0
+	for {
+		found, newest, seen, ok := scanNetEntries(sess.NetLog(), cursor, in, match)
+		cursor = newest
+		observed += seen
+		if ok {
+			return found, nil
+		}
+		select {
+		case <-ctx.Done():
+			return browser.NetEntry{}, ctx.Err()
+		case <-ticker.C:
+		case <-deadline.C:
+			label := in.Pattern
+			if label == "" {
+				label = "**"
+			}
+			return browser.NetEntry{}, &waitResponseTimeout{msg: fmt.Sprintf(
+				"no response matched %q within %s (%d responses observed; pass after=<next> from browser_network_log to skip old ones)",
+				label, timeout, observed)}
+		}
+	}
 }
 
 func (in browserUseRequest) point() (float64, float64, bool) {

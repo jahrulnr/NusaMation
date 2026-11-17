@@ -4,6 +4,12 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-11-18
+
+### Added
+
+- `browser_use` network control, so an agent can verify UI behaviour against mocks without launching a second browser. `browser_route` intercepts requests through CDP's Fetch domain and can fulfill a synthetic response (status, headers, body, JSON content type inferred), abort, delay, or rewrite a URL; rules are first-match-wins, session-scoped, and interception is armed only while at least one rule exists. `browser_network_log` and `browser_wait_for_response` expose the session's network ring with URL glob/regex, method, status, and failure filters. `browser_add_init_script` installs JavaScript at document start (with optional immediate run) for pre-boot stubs. `browser_route_ws` rewrites WebSocket construction to a local fake hub through a document-start shim, because CDP cannot intercept a WebSocket handshake; `browser_route` rejects `resourceType: websocket` and points at it. A request rule's first hit is recorded as an `agent` `route` timeline event.
+
 ## [0.2.11] - 2026-11-17
 
 ### Added

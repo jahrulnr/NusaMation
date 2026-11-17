@@ -97,7 +97,7 @@ func TestStartIncludesStderrWhenProcessExits(t *testing.T) {
 // the unfixed code failed roughly one run in ten.
 func TestStartIncludesStderrRepeatedly(t *testing.T) {
 	testutil.RequirePosixShell(t)
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		_, err := Start(context.Background(), ClientConfig{
 			Command: "sh", Args: []string{"-c", "echo 'TERM is dumb' >&2; exit 1"},
 		}, silentHandler{})
