@@ -14,6 +14,8 @@ import (
 	"github.com/jahrulnr/nusamation/internal/config"
 	"github.com/jahrulnr/nusamation/internal/procsys"
 	"github.com/jahrulnr/nusamation/internal/security"
+
+	_ "go.uber.org/automaxprocs"
 )
 
 func main() {
