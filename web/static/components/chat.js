@@ -177,7 +177,13 @@ export function messageHTML(m) {
 }
 
 export function messageHead(m) {
-  const name = m.role === "user" ? "You" : (S.current?.agentName || agentName(currentAgent()));
+  const meta = parseJSON(m.metadata, {}) || {};
+  // "You" is the human. Prompts injected by another conversation via the
+  // conversation-control bridge (channel agent / orchestrated) are authored
+  // by an agent, not by the person reading.
+  const name = m.role === "user"
+    ? (m.channel === "agent" || meta.orchestration ? "Agent" : "You")
+    : (S.current?.agentName || agentName(currentAgent()));
   return `<div class="msg-head"><span class="msg-author">${esc(name)}</span><span class="msg-time">${esc(clock(m.createdAt))}</span></div>`;
 }
 
@@ -211,12 +217,18 @@ export function assistantHTML(m) {
   const agent = currentAgent();
   const streaming = m.status === "streaming";
   const text = m.text || "";
+  // Delivered/read ticks for channel-originated replies: the bubble that
+  // carries the WhatsApp message id shows the furthest receipt state.
+  const meta = parseJSON(m.metadata, {}) || {};
+  const receipt = meta.channelReceipt === "delivered" || meta.channelReceipt === "read" ? meta.channelReceipt : "";
+  const receiptHTML = receipt ? `<span class="msg-receipt ${receipt === "read" ? "read" : ""}" title="${receipt === "read" ? "Read" : "Delivered"}">${receipt === "read" ? "✓✓" : "✓"}</span>` : "";
   return `<div class="msg assistant" data-msg-id="${esc(m.id)}">
     <div class="msg-avatar">${agentOrb(agent, "agent-orb")}</div>
     <div class="msg-body">
       ${messageHead(m)}
       <div class="markdown">${renderMarkdown(text, m.id, "markdown", { conversationId: m.conversationId })}${streaming ? `<span class="streaming-caret"></span>` : ""}</div>
       ${attachmentsHTML(m.attachments)}
+      ${receiptHTML}
     </div>
   </div>`;
 }
@@ -414,7 +426,7 @@ export function systemHTML(m) {
 }
 
 export function errorHTML(m) {
-  return `<div class="msg system error" data-msg-id="${esc(m.id)}"><div class="msg-body"><div class="error-card" style="border:1px solid rgba(255,118,118,.22);background:var(--danger-dim);border-radius:10px;padding:9px 13px;text-align:left;display:flex;gap:8px;align-items:flex-start">${icon("alert", "sm")}<span>${esc(m.text)}</span></div>${S.current && !S.active ? `<button class="btn btn-ghost btn-xs" data-action="retry" style="margin-top:6px">${icon("refresh", "sm")} Retry</button>` : ""}</div></div>`;
+  return `<div class="msg system error" data-msg-id="${esc(m.id)}"><div class="msg-body"><div class="error-card" style="border:1px solid rgba(255,118,118,.22);background:var(--danger-dim);border-radius:10px;padding:9px 13px;text-align:left;display:flex;gap:8px;align-items:flex-start">${icon("alert", "sm")}<span>${esc(m.text)}</span></div>${S.current && !S.active && m.turnId ? `<button class="btn btn-ghost btn-xs" data-action="retry" data-turn="${esc(m.turnId)}" style="margin-top:6px">${icon("refresh", "sm")} Retry</button>` : ""}</div></div>`;
 }
 
 export function attachmentsHTML(atts) {

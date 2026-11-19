@@ -57,6 +57,18 @@ type Service struct {
 
 	cancelNoticeAfter time.Duration
 	turnTimeout       time.Duration
+
+	// channelMessages maps a WhatsApp message id to the stored conversation
+	// message that delivered it, so incoming receipts can land on the right
+	// bubble. In-memory: receipts arriving after a restart are dropped.
+	channelMu      sync.Mutex
+	channelMessage map[string]channelMessageRef
+}
+
+type channelMessageRef struct {
+	conversationID string
+	messageID      string
+	receipt        string
 }
 
 type Options struct {
@@ -94,6 +106,7 @@ func New(opts Options) *Service {
 		elicitations:      map[string]*elicitationWaiter{},
 		pollWaiters:       map[string]*pollWaiter{},
 		terminalTurns:     map[string]*activeTurn{},
+		channelMessage:    map[string]channelMessageRef{},
 		cancelNoticeAfter: defaultCancelNoticeAfter,
 		turnTimeout:       defaultTurnTimeout,
 	}
@@ -400,7 +413,7 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (store.Message, st
 	return msg, turn, nil
 }
 
-func (s *Service) Retry(ctx context.Context, conversationID, channel, originRef string) (store.Turn, error) {
+func (s *Service) Retry(ctx context.Context, conversationID, turnID, channel, originRef string) (store.Turn, error) {
 	conv, err := s.store.GetConversation(ctx, conversationID)
 	if err != nil {
 		return store.Turn{}, err
@@ -416,17 +429,31 @@ func (s *Service) Retry(ctx context.Context, conversationID, channel, originRef 
 			return store.Turn{}, ErrBusy
 		}
 	}
-	last, err := s.store.LastUserMessage(ctx, conversationID)
+	// The retry is anchored to the error card's turn, so a stale card cannot
+	// fire an unrelated request; the payload is a neutral "continue", not a
+	// resend of the original prompt — resends make the agent redo work and
+	// can duplicate side effects.
+	failed, err := s.store.GetTurn(ctx, turnID)
 	if err != nil {
 		return store.Turn{}, fmt.Errorf("nothing to retry: %w", err)
 	}
-	turn, err := s.store.CreateTurn(ctx, conversationID, last.ID, channel, originRef)
+	if failed.ConversationID != conversationID {
+		return store.Turn{}, fmt.Errorf("that turn does not belong to this conversation")
+	}
+	if failed.Status != "error" {
+		return store.Turn{}, fmt.Errorf("only failed turns can be retried; that turn is %q", failed.Status)
+	}
+	msg := store.Message{ConversationID: conversationID, Role: "user", Kind: "text", Channel: channel, Text: "continue"}
+	if err := s.store.AppendMessage(ctx, &msg); err != nil {
+		return store.Turn{}, err
+	}
+	turn, err := s.store.CreateTurn(ctx, conversationID, msg.ID, channel, originRef)
 	if err != nil {
 		return store.Turn{}, err
 	}
 	s.emit("turn.updated", conversationID, turn)
 	s.emit("notice", conversationID, map[string]any{
-		"severity": "info", "title": "Retrying", "description": "Re-running the last request.",
+		"severity": "info", "title": "Retrying", "description": "Asking the agent to continue.",
 	})
 	go s.runQueue(conversationID)
 	return turn, nil
@@ -768,6 +795,7 @@ func (s *Service) createConversation(ctx context.Context, agentID, title, cwd, c
 
 type ConversationPatch struct {
 	Title    *string        `json:"title,omitempty"`
+	Label    *string        `json:"label,omitempty"`
 	Pinned   *bool          `json:"pinned,omitempty"`
 	Archived *bool          `json:"archived,omitempty"`
 	Routing  *store.Routing `json:"routing,omitempty"`
@@ -805,6 +833,18 @@ func (s *Service) UpdateConversation(ctx context.Context, id string, patch Conve
 			return conv, ErrBusy
 		}
 		s.agents.ResetConversation(ctx, id)
+	}
+	if patch.Label != nil {
+		label := store.NormalizeLabel(*patch.Label)
+		if label != "" && !store.ValidLabel(label) {
+			return conv, fmt.Errorf("label %q is not a valid handle: 1-24 lowercase letters, digits or hyphens", label)
+		}
+		if err := s.store.SetConversationLabel(ctx, id, label); err != nil {
+			if errors.Is(err, store.ErrLabelTaken) {
+				return conv, fmt.Errorf("label %q is already used by another conversation", label)
+			}
+			return conv, err
+		}
 	}
 	conv, err = s.store.UpdateConversation(ctx, id, store.ConversationUpdate{
 		Title: patch.Title, Pinned: patch.Pinned, Archived: patch.Archived, Routing: patch.Routing,

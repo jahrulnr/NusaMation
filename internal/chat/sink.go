@@ -553,7 +553,80 @@ func (s *Service) applyCommands(sess *agent.Session, commands json.RawMessage) {
 	_, err = s.patchMeta(ctx, conv.ID, map[string]any{"commands": commands, "commandsSessionId": sess.ACPID()})
 	if err == nil {
 		s.emit("commands.updated", conv.ID, map[string]any{"commands": commands, "sessionId": sess.ACPID()})
+		s.syncChannelCommands(conv.ID, list)
 	}
+}
+
+// syncChannelCommands mirrors the session's advertised commands into the
+// per-chat menus of channels that support them (Telegram's chat-scoped
+// setMyCommands). It runs in a goroutine — Bot API calls are network-bound
+// and must never stall the ACP reader. An empty command list is meaningful:
+// the linked chats' menus return to the channel default.
+func (s *Service) syncChannelCommands(conversationID string, list []json.RawMessage) {
+	if s.channels == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		links, err := s.store.ListChannelLinks(ctx, conversationID)
+		if err != nil {
+			return
+		}
+		var cmds []channels.SessionCommand
+		for _, raw := range list {
+			var item struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+			}
+			if json.Unmarshal(raw, &item) != nil || item.Name == "" {
+				continue
+			}
+			cmds = append(cmds, channels.SessionCommand{Name: item.Name, Description: item.Description})
+		}
+		seen := map[string]bool{}
+		for _, l := range links {
+			// One menu per external chat — forum topics share a chat id and
+			// publish once between them.
+			if l.ExternalID == "" || seen[l.Channel+" "+l.ExternalID] {
+				continue
+			}
+			seen[l.Channel+" "+l.ExternalID] = true
+			ch, ok := s.channels.Get(l.Channel)
+			if !ok {
+				continue
+			}
+			syncer, ok := ch.(channels.SessionCommands)
+			if !ok {
+				continue
+			}
+			if len(cmds) == 0 {
+				_ = syncer.ClearSessionCommands(ctx, l.ExternalID)
+			} else {
+				_ = syncer.SyncSessionCommands(ctx, l.ExternalID, cmds)
+			}
+		}
+	}()
+}
+
+// clearChannelCommandMenu resets a moved chat's menu to the channel default;
+// /new re-links the chat to a conversation whose session has not advertised
+// commands yet.
+func (s *Service) clearChannelCommandMenu(ctx context.Context, in channels.Inbound) {
+	if s.channels == nil {
+		return
+	}
+	ch, ok := s.channels.Get(in.Channel)
+	if !ok {
+		return
+	}
+	syncer, ok := ch.(channels.SessionCommands)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	_ = syncer.ClearSessionCommands(ctx, in.ExternalID)
 }
 
 func (s *Service) applyAgentTitle(conversationID, title string) {
@@ -712,6 +785,18 @@ func (s *Service) updateDelivery(a *activeTurn, final bool) {
 			})
 			if text != "" {
 				s.notifyOrigin(a, text)
+			}
+		} else {
+			// The channel message id lets receipts land on this turn's final
+			// bubble. Only the last assistant row carries it; earlier rotated
+			// rows stay bare.
+			if id := d.ID(); id != "" {
+				a.mu.Lock()
+				msgID := a.assistantID
+				a.mu.Unlock()
+				if msgID != "" {
+					s.rememberChannelMessage(ctx, a.conversationID, msgID, id)
+				}
 			}
 		}
 	}

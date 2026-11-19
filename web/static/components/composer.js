@@ -28,11 +28,35 @@ export function matchingCommands(text, commands) {
   return commands.filter((c) => c && typeof c.name === "string" && c.name.toLowerCase().startsWith(query));
 }
 
+// mentionChoices lists rooms by their mention label and projects by name for
+// the @ picker. The current room is never a candidate — mentioning yourself
+// resolves to nothing useful. Project names are slugified on insert so the
+// label stays one token the referenceTrigger regex can own.
+export function mentionChoices(query, conversations, projects, currentId) {
+  const q = (query || "").toLowerCase();
+  const rooms = (conversations || [])
+    .filter((c) => c && !c.archived && c.label && c.id !== currentId)
+    .filter((c) => !q || c.label.toLowerCase().startsWith(q) || String(c.title || "").toLowerCase().includes(q))
+    .slice(0, 8)
+    .map((c) => ({ kind: "conversation", id: c.id, name: c.label, detail: c.title || "Untitled", hint: "room" }));
+  const projs = (projects || [])
+    .filter((p) => p && p.name)
+    .filter((p) => !q || String(p.name).toLowerCase().includes(q) || String(p.name).toLowerCase().replace(/\s+/g, "-").startsWith(q))
+    .slice(0, 4)
+    .map((p) => ({ kind: "project", id: p.id, name: String(p.name).toLowerCase().replace(/\s+/g, "-"), detail: p.name, hint: "project" }));
+  return rooms.concat(projs);
+}
+
 function commandChoices() {
   const ta = $("#prompt");
   if (!ta || ta.selectionStart !== ta.selectionEnd) return [];
   const trigger = referenceTrigger(ta.value, ta.selectionStart);
   if (!trigger) return [];
+  // @ is the mention prefix: rooms by label and projects by name, nothing
+  // else — no file search, no session commands.
+  if (trigger.prefix === "@") return mentionChoices(trigger.query, S.conversations, S.projects, composerKey || S.current?.id);
+  // / is the command prefix: session commands plus the file, folder, skill
+  // and MCP-server search.
   const conv = S.current;
   const meta = parseJSON(conv?.metadata, {}) || {};
   const commands = conv && composerKey === conv.id && conv.acpSessionId && meta.commandsSessionId === conv.acpSessionId
@@ -48,7 +72,9 @@ function searchKey(query) {
 function searchReferences() {
   const ta = $("#prompt");
   const trigger = ta && document.activeElement === ta && ta.selectionStart === ta.selectionEnd ? referenceTrigger(ta.value, ta.selectionStart) : null;
-  if (!trigger || commandDismissed) { clearTimeout(referenceTimer); referenceController?.abort(); referenceSearch = { key: "", items: [], loading: false, error: "", seq: referenceSearch.seq + 1 }; renderCommands(); return; }
+  // The mention prefix needs no server round-trip — its candidates come from
+  // the loaded rooms and projects.
+  if (!trigger || trigger.prefix !== "/" || commandDismissed) { clearTimeout(referenceTimer); referenceController?.abort(); referenceSearch = { key: "", items: [], loading: false, error: "", seq: referenceSearch.seq + 1 }; renderCommands(); return; }
   const key = searchKey(trigger.query);
   if (key === referenceSearch.key) { renderCommands(); return; }
   clearTimeout(referenceTimer);
@@ -103,11 +129,15 @@ export function renderCommands() {
   const trigger = ta.selectionStart === ta.selectionEnd ? referenceTrigger(ta.value, ta.selectionStart) : null;
   const choices = commandDismissed || document.activeElement !== ta ? [] : commandChoices();
   const search = trigger && referenceSearch.key === searchKey(trigger.query) ? referenceSearch : null;
-  const message = !commandDismissed && document.activeElement === ta && trigger && search ? (search.loading ? "Searching…" : search.error || (search.truncated ? "Search results are limited." : !choices.length ? "No matches" : "")) : "";
+  const message = !commandDismissed && document.activeElement === ta && trigger
+    ? trigger.prefix === "@"
+      ? (choices.length ? "" : "No matches")
+      : (search ? (search.loading ? "Searching…" : search.error || (search.truncated ? "Search results are limited." : !choices.length ? "No matches" : "")) : "")
+    : "";
   commandIndex = Math.min(commandIndex, Math.max(0, choices.length - 1));
   menu.hidden = !choices.length && !message;
   ta.setAttribute("aria-expanded", String(!menu.hidden));
-  const symbols = { file: "📄", folder: "📁", skill: "✦", mcp: "🔌", command: "⌘" };
+  const symbols = { file: "📄", folder: "📁", skill: "✦", mcp: "🔌", command: "⌘", conversation: "💬", project: "🗂️" };
   menu.innerHTML = choices.map((c, i) => `<button type="button" role="option" aria-selected="${i === commandIndex}" class="command-suggestion ${i === commandIndex ? "selected" : ""}" data-index="${i}"><span aria-hidden="true">${symbols[c.kind] || "•"}</span><b>${esc(trigger.prefix + c.name)}</b><span>${esc(c.kind)}${c.hint ? " · " + esc(c.hint) : ""}</span>${c.detail ? `<small>${esc(c.detail)}</small>` : ""}</button>`).join("") + (message ? `<div class="popover-empty">${esc(message)}</div>` : "");
   menu.querySelectorAll("button").forEach((button) => {
     button.addEventListener("pointerdown", (e) => e.preventDefault());
@@ -545,11 +575,14 @@ export async function stopTurn() {
   }
 }
 
-export async function retryTurn() {
-  if (!S.current) return;
+export async function retryTurn(turnId) {
+  if (!S.current || !turnId) return;
   try {
-    const d = await api(`/conversations/${encodeURIComponent(S.current.id)}/retry`, { method: "POST" });
-    S.active = { status: "queued", running: false, turnId: d.turn.id };
+    const d = await api(`/conversations/${encodeURIComponent(S.current.id)}/retry`, { method: "POST", body: { turnId } });
+    // The retried turn can already be running when this response lands (the
+    // start event travels over the socket while the HTTP round-trip is in
+    // flight) — never clobber a live state with the queued snapshot.
+    if (!S.active || !S.active.running) S.active = { status: "queued", running: false, turnId: d.turn.id };
     renderChat(); renderTopbar(); renderComposer();
   } catch (e) {
     toast("Could not retry", e.message, "error");

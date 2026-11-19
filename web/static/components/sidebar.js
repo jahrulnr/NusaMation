@@ -136,6 +136,7 @@ export function convItemHTML(c) {
     <div class="conv-title-row">
       ${c.pinned ? icon("pin", "conv-pin") : ""}
       ${spawnedBadge(c)}
+      ${c.label ? `<span class="conv-label mono" title="Mention with @${esc(c.label)}">${esc(c.label)}</span>` : ""}
       <span class="conv-title">${esc(c.title || "Untitled")}</span>
       ${unread ? `<span class="conv-badge">${unread > 9 ? "9+" : unread}</span>` : `<span class="conv-time">${timeAgo(c.lastMessageAt || c.updatedAt)}</span>`}
     </div>
@@ -154,6 +155,7 @@ function convChildHTML(c) {
   return `<div class="conv-item conv-child ${S.current && S.current.id === c.id ? "active" : ""}" role="button" tabindex="0" data-action="select-conv" data-id="${esc(c.id)}" data-title="${esc((c.title || "").toLowerCase())}" data-preview="${esc((c.lastMessage || "").toLowerCase())}" title="${esc(c.title || "Untitled")}">
     ${c.pinned ? icon("pin", "conv-pin") : ""}
     ${spawnedBadge(c)}
+    ${c.label ? `<span class="conv-label mono" title="Mention with @${esc(c.label)}">${esc(c.label)}</span>` : ""}
     <span class="conv-title">${esc(c.title || "Untitled")}</span>
     ${unread ? `<span class="conv-badge">${unread > 9 ? "9+" : unread}</span>` : `<span class="conv-time">${timeAgo(c.lastMessageAt || c.updatedAt)}</span>`}
     <button class="icon-btn sm conv-child-menu" data-action="conv-menu" data-id="${esc(c.id)}" title="Conversation menu">${icon("more", "sm")}</button>

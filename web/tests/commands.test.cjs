@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const src = fs.readFileSync(path.join(__dirname, '../static/components/composer.js'), 'utf8');
 const start = src.indexOf('export function matchingCommands(');
-const end = src.indexOf('\nfunction commandChoices()', start);
+const end = src.indexOf('\n// mentionChoices', start);
 const match = vm.runInNewContext(`(${src.slice(start, end).trim().replace(/^export /, '')})`);
 
 test('filters agent commands by the slash prefix without consuming ordinary text', () => {

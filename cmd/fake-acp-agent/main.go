@@ -31,6 +31,10 @@ type server struct {
 	values  map[string]any
 	legacy  bool
 	busy    bool
+	// sessionCounter mints a unique id per session/new like a real agent.
+	// current is the id the latest session call addressed; updates carry it.
+	sessionCounter int
+	current        string
 }
 
 func main() {
@@ -194,28 +198,41 @@ func (s *server) handle(msg message) {
 				trace("session_mcp " + server.Name)
 			}
 		}
+		id := s.newSessionID()
 		s.mu.Lock()
 		s.cancel = make(chan struct{})
 		s.values["mode"] = "ask"
 		s.mu.Unlock()
 		s.notify("session/update", map[string]any{
-			"sessionId": "fake-session",
+			"sessionId": id,
 			"update":    map[string]any{"sessionUpdate": "config_option_update", "configOptions": s.configOptions()},
 		})
 		s.notify("session/update", map[string]any{
-			"sessionId": "fake-session",
+			"sessionId": id,
 			"update": map[string]any{"sessionUpdate": "available_commands_update", "availableCommands": []any{
 				map[string]any{"name": "compact", "description": "Compact the fake context"},
 			}},
 		})
-		s.respond(msg.ID, s.sessionResult())
+		s.respond(msg.ID, s.sessionResult(id))
 	case "session/load", "session/resume":
 		traceSessionPrompt(msg.Method, msg.Params)
 		if os.Getenv("FAKE_ACP_REJECT_LOAD") == "1" {
 			s.write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32602, "message": "invalid system prompt"}})
 			return
 		}
-		s.respond(msg.ID, s.sessionResult())
+		// Resume echoes the requested id, like an agent that owns its
+		// sessions; it also becomes the id subsequent updates carry.
+		var req struct {
+			SessionID string `json:"sessionId"`
+		}
+		_ = json.Unmarshal(msg.Params, &req)
+		s.mu.Lock()
+		if req.SessionID != "" {
+			s.current = req.SessionID
+		}
+		id := s.current
+		s.mu.Unlock()
+		s.respond(msg.ID, s.sessionResult(id))
 	case "session/set_config_option":
 		var req struct {
 			ConfigID string `json:"configId"`
@@ -273,7 +290,7 @@ func (s *server) handle(msg message) {
 		trace("session_close")
 		s.respond(msg.ID, map[string]any{})
 	case "session/list":
-		s.respond(msg.ID, map[string]any{"sessions": []any{map[string]any{"sessionId": "fake-session", "title": "Fake session"}}})
+		s.respond(msg.ID, map[string]any{"sessions": []any{map[string]any{"sessionId": s.sessionID(), "title": "Fake session"}}})
 	case "session/delete":
 		trace("session_delete")
 		s.respond(msg.ID, map[string]any{})
@@ -628,8 +645,37 @@ type fakeTool struct {
 	id, title, name, kind string
 }
 
-func (s *server) sessionResult() map[string]any {
-	result := map[string]any{"sessionId": "fake-session", "configOptions": s.configOptions()}
+// newSessionID mints a unique id per session/new, like a real agent that owns
+// its sessions. FAKE_ACP_REUSE_SESSION pins one id for every new session — the
+// dishonest mode NusaMation's reuse guard has to catch (an agent backend
+// attaching its latest session instead of starting fresh).
+func (s *server) newSessionID() string {
+	if os.Getenv("FAKE_ACP_REUSE_SESSION") == "1" {
+		s.mu.Lock()
+		s.current = "fake-session"
+		s.mu.Unlock()
+		return "fake-session"
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionCounter++
+	s.current = fmt.Sprintf("fake-session-%d", s.sessionCounter)
+	return s.current
+}
+
+// sessionID returns the id the latest session call addressed; updates carry
+// it so notifications route to the conversation that owns the session.
+func (s *server) sessionID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.current == "" {
+		return "fake-session"
+	}
+	return s.current
+}
+
+func (s *server) sessionResult(sessionID string) map[string]any {
+	result := map[string]any{"sessionId": sessionID, "configOptions": s.configOptions()}
 	if s.legacy {
 		s.mu.Lock()
 		current, _ := s.values["mode"].(string)
@@ -758,7 +804,7 @@ func (s *server) reasonsDemo(id json.RawMessage) {
 }
 
 func (s *server) update(update map[string]any) {
-	s.notify("session/update", map[string]any{"sessionId": "fake-session", "update": update})
+	s.notify("session/update", map[string]any{"sessionId": s.sessionID(), "update": update})
 }
 
 func (s *server) chunk(text string) {

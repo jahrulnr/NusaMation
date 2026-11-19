@@ -13,6 +13,8 @@
 .msg-via { display: flex; align-items: center; gap: 4px; margin: 0 0 4px; color: var(--muted); font-size: 10.5px; }
 .msg-via .icon { width: 10px; height: 10px; }
 .msg.user .msg-body { flex: none; max-width: 84%; }
+.msg-receipt { display: inline-block; margin: 2px 0 0; color: var(--muted); font-size: 10px; letter-spacing: 1px; }
+.msg-receipt.read { color: var(--accent); }
 .msg-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
 .msg-author { font-size: 12px; font-weight: 650; color: var(--text-soft); }
 .msg-time { font-size: 10px; color: var(--muted-2); opacity: 0; transition: opacity .15s; }

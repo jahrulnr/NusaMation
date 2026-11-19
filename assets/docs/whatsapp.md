@@ -26,6 +26,8 @@ nusamation whatsapp set --auto-start            # connect on server start
 nusamation whatsapp set --group-policy mention  # disabled | mention | all
 nusamation whatsapp set --allow '+628123456789,+15550100'   # replace allowlist
 nusamation whatsapp set --allow-add +628… --allow-remove 999… # edit allowlist
+nusamation whatsapp set --group-add 1203630…@g.us             # allow a group (repeatable)
+nusamation whatsapp set --group-remove 1203630old@g.us --groups ''  # edit or clear groups
 nusamation whatsapp set --read-receipts=false --send-typing=false
 ```
 
@@ -34,7 +36,16 @@ nusamation whatsapp set --read-receipts=false --send-typing=false
   allowlist allows no one** — the agent stays silent until a number or the
   wildcard `*` is saved, so an unfilled form never becomes a public agent.
   `*` allows everyone and must be the only entry; the CLI and the web
-  control center refuse `*` combined with numbers.
+  control center refuse `*` combined with numbers or groups.
+- **AllowedGroups**: which group chats may reach the bot, stored as full
+  `…@g.us` JIDs. Groups are picked, not typed — a group has no number an
+  operator can enter — so the web panel lists every joined group by name
+  with an Add / Remove toggle (each tap saves), and the CLI offers
+  `--groups` / `--group-add` / `--group-remove`. Find the JIDs with
+  `nusamation whatsapp groups`. Bare digits are refused as group entries;
+  legacy installs whose `allowedNumbers` still hold a stripped group JID
+  keep working. The group policy still decides when the bot replies inside
+  an allowed group.
 - **GroupPolicy**: `disabled` ignores all groups; `mention` replies only when
   @-mentioned or replied to; `all` replies to every group message (use
   carefully). Poll creations, votes and added options are exempt from the

@@ -41,7 +41,8 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		"app": map[string]any{
 			"name": config.AppName, "version": config.Version, "publicUrl": s.cfg.PublicURL,
 			"installedAt": installed, "dev": s.cfg.Dev, "whatsappDisabled": s.cfg.DisableWhatsApp,
-			"dataDir": s.cfg.DataDir,
+			"telegramDisabled": s.cfg.DisableTelegram,
+			"dataDir":          s.cfg.DataDir,
 		},
 		"agents":          publicAgents,
 		"mcp":             publicMCP,
@@ -57,10 +58,12 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 			"agents": len(agents), "unread": 0,
 		},
 	}
-	if c, ok := s.channelByName("whatsapp"); ok {
-		if ctl, ok := c.(channels.Controller); ok {
-			if settings, err := ctl.Settings(ctx); err == nil {
-				resp["whatsapp"] = settings
+	for _, name := range []string{"whatsapp", "telegram"} {
+		if c, ok := s.channelByName(name); ok {
+			if ctl, ok := c.(channels.Controller); ok {
+				if settings, err := ctl.Settings(ctx); err == nil {
+					resp[name] = settings
+				}
 			}
 		}
 	}

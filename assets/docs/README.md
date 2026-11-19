@@ -6,7 +6,7 @@ installed app: agents, automations, WhatsApp, settings, the HTTP API, and debugg
 
 NusaMation is a self-hosted control center: it spawns ACP-compatible agent CLIs
 (like you, if you are an ACP agent) and connects them to a web control center
-and chat channels (currently WhatsApp).
+and chat channels (WhatsApp and Telegram).
 
 ## Data layout
 
@@ -32,6 +32,7 @@ resolved paths for this install.
 | Add/configure/remove shared MCP servers | [agents.md](agents.md#configure-mcp-servers) |
 | Schedule prompts, inspect runs, pause or edit automations | [automations.md](automations.md) |
 | Pair WhatsApp, search messages or contacts, set channel behavior | [whatsapp.md](whatsapp.md) |
+| Pair a Telegram bot, HTML replies, media, allowlists and group policy | [telegram.md](telegram.md) |
 | Read or change any stored setting key | [settings.md](settings.md) |
 | Drive NusaMation over HTTP instead of the CLI | [api.md](api.md) |
 | Something is broken — logs, common failures | [troubleshooting.md](troubleshooting.md) |

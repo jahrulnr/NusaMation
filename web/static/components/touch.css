@@ -21,11 +21,8 @@
   .markdown pre code { padding-right: 56px; }
 }
 @media (max-height: 500px) {
-  .modal-overlay:has(.settings-modal) { padding: 4px; }
-  .modal.settings-modal { max-height: calc(var(--app-h, 100dvh) - 8px); }
-  .settings-modal .modal-head { padding: 6px 12px; }
-  .settings-modal .modal-sub { display: none; }
-  .settings-modal .settings-content { padding: 8px 12px; }
+  .settings-view-head { padding: 6px 12px; }
+  .settings-view .settings-content { padding: 8px 12px; }
   .automation-actions { padding: 4px 0; }
   :root { --topbar-h: 48px; }
   .composer-foot { display: none; }

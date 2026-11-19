@@ -33,6 +33,10 @@ type Channel struct {
 	mgr   *channels.Manager
 	log   *slog.Logger
 
+	// presence optionally overrides the WhatsApp on-network lookup for
+	// allowlist validation; nil uses the live client.
+	presenceLookup presenceChecker
+
 	pacer pacer
 
 	mu         sync.Mutex
@@ -64,6 +68,9 @@ type Channel struct {
 
 	pollMu sync.Mutex
 	polls  map[string][]string
+
+	noticeMu sync.Mutex
+	noticeAt map[string]time.Time
 }
 
 type groupEntry struct {
@@ -153,8 +160,9 @@ func (c *Channel) purgeOlderThan(days int) {
 	}
 }
 
-// Groups lists the joined WhatsApp groups with their JIDs and names — the
-// operator needs a group JID to allowlist it.
+// Groups lists the joined WhatsApp groups with their JIDs and names, each
+// flagged with the current allowlist state so the panel picker renders
+// add/remove instead of a copy-JID step.
 func (c *Channel) Groups(ctx context.Context) ([]map[string]any, error) {
 	client := c.clientCopy()
 	if client == nil || !client.IsLoggedIn() {
@@ -164,14 +172,19 @@ func (c *Channel) Groups(ctx context.Context) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	allowed := map[string]bool{}
+	for _, g := range c.settingsSnapshot().AllowedGroups {
+		allowed[g] = true
+	}
 	out := make([]map[string]any, 0, len(list))
 	for _, g := range list {
 		if g == nil || g.JID.IsEmpty() {
 			continue
 		}
+		jid := g.JID.ToNonAD().String()
 		out = append(out, map[string]any{
-			"jid": g.JID.ToNonAD().String(), "name": g.GroupName.Name,
-			"participants": g.ParticipantCount,
+			"jid": jid, "name": g.GroupName.Name,
+			"participants": g.ParticipantCount, "allowed": allowed[jid],
 		})
 	}
 	return out, nil
@@ -545,10 +558,12 @@ func (c *Channel) handleEvent(evt any) {
 		// The payload is ciphertext, so it can be neither indexed nor
 		// routed — but a message that silently vanishes looks like the bot
 		// ignoring someone. Name the sender and chat at info level so a
-		// failing session or missing key is diagnosable.
+		// failing session or missing key is diagnosable, then surface it on
+		// the owning conversation (rate-limited to one notice per chat).
 		c.log.Info("WhatsApp message could not be decrypted",
 			"sender", v.Info.Sender.String(), "chat", v.Info.Chat.String(),
 			"id", string(v.Info.ID), "unavailable", v.IsUnavailable, "type", string(v.UnavailableType))
+		c.notifyUndecryptable(v.Info)
 	case *events.Receipt:
 		c.handleReceipt(v)
 	case *events.HistorySync:
@@ -988,6 +1003,9 @@ type delivery struct {
 	sender     string
 	typingMu   sync.Mutex
 	typingStop context.CancelFunc
+
+	idMu sync.Mutex
+	last string // message id of the most recent final send on this delivery
 }
 
 // startTyping shows composing for as long as this delivery is open. WhatsApp
@@ -1034,7 +1052,14 @@ func keepTyping(ctx context.Context, every time.Duration, beat func(types.ChatPr
 	}
 }
 
-func (d *delivery) ID() string { return "" }
+// ID returns the WhatsApp message id of the most recent final send on this
+// delivery — empty until the first send succeeds. The chat layer records it
+// on the turn's final assistant message so receipts can find it.
+func (d *delivery) ID() string {
+	d.idMu.Lock()
+	defer d.idMu.Unlock()
+	return d.last
+}
 
 // DeliveredTextLimit declares the per-message cap the chat layer truncates
 // the final reply to. It matches the rule ResponseRules gives the agent, so
@@ -1049,7 +1074,12 @@ func (d *delivery) Update(ctx context.Context, text string, final bool) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	_, err := d.ch.sendTextMention(ctx, d.chat, text, mentionJID(d.chat, d.sender))
+	id, err := d.ch.sendTextMention(ctx, d.chat, text, mentionJID(d.chat, d.sender))
+	if err == nil && id != "" {
+		d.idMu.Lock()
+		d.last = string(id)
+		d.idMu.Unlock()
+	}
 	return err
 }
 

@@ -182,11 +182,13 @@ func TestConversationControlAuthAndSwitch(t *testing.T) {
 	}
 }
 
-func TestConversationControlOrchestratedCallerDenied(t *testing.T) {
+func TestConversationControlOrchestratedCallerAllowed(t *testing.T) {
 	f := newControlFixture(t)
+	// Team collaboration: a turn started by another conversation (channel
+	// agent) may itself use the control tools.
 	f.startCallerTurn(t, "agent")
 	status, out := f.post(t, map[string]any{"tool": "list"})
-	if status != http.StatusForbidden || out["code"] != "orchestrated_turn" {
+	if status != http.StatusOK {
 		t.Fatalf("status=%d body=%v", status, out)
 	}
 }

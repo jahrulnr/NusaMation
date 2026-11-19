@@ -65,6 +65,71 @@ test('an empty blocked list renders no section', () => {
   assert.match(html, /wa-allow-everyone/);
 });
 
+test('the allowlist copy is numbers-only; groups moved to their own picker', () => {
+  const s = state({ whatsappDisabled: false });
+  s.channels = [{ name: "whatsapp", stats: {} }];
+  s.whatsapp = s.channels[0];
+  const html = panel(s);
+  assert.match(html, /One phone number per line/);
+  assert.doesNotMatch(html, /@g.us&#10;/);
+  assert.match(html, /Group allowlist/);
+  assert.match(html, /Groups are picked, not typed/);
+  assert.doesNotMatch(html, /wa-use-group/);
+});
+
+test('stored groups render with a remove action before the joined list loads', () => {
+  const s = state({ whatsappDisabled: false });
+  s.whatsappSettings = { allowedGroups: ["1203630-1234@g.us"] };
+  s.channels = [{ name: "whatsapp", stats: {} }];
+  s.whatsapp = s.channels[0];
+  const html = panel(s);
+  assert.match(html, /data-action="wa-group-toggle" data-jid="1203630-1234@g.us" data-name="">Remove<\/button>/);
+  assert.match(html, /Connect and load your joined groups to see their names/);
+});
+
+test('the loaded picker shows add/remove per joined group', () => {
+  const s = state({ whatsappDisabled: false });
+  s.whatsappSettings = { allowedGroups: ["1203630-111@g.us"] };
+  s.waGroups = [
+    { jid: "1203630-111@g.us", name: "Team", participants: 8 },
+    { jid: "1203630-222@g.us", name: "Keluarga", participants: 3 },
+  ];
+  s.channels = [{ name: "whatsapp", stats: {} }];
+  s.whatsapp = s.channels[0];
+  const html = panel(s);
+  // Allowed group states the remove action; the other offers add.
+  assert.match(html, /data-jid="1203630-111@g.us" data-name="Team">Remove ✓<\/button>/);
+  assert.match(html, /data-jid="1203630-222@g.us" data-name="Keluarga">Add<\/button>/);
+  assert.match(html, /Team<\/div><div class="desc mono">1203630-111@g.us · 8 members/);
+});
+
+test('a group allowed but left keeps a remove row in the picker', () => {
+  const s = state({ whatsappDisabled: false });
+  s.whatsappSettings = { allowedGroups: ["1203630-gone@g.us"] };
+  s.waGroups = [{ jid: "1203630-111@g.us", name: "Team", participants: 8 }];
+  s.channels = [{ name: "whatsapp", stats: {} }];
+  s.whatsapp = s.channels[0];
+  const html = panel(s);
+  assert.match(html, /Left group/);
+  assert.match(html, /1203630-gone@g.us · not joined anymore/);
+});
+
+test('group traffic in the blocked list offers allow-group, not just the sender number', () => {
+  const s = state({ whatsappDisabled: false });
+  s.whatsappSettings = { allowedGroups: ["1203630-111@g.us"], allowedNumbers: ["6281234567890"] };
+  s.channels = [{ name: "whatsapp", stats: { blocked: [
+    { sender: "628999@s.whatsapp.net", chat: "1203630-111@g.us", pushName: "Budi", timestampMs: 1 },
+    { sender: "628999@s.whatsapp.net", chat: "1203630-222@g.us", pushName: "Sinta", timestampMs: 2 },
+  ] } }];
+  s.whatsapp = s.channels[0];
+  const html = panel(s);
+  // A blocked message from an already-allowed group shows the state, disabled.
+  assert.match(html, /data-action="wa-allow-group" data-jid="1203630-111@g.us" disabled>Group allowed<\/button>/);
+  // A different blocked group still offers the one-tap allow.
+  assert.match(html, /data-action="wa-allow-group" data-jid="1203630-222@g.us" [^>]*>Allow group<\/button>/);
+  assert.match(html, /Allowing a number opens their private chat; for group traffic allow the group itself/);
+});
+
 test('send pacing and queue limit render as bounded number inputs', () => {
   const s = state({ whatsappDisabled: false });
   s.whatsappSettings = { sendPacing: 12, queueCap: 55 };

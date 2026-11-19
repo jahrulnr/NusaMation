@@ -44,6 +44,18 @@ type Attachment struct {
 	Data []byte `json:"-"`
 }
 
+// Reference is a mention the channel itself resolved — e.g. a room or
+// project the user picked through Telegram inline mode. Start/End are byte
+// offsets in Inbound.Text; the chat layer shifts them when it prefixes a
+// group sender name and revalidates each one against the saved text.
+type Reference struct {
+	Kind  string
+	ID    string
+	Label string
+	Start int
+	End   int
+}
+
 type Inbound struct {
 	Channel     string       `json:"channel"`
 	ExternalID  string       `json:"externalId"`
@@ -58,6 +70,7 @@ type Inbound struct {
 	MentionsMe  bool         `json:"mentionsMe"`
 	Timestamp   int64        `json:"timestamp"`
 	PollVote    *PollVote    `json:"pollVote,omitempty"`
+	References  []Reference  `json:"references,omitempty"`
 	Raw         any          `json:"-"`
 }
 
@@ -76,6 +89,20 @@ type Delivery interface {
 // a larger limit actually delivers it.
 type TextLimiter interface {
 	DeliveredTextLimit() int
+}
+
+// NoticeReporter is implemented by inbound handlers that can surface a
+// channel-side incident — like an undecryptable message — to the web
+// conversation that owns the chat, without starting a turn.
+type NoticeReporter interface {
+	ReportNotice(ctx context.Context, in Inbound, title, description string) error
+}
+
+// ReceiptReporter is implemented by inbound handlers that can patch
+// delivered/read state onto the conversation messages that carried the
+// channel's outgoing message ids.
+type ReceiptReporter interface {
+	ReportReceipt(ctx context.Context, chat string, messageIDs []string, state string) error
 }
 
 // OutboundMedia is a file the agent asked to deliver to a chat channel.
@@ -119,6 +146,22 @@ type PollAsker interface {
 type PollVote struct {
 	PollMessageID string   `json:"pollMessageId"`
 	Selected      []string `json:"selected"`
+}
+
+// SessionCommand is one ACP-advertised slash command a channel can surface
+// in a per-chat menu (Telegram's chat-scoped setMyCommands).
+type SessionCommand struct {
+	Name        string
+	Description string
+}
+
+// SessionCommands is implemented by channels that can publish a per-chat
+// "/" menu. The chat service syncs the commands a session advertises into
+// each linked chat's menu; the adapter decides whether the menu changed and
+// never lets a sync failure fail the turn.
+type SessionCommands interface {
+	SyncSessionCommands(ctx context.Context, externalID string, cmds []SessionCommand) error
+	ClearSessionCommands(ctx context.Context, externalID string) error
 }
 
 type Channel interface {

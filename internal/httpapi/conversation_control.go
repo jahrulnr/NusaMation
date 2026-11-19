@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -94,6 +95,7 @@ type controlLastMessage struct {
 type controlConversation struct {
 	ID               string              `json:"id"`
 	Title            string              `json:"title"`
+	Label            string              `json:"label,omitempty"`
 	Agent            controlAgent        `json:"agent"`
 	Status           string              `json:"status"`
 	ActiveTurn       *controlTurn        `json:"activeTurn,omitempty"`
@@ -300,35 +302,16 @@ func (s *Server) conversationControlCaller(r *http.Request) (string, bool) {
 }
 
 type controlPolicy struct {
-	Caller       store.Conversation
-	Orchestrated bool
+	Caller store.Conversation
 }
 
-// conversationPolicy resolves whether the caller's running turn was itself
-// started through orchestration. Every failure path leaves control denied.
+// conversationPolicy resolves the caller conversation for a control call.
 func (s *Server) conversationPolicy(ctx context.Context, callerID string) (controlPolicy, error) {
 	caller, err := s.store.GetConversation(ctx, callerID)
 	if err != nil {
 		return controlPolicy{}, err
 	}
-	p := controlPolicy{Caller: caller}
-	turn, err := s.store.ActiveTurn(ctx, callerID)
-	switch {
-	case store.IsNotFound(err):
-	case err != nil:
-		return controlPolicy{}, err
-	case turn.OriginChannel == "agent":
-		p.Orchestrated = true
-	}
-	return p, nil
-}
-
-func controlDenied(w http.ResponseWriter, p controlPolicy) bool {
-	if p.Orchestrated {
-		writeError(w, http.StatusForbidden, "orchestrated_turn", "This turn was started by another conversation and cannot control others.")
-		return true
-	}
-	return false
+	return controlPolicy{Caller: caller}, nil
 }
 
 func controlCaller(p controlPolicy) map[string]any {
@@ -382,9 +365,6 @@ func (s *Server) controlProjects(w http.ResponseWriter, r *http.Request, callerI
 		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
 		return
 	}
-	if controlDenied(w, p) {
-		return
-	}
 	projects, err := s.store.ListProjects(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list_failed", err.Error())
@@ -434,9 +414,6 @@ func (s *Server) controlList(w http.ResponseWriter, r *http.Request, callerID st
 	p, err := s.conversationPolicy(r.Context(), callerID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
-		return
-	}
-	if controlDenied(w, p) {
 		return
 	}
 	limit := in.Limit
@@ -501,18 +478,55 @@ func (s *Server) controlList(w http.ResponseWriter, r *http.Request, callerID st
 	if len(list) == limit {
 		next = offset + len(list)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	listWarning := s.controlIdentityWarning(r.Context(), p.Caller)
+	response := map[string]any{
 		"caller": controlCaller(p), "conversations": out, "nextOffset": next,
-	})
+	}
+	if listWarning != "" {
+		response["warning"] = listWarning
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// controlIdentityWarning reports a likely cross-session MCP mixup: the caller
+// room is idle while its agent runs a turn in another room. An agent process
+// that hosts several conversations can route its conversation tools through
+// another room's connection, so relays would be attributed to the wrong
+// room. The warning makes that state visible to the agent instead of letting
+// it silently relay under the wrong identity; idle CLI callers are unaffected
+// beyond the advisory text.
+func (s *Server) controlIdentityWarning(ctx context.Context, caller store.Conversation) string {
+	if turn, err := s.store.ActiveTurn(ctx, caller.ID); err == nil && turn.ID != "" {
+		return "" // The caller's own turn is running: the identity is in use.
+	} else if err != nil && !store.IsNotFound(err) {
+		return ""
+	}
+	// Same agent's rooms, any status — the status column lags turn state.
+	active, err := s.store.ListConversations(ctx, store.ConversationFilter{AgentID: caller.AgentID, Limit: 500})
+	if err != nil {
+		return ""
+	}
+	var others []string
+	for _, conv := range active {
+		if conv.ID == caller.ID {
+			continue
+		}
+		if turn, err := s.store.ActiveTurn(ctx, conv.ID); err == nil && turn.ID != "" {
+			others = append(others, fmt.Sprintf("%q", conv.Title))
+		}
+	}
+	if len(others) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("The caller room %q is idle while its agent is running a turn in %s. "+
+		"If you are that agent, this connection may belong to another room — check list for the row with isSelf true before relaying, and do not send under an identity that is not your room.",
+		caller.Title, strings.Join(others, ", "))
 }
 
 func (s *Server) controlSearch(w http.ResponseWriter, r *http.Request, callerID string, in conversationControlRequest) {
 	p, err := s.conversationPolicy(r.Context(), callerID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
-		return
-	}
-	if controlDenied(w, p) {
 		return
 	}
 	query := strings.TrimSpace(in.Query)
@@ -568,7 +582,7 @@ func (s *Server) controlSearch(w http.ResponseWriter, r *http.Request, callerID 
 		filter.ProjectID = requestedProjectID
 	}
 	if in.ConversationID != "" {
-		target, err := s.store.GetConversation(r.Context(), in.ConversationID)
+		target, err := s.resolveControlTarget(r.Context(), in.ConversationID)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "not_found", "Target conversation not found.")
 			return
@@ -608,9 +622,6 @@ func (s *Server) controlExport(w http.ResponseWriter, r *http.Request, callerID 
 		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
 		return
 	}
-	if controlDenied(w, p) {
-		return
-	}
 	format := strings.ToLower(strings.TrimSpace(in.Format))
 	if format == "" {
 		format = "jsonl"
@@ -629,7 +640,7 @@ func (s *Server) controlExport(w http.ResponseWriter, r *http.Request, callerID 
 	targets := []store.Conversation{}
 	switch {
 	case in.ConversationID != "":
-		target, err := s.store.GetConversation(r.Context(), in.ConversationID)
+		target, err := s.resolveControlTarget(r.Context(), in.ConversationID)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "not_found", "Target conversation not found.")
 			return
@@ -792,10 +803,7 @@ func (s *Server) controlRead(w http.ResponseWriter, r *http.Request, callerID st
 		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
 		return
 	}
-	if controlDenied(w, p) {
-		return
-	}
-	target, err := s.store.GetConversation(r.Context(), in.ConversationID)
+	target, err := s.resolveControlTarget(r.Context(), in.ConversationID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "Target conversation not found.")
 		return
@@ -841,10 +849,7 @@ func (s *Server) controlWait(w http.ResponseWriter, r *http.Request, callerID st
 		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
 		return
 	}
-	if controlDenied(w, p) {
-		return
-	}
-	target, err := s.store.GetConversation(r.Context(), in.ConversationID)
+	target, err := s.resolveControlTarget(r.Context(), in.ConversationID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "Target conversation not found.")
 		return
@@ -938,6 +943,17 @@ func (s *Server) writeControlWait(w http.ResponseWriter, r *http.Request, p cont
 	})
 }
 
+// resolveControlTarget accepts a conversation id or its label — the room's
+// mention handle — so "@cat" resolves to the cat room from every control
+// tool that names a target.
+func (s *Server) resolveControlTarget(ctx context.Context, idOrLabel string) (store.Conversation, error) {
+	target, err := s.store.GetConversation(ctx, idOrLabel)
+	if store.IsNotFound(err) && strings.TrimSpace(idOrLabel) != "" {
+		target, err = s.store.FindConversationByLabel(ctx, idOrLabel)
+	}
+	return target, err
+}
+
 func (s *Server) controlTarget(w http.ResponseWriter, r *http.Request, callerID, targetID string) (controlPolicy, store.Conversation, bool) {
 	if strings.TrimSpace(targetID) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "conversationId is required.")
@@ -948,10 +964,7 @@ func (s *Server) controlTarget(w http.ResponseWriter, r *http.Request, callerID,
 		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
 		return controlPolicy{}, store.Conversation{}, false
 	}
-	if controlDenied(w, p) {
-		return controlPolicy{}, store.Conversation{}, false
-	}
-	target, err := s.store.GetConversation(r.Context(), targetID)
+	target, err := s.resolveControlTarget(r.Context(), targetID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "Target conversation not found.")
 		return controlPolicy{}, store.Conversation{}, false
@@ -1119,14 +1132,18 @@ func (s *Server) controlSend(w http.ResponseWriter, r *http.Request, callerID st
 	}
 	s.rememberControlSend(callerID, in.RequestID, msg.ID, turn.ID, target.ID)
 	s.rememberControlSendDelivery(callerID, in.RequestID, delivery)
-	writeJSON(w, http.StatusOK, map[string]any{
+	sendResponse := map[string]any{
 		"duplicate": false,
 		"message":   map[string]any{"id": msg.ID, "seq": msg.Seq},
 		"turn":      map[string]any{"id": turn.ID, "status": turn.Status},
 		"delivery":  delivery,
 		"target":    map[string]any{"id": target.ID, "title": target.Title, "status": target.Status},
 		"note":      controlNote(notes...),
-	})
+	}
+	if warning := s.controlIdentityWarning(r.Context(), p.Caller); warning != "" {
+		sendResponse["warning"] = warning
+	}
+	writeJSON(w, http.StatusOK, sendResponse)
 }
 
 func (s *Server) rememberControlSendDelivery(callerID, requestID, delivery string) {
@@ -1231,9 +1248,6 @@ func (s *Server) controlSpawn(w http.ResponseWriter, r *http.Request, callerID s
 	p, err := s.conversationPolicy(r.Context(), callerID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
-		return
-	}
-	if controlDenied(w, p) {
 		return
 	}
 	if s.chat == nil {
@@ -1342,14 +1356,6 @@ func (s *Server) controlSpawn(w http.ResponseWriter, r *http.Request, callerID s
 }
 
 func (s *Server) controlReport(w http.ResponseWriter, r *http.Request, callerID string, in conversationControlRequest) {
-	p, err := s.conversationPolicy(r.Context(), callerID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "Conversation not found.")
-		return
-	}
-	if controlDenied(w, p) {
-		return
-	}
 	text := strings.TrimSpace(in.Text)
 	if text == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "text is required.")
@@ -1460,7 +1466,7 @@ func (s *Server) resolveControlAgent(ctx context.Context, name string) (string, 
 
 func (s *Server) controlConversationView(ctx context.Context, c store.Conversation, p controlPolicy, detailed bool, projectNames map[string]string, lastTurns map[string]store.TurnSummary) controlConversation {
 	view := controlConversation{
-		ID: c.ID, Title: c.Title, Agent: controlAgent{ID: c.AgentID, Name: c.AgentName},
+		ID: c.ID, Title: c.Title, Label: c.Label, Agent: controlAgent{ID: c.AgentID, Name: c.AgentName},
 		Status: c.Status, PendingApprovals: c.PendingCount, OriginChannel: c.OriginChannel,
 		ProjectID: c.ProjectID, Pinned: c.Pinned, Archived: c.Archived,
 		MessageCount: c.MessageCount, UpdatedAt: c.UpdatedAt, IsSelf: c.ID == p.Caller.ID,

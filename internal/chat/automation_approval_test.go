@@ -94,6 +94,75 @@ func TestAutomationPollVoteDenied(t *testing.T) {
 	}
 }
 
+// A slash /approve on the result chat must not resolve an automation turn.
+// The turn records no sender, and the poll guard already denies every vote;
+// the command path still treats that missing sender as a legacy turn and
+// approves.
+func TestAutomationCommandCannotResolve(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	enabled := true
+	ag, err := st.CreateAgent(ctx, store.AgentInput{
+		Name: "Fake", Slug: "auto-command", Command: "true", Cwd: t.TempDir(), Enabled: &enabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv, err := st.CreateConversation(ctx, ag.ID, "t", t.TempDir(), "whatsapp", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	userMsg := &store.Message{ConversationID: conv.ID, Role: "user", Text: "go"}
+	if err := st.AppendMessage(ctx, userMsg); err != nil {
+		t.Fatal(err)
+	}
+	humanTurn, err := st.CreateTurn(ctx, conv.ID, userMsg.ID, "whatsapp", `{"senderId":"owner"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	autoTurn, err := st.CreateTurn(ctx, conv.ID, userMsg.ID, "whatsapp", `{"externalId":"62@s.whatsapp.net","automation":true}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	human := newPendingApproval(t, st, conv.ID, humanTurn.ID)
+	auto := newPendingApproval(t, st, conv.ID, autoTurn.ID)
+	svc := &Service{store: st, log: testLogger()}
+	owner := channels.Inbound{Channel: "whatsapp", ExternalID: "62@s.whatsapp.net", SenderID: "owner"}
+	if err := svc.commandApproval(ctx, owner, conv, true, "approve", []string{human.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.GetApproval(ctx, human.ID); err != nil || got.Status != "approved" {
+		t.Fatalf("owner approval = %#v, %v", got, err)
+	}
+	anyone := channels.Inbound{Channel: "whatsapp", ExternalID: "62@s.whatsapp.net", SenderID: "anyone"}
+	if err := svc.commandApproval(ctx, anyone, conv, true, "approve", []string{auto.ID}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetApproval(ctx, auto.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "pending" {
+		t.Fatalf("automation approval status = %s, want pending", got.Status)
+	}
+}
+
+func newPendingApproval(t *testing.T, st *store.Store, conversationID, turnID string) store.Approval {
+	t.Helper()
+	ap := &store.Approval{
+		ConversationID: conversationID, TurnID: turnID, Title: "run a command", Kind: "execute", Status: "pending",
+		Options: []store.PermissionOption{{OptionID: "allow", Name: "Allow once", Kind: "allow_once"}},
+	}
+	if err := st.CreateApproval(context.Background(), ap); err != nil {
+		t.Fatal(err)
+	}
+	return *ap
+}
+
 // Agent questions (elicitations) from an automation run stay on the web too —
 // the result chat receives the run's answer, not a poll it cannot answer.
 func TestAutomationElicitationStaysOnWeb(t *testing.T) {

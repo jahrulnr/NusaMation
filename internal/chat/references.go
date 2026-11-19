@@ -18,7 +18,7 @@ func validatePromptReferences(text string, refs []store.PromptReference) error {
 			return fmt.Errorf("invalid selected reference")
 		}
 		switch ref.Kind {
-		case "file", "folder", "skill", "mcp", "command":
+		case "file", "folder", "skill", "mcp", "command", "conversation", "project":
 		default:
 			return fmt.Errorf("invalid selected reference kind")
 		}
@@ -71,6 +71,10 @@ func promptReferences(text string, refs []store.PromptReference) (string, []acp.
 			details = append(details, fmt.Sprintf("%s selects the skill at %s; read its SKILL.md and follow its instructions for this request.", ref.Label, ref.ID))
 		case "mcp":
 			details = append(details, fmt.Sprintf("%s selects MCP server %s; use its tools when appropriate for this request.", ref.Label, ref.ID))
+		case "conversation":
+			details = append(details, fmt.Sprintf("%s refers to conversation %s; use the nusamation_conversation tools (list, read, wait, send, stop) to inspect it or relay a message to it.", ref.Label, ref.ID))
+		case "project":
+			details = append(details, fmt.Sprintf("%s refers to the project with id %s; use the nusamation_conversation tools (projects_list, list, read) to see its conversations and work with its rooms.", ref.Label, ref.ID))
 		}
 	}
 	if command != "" {

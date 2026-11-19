@@ -147,8 +147,11 @@ func (u Usage) Empty() bool {
 }
 
 type Conversation struct {
-	ID              string          `json:"id"`
-	Title           string          `json:"title"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// Label is the room's mention handle (@cat); lowercase and unique
+	// across conversations. Empty means not mentionable by handle.
+	Label           string          `json:"label,omitempty"`
 	AgentID         string          `json:"agentId"`
 	AgentName       string          `json:"agentName,omitempty"`
 	AgentIcon       string          `json:"agentIcon,omitempty"`

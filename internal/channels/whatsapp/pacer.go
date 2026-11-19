@@ -28,11 +28,14 @@ type chatQueue struct {
 
 // sendTask is one queued send. run performs the actual build-and-send work
 // with the caller's context; done carries the result back to the waiter.
+// started is set under the pacer mutex before run begins, so the waiter can
+// tell a queued cancellation from an in-flight send.
 type sendTask struct {
-	chat string
-	ctx  context.Context
-	run  func(ctx context.Context) error
-	done chan error
+	chat    string
+	ctx     context.Context
+	run     func(ctx context.Context) error
+	done    chan error
+	started bool
 }
 
 var (
@@ -65,9 +68,17 @@ func (c *Channel) pacerSend(ctx context.Context, chat string, run func(ctx conte
 	case err := <-task.done:
 		return err
 	case <-ctx.Done():
-		// The caller left; the worker still reaps the task at the queue head
-		// and skips the send.
-		return ctx.Err()
+		// A task still queued is skipped by the worker later. One already
+		// running is owned by the worker: reporting cancellation here would
+		// make the chat layer send the same reply again, so the caller gets
+		// success-assumed and the worker logs the real outcome.
+		c.pacer.mu.Lock()
+		started := task.started
+		c.pacer.mu.Unlock()
+		if !started {
+			return ctx.Err()
+		}
+		return nil
 	}
 }
 
@@ -157,13 +168,21 @@ func (c *Channel) pacerWorker(chat string, q *chatQueue) {
 			task.done <- task.ctx.Err()
 			continue
 		}
-		sendCtx, cancel := context.WithTimeout(task.ctx, 20*time.Second)
+		c.pacer.mu.Lock()
+		task.started = true
+		c.pacer.mu.Unlock()
+		// The send context belongs to the worker: a caller cancellation does
+		// not abort an in-flight send, whose outcome is then the worker's to
+		// log — the caller has already stopped listening.
+		sendCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		err := task.run(sendCtx)
 		cancel()
 		if err == nil {
 			c.pacer.mu.Lock()
 			q.lastSent = time.Now()
 			c.pacer.mu.Unlock()
+		} else {
+			c.log.Warn("paced WhatsApp send failed", "chat", chat, "error", err)
 		}
 		task.done <- err
 	}

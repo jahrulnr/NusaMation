@@ -309,15 +309,23 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 	if block := recordingBlock(a.user.Metadata); block != "" {
 		blocks = append(blocks, acp.ContentBlock{Type: "text", Text: block})
 	}
+	blocks = append(blocks, s.attachmentBlocks(context.Background(), a)...)
+	return blocks
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+// attachmentBlocks turns the user message's saved uploads into prompt
+// content: image blocks for image-capable models, embedded text for text
+// files, resource links for everything else. Voice notes and other audio
+// always arrive as linked files plus a note — the agent reads or transcribes
+// them with its own tools, so the behavior is uniform across models.
+func (s *Service) attachmentBlocks(ctx context.Context, a *activeTurn) []acp.ContentBlock {
+	var blocks []acp.ContentBlock
 	uploads, err := s.store.ListUploadsForMessage(ctx, a.user.ID)
 	if err != nil || len(uploads) == 0 {
 		return blocks
 	}
 	caps := s.agents.PromptCapabilities(a.agent.ID)
-	var textFiles, skipped []string
+	var textFiles, skipped, audio []string
 	total := int64(0)
 	for _, u := range uploads {
 		if total > 40<<20 {
@@ -343,10 +351,13 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 			blocks = append(blocks, acp.ContentBlock{
 				Type: "image", MIMEType: mime, Data: base64.StdEncoding.EncodeToString(data),
 			})
-		case strings.HasPrefix(mime, "audio/") && caps.Audio:
+		case strings.HasPrefix(mime, "audio/"):
+			abs, _ := filepath.Abs(u.Path)
 			blocks = append(blocks, acp.ContentBlock{
-				Type: "audio", MIMEType: mime, Data: base64.StdEncoding.EncodeToString(data),
+				Type: "resource_link", URI: fileURI(abs),
+				Name: u.Name, MIMEType: mime, Size: u.Size,
 			})
+			audio = append(audio, u.Name)
 		case isTextMIME(mime, u.Name):
 			body := string(data)
 			if caps.EmbeddedContext {
@@ -370,6 +381,12 @@ func (s *Service) buildPrompt(a *activeTurn, recap string) []acp.ContentBlock {
 	if len(textFiles) > 0 {
 		blocks = append(blocks, acp.ContentBlock{
 			Type: "text", Text: "Attached text files:\n\n" + strings.Join(textFiles, "\n\n"),
+		})
+	}
+	if len(audio) > 0 {
+		blocks = append(blocks, acp.ContentBlock{
+			Type: "text", Text: "The user sent an audio message (voice note): " + strings.Join(audio, ", ") +
+				". The files are attached above — read or transcribe them with your own tools (for example a whisper CLI) if their content matters.",
 		})
 	}
 	if len(skipped) > 0 {

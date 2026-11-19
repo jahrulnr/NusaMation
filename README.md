@@ -162,7 +162,8 @@ If port `8787` is already used by a manually started instance, stop that instanc
 
 - **Web** is native and always available.
 - **WhatsApp** via [whatsmeow](https://github.com/tulir/whatsmeow): QR pairing, reconnect, read receipts, typing indicator, one message per finished turn, allowlist, group policy (`disabled` / `mention` / `all`), media download and approval notifications.
-- Channel manager is modular. Future Telegram, Discord or Slack adapters implement the same `Channel` / `Controller` interfaces.
+- **Telegram** via the Bot API (stdlib HTTP, no library): a @BotFather token stored sealed, long polling with a persisted offset, per-chat `/` menus, inline room/project mentions, HTML replies, media in both directions, album debouncing, allowlist, group policy and approval notifications.
+- Channel manager is modular. Discord or Slack adapters implement the same `Channel` / `Controller` interfaces.
 - Routing is per conversation:
   - `replyToOrigin` — answer the chat where the prompt came from.
   - `mirrorFinal` — copy the final digest to every linked chat.
@@ -231,10 +232,11 @@ Environment variables:
 | `NUSAMATION_PASSWORD` | generated | First-run admin password |
 | `NUSAMATION_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `NUSAMATION_NO_WHATSAPP` | `false` | Disable the WhatsApp channel |
+| `NUSAMATION_NO_TELEGRAM` | `false` | Disable the Telegram channel |
 | `NUSAMATION_OPEN` | `false` | Open the browser after startup |
 | `NUSAMATION_DEV` | `false` | Development mode (asset/cache behaviour) |
 
-Flags mirror the variables: `-addr`, `-data-dir`, `-public-url`, `-password`, `-log-level`, `-no-whatsapp`, `-open`, `-dev`.
+Flags mirror the variables: `-addr`, `-data-dir`, `-public-url`, `-password`, `-log-level`, `-no-whatsapp`, `-no-telegram`, `-open`, `-dev`.
 
 ### CLI
 

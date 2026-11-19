@@ -258,6 +258,50 @@ func TestPacerSkipsCanceledCaller(t *testing.T) {
 	}
 }
 
+// Cancelling a caller whose send has already started must not report failure
+// if that send then succeeds. updateDelivery treats the error as "not
+// delivered" and sends the reply again.
+func TestPacerCancelDuringSendDoesNotBothFailAndSend(t *testing.T) {
+	c := pacerChannel(t, Settings{SendPacing: 0, QueueCap: 20})
+	log := &sendLog{}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- c.pacerSend(ctx, "chat", func(context.Context) error {
+			close(started)
+			<-release
+			log.record("sent")
+			close(finished)
+			return nil
+		})
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("send did not start")
+	}
+	cancel()
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("caller did not return after cancel")
+	}
+	close(release)
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("in-flight send did not finish")
+	}
+	if err != nil && log.count() > 0 {
+		t.Fatalf("caller got %v but the send still completed", err)
+	}
+}
+
 // A failed send does not pace the next one.
 func TestPacerFailedSendDoesNotDelay(t *testing.T) {
 	c := pacerChannel(t, Settings{SendPacing: 5, QueueCap: 20})

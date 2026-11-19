@@ -49,14 +49,14 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 | `GET` | `/conversations?q=&agentId=&channel=&archived=&limit=&offset=` | list |
 | `POST` | `/conversations` | `{agentId?, title?, cwd?, projectId?}`. When `projectId` is set, cwd and `additionalDirectories` come from that project (unknown project → 404 `not_found`). When it is omitted, cwd falls back to the agent cwd, then the service workspace. |
 | `GET` | `/conversations/{id}` | conversation + latest messages + `historyHasMore` + their turn timing + approvals + configs + active turn + agent |
-| `PATCH` | `/conversations/{id}` | `{title?, pinned?, archived?, routing?, agentId?}` |
+| `PATCH` | `/conversations/{id}` | `{title?, label?, pinned?, archived?, routing?, agentId?}`; `label` is the mention handle (lowercase a–z/0–9/hyphen, 1–24 chars, unique across conversations, `""` clears) |
 | `DELETE` | `/conversations/{id}` | cancels a live turn, then deletes |
 | `DELETE` | `/conversations` | `{confirm:"DELETE"}` erases all conversations |
 | `GET` | `/conversations/{id}/messages?after=&before=&limit=` | pagination by `seq`; `hasMore` indicates whether another message exists in the requested direction |
 | `POST` | `/conversations/{id}/messages` | `{text, attachments:[{uploadId}], references?:[{kind,id,label,start,end}], annotations?:[{pickId, comment, screenshot?}], recordingId?, replyToChannel?, replyChannel?, delivery?: "queue" \| "after_tools" \| "steer"}` → `{message, turn}`; reference offsets are UTF-8 bytes in trimmed text; `delivery` defaults to `queue` |
 | `POST` | `/conversations/{id}/cancel` | cancels running or first queued turn |
 | `POST` | `/conversations/{id}/turns/{turnId}/cancel` | cancels that queued turn without touching the running one → `{turn}`; 404 unknown turn, 409 when it is no longer queued. Optional `{dropMessage:true}` also deletes the user message that queued it (used by "edit queued message"). |
-| `POST` | `/conversations/{id}/retry` | re-queues the last user message |
+| `POST` | `/conversations/{id}/retry` | `{turnId}` — queues a neutral `continue` nudge anchored to the failed turn named by `turnId` (the error card carries it); refuses completed/cancelled turns, turns of other conversations, and rooms with a running turn. The original prompt is never re-sent. |
 | `POST` | `/conversations/{id}/prepare` | starts or resumes the ACP session and returns live configuration options |
 | `POST` | `/conversations/{id}/config` | `{configId, value}`, `{model}`, or `{selector:"value[k=v,...]"}` — selector applies the model first, then re-reads options and applies modifiers; the response `result` reports applied/failed modifiers and ambiguity errors carry `candidates` |
 | `POST` | `/conversations/{id}/elicitations/{requestId}` | `{action:"accept"|"decline"|"cancel", content?}` answers a pending agent input request |
@@ -143,9 +143,9 @@ Approval option kinds: `allow_once`, `allow_always`, `reject_once`, `reject_alwa
 the caller conversation and the body cannot retarget it. Every conversation
 may use every tool — there is no opt-in.
 
-The body is `{tool, ...}`. Supported tools: `list`, `projects_list`, `search`, `export`, `read`, `wait`, `send`, `stop`, `spawn`, `report`. A caller whose running turn has `originChannel: "agent"` is rejected with `orchestrated_turn`. Read responses exclude thoughts and raw tool payloads by default and cap each message and the whole response; `read`/`wait` include `seq` cursors for pagination.
+The body is `{tool, ...}`. Supported tools: `list`, `projects_list`, `search`, `export`, `read`, `wait`, `send`, `stop`, `spawn`, `report`. Control tools work during delegated turns too — a turn started by another conversation may itself call them. Read responses exclude thoughts and raw tool payloads by default and cap each message and the whole response; `read`/`wait` include `seq` cursors for pagination. The target tools — `read`, `wait`, `send`, `stop` — accept a conversation id or its `label` (the room's mention handle).
 
-`list` accepts `project` (id, exact name, or folder basename) and returns `projectId`/`projectName` plus a compact `lastTurn` status/prompt/answer preview on each row. `projects_list` accepts `query` and returns project ids, names, root paths, pin state and active conversation counts. `spawn` accepts `project` or `projectId`.
+`list` accepts `project` (id, exact name, or folder basename) and returns `label`, `projectId`/`projectName` plus a compact `lastTurn` status/prompt/answer preview on each row. `projects_list` accepts `query` and returns project ids, names, root paths, pin state and active conversation counts. `spawn` accepts `project` or `projectId`.
 
 `search` runs the SQLite FTS5 index (`messages_fts`) and returns ranked message hits with `conversationId`, `title`, `projectName`, `seq`, `role`, `kind`, `snippet` (matches in brackets), `score` and `at`. Filters: `project`, `agent`, `channel`, `conversationId`, `kinds` (default `text,error`), `after`/`before` Unix ms, `archived`, `limit`, `offset`.
 

@@ -26,6 +26,7 @@ import (
 	"github.com/jahrulnr/nusamation/internal/automation"
 	"github.com/jahrulnr/nusamation/internal/browser"
 	"github.com/jahrulnr/nusamation/internal/channels"
+	"github.com/jahrulnr/nusamation/internal/channels/telegram"
 	webchannel "github.com/jahrulnr/nusamation/internal/channels/web"
 	"github.com/jahrulnr/nusamation/internal/channels/whatsapp"
 	"github.com/jahrulnr/nusamation/internal/chat"
@@ -160,6 +161,11 @@ func New(cfg config.Config) (*App, error) {
 			logger.Warn("WhatsApp channel disabled", "error", err)
 		}
 	}
+	if !cfg.DisableTelegram {
+		if err := registerTelegram(chanMgr, chatSvc, st, logger); err != nil {
+			logger.Warn("Telegram channel disabled", "error", err)
+		}
+	}
 	agentMgr.SetSink(chatSvc)
 	if err := chatSvc.Start(context.Background()); err != nil {
 		logger.Warn("startup recovery failed", "error", err)
@@ -203,6 +209,7 @@ func (a *App) Serve(ctx context.Context) error {
 		a.agents.EnableInjectedMCP(
 			agent.InjectedMCP{
 				Name: "browser_use", Command: exe, Args: []string{"mcp", "run", "--browser-use"},
+				PerConversationName: true,
 				Env: func(conversationID string) ([]acp.EnvVar, bool) {
 					token := a.browserUse.Token(conversationID)
 					if token == "" {
@@ -216,6 +223,7 @@ func (a *App) Serve(ctx context.Context) error {
 			},
 			agent.InjectedMCP{
 				Name: "nusamation_conversation", Command: exe, Args: []string{"mcp", "run", "--conversation"},
+				PerConversationName: true,
 				Env: func(conversationID string) ([]acp.EnvVar, bool) {
 					token := a.conversationGrants.Token(conversationID)
 					if token == "" {
@@ -539,7 +547,8 @@ If a task asks you to configure, operate, or debug NusaMation itself (agents,
 MCP servers, WhatsApp, settings, logs), read the ops docs first — do not guess:
 
 - Docs:   %s/ — start with README.md, then the file matching the task
-          (agents.md, whatsapp.md, settings.md, api.md, troubleshooting.md).
+          (agents.md, whatsapp.md, telegram.md, settings.md, api.md,
+          troubleshooting.md).
           If client-side fs/read is denied outside this workspace, read the
           file via a terminal command (e.g. cat) instead.
 - CLI:    %s <command> --data-dir %s
@@ -635,6 +644,13 @@ func registerWhatsApp(mgr *channels.Manager, handler channels.InboundHandler, st
 	}
 	wa.SetHandler(handler)
 	mgr.Register(wa)
+	return nil
+}
+
+func registerTelegram(mgr *channels.Manager, handler channels.InboundHandler, st *store.Store, log *slog.Logger) error {
+	tg := telegram.New(st, mgr, log)
+	tg.SetHandler(handler)
+	mgr.Register(tg)
 	return nil
 }
 

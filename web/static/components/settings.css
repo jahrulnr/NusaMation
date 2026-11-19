@@ -1,6 +1,22 @@
-/* Settings modal: tabs, agents, MCP, WhatsApp QR card, automations. */
+/* Settings page: lives inside .main, not in the modal root. */
+.main.settings-open > .topbar,
+.main.settings-open > #offline-banner,
+.main.settings-open > #chat-scroll,
+.main.settings-open > .plan-dock,
+.main.settings-open > .composer-wrap { display: none; }
+.settings-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.settings-view[hidden] { display: none; }
+.settings-view-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.settings-view-title { font-size: 13px; font-weight: 650; color: var(--text-soft); }
+.settings-back-btn { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.settings-back-btn .icon { width: 13px; height: 13px; }
+.channel-card { cursor: pointer; }
+.channel-card:hover, .channel-card:focus-visible { border-color: var(--border-strong); }
+.channel-card > .icon.chev { color: var(--muted-2); flex: none; }
+
+/* Settings view: tabs, agents, MCP, WhatsApp QR card, automations. */
 .settings-layout { display: grid; grid-template-columns: 196px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-height: 480px; }
-.settings-modal .settings-layout { flex: 1; min-height: 0; }
+.settings-view .settings-layout { flex: 1; min-height: 0; }
 .settings-tabs { border-right: 1px solid var(--border); padding: 12px 9px; display: flex; flex-direction: column; gap: 2px; background: #0c0e11; min-height: 0; overflow-y: auto; }
 .settings-content [hidden] { display: none !important; }
 .automation-builder { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
@@ -92,3 +108,14 @@ form[data-form="automation"] :is(input, textarea, select) { scroll-margin-top: 1
 .mcp-empty { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px; border: 1px dashed var(--border-strong); border-radius: 10px; color: var(--muted); font-size: 12px; }
 .settings-loading { display: flex; align-items: center; gap: 10px; margin: 14px 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text-soft); }
 .default-value { color: var(--text-soft); text-align: right; overflow-wrap: anywhere; }
+
+/* Narrow settings: a two-level flow — the section list first, the section
+   content pushed on top of it. No horizontal icon strip. */
+@media (max-width: 800px) {
+  .settings-view.narrow .settings-layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); min-height: 0; }
+  .settings-view.narrow:not(.show-section) .settings-content { display: none; }
+  .settings-view.narrow.show-section .settings-tabs { display: none; }
+  .settings-view.narrow .settings-tabs { border-right: 0; border-bottom: 1px solid var(--border); padding: 8px 6px; gap: 4px; }
+  .settings-view.narrow .settings-tab { flex-direction: row; justify-content: flex-start; padding: 11px 10px; font-size: 13px; border-radius: 8px; }
+  .settings-view.narrow .settings-content { padding: 16px; }
+}

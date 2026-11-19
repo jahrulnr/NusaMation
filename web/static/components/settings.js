@@ -9,7 +9,8 @@ import { renderComposer } from "./composer.js";
 import { renderTopbar } from "./topbar.js";
 import { envRefCopyEnabled, envRefTag } from "./browser-secrets.js";
 import { automationsSettings } from "./automations.js";
-import { startQRTimer, whatsappPanel } from "./whatsapp.js";
+import { startQRTimer, whatsappPanel, ensureWaGroups } from "./whatsapp.js";
+import { telegramPanel } from "./telegram.js";
 
 /* ---------------- settings ---------------- */
 export function openSettings(tab = "") {
@@ -17,13 +18,71 @@ export function openSettings(tab = "") {
   if (tab) S.settingsTab = tab;
   S.agentForm = null;
   S.mcpForm = null;
-  S.modal = { type: "settings" };
+  S.channel = "";
+  S.view = "settings";
+  const main = $(".main");
+  if (main) main.classList.add("settings-open");
+  const view = $("#settings-view");
+  if (view) view.hidden = false;
   if (S.settingsTab === "account" || S.settingsTab === "about") loadUpdateInfo();
   if (S.settingsTab === "mcp") loadMCP();
   renderSettings();
 }
 
+// closeSettings leaves the settings page for the conversation. The chat DOM
+// stays mounted while settings is open, so the transcript and its scroll
+// position are exactly where they were — nothing is re-fetched or re-rendered.
+export function closeSettings() {
+  if (S.qrTimer) { clearInterval(S.qrTimer); S.qrTimer = null; }
+  S.view = "";
+  S.channel = "";
+  const main = $(".main");
+  if (main) main.classList.remove("settings-open");
+  const view = $("#settings-view");
+  if (view) view.hidden = true;
+}
+
+// settingsBack walks one level out: the channel editor returns to the channel
+// cards, a narrow-screen section returns to the section list, and the top
+// level returns to the conversation.
+export function settingsBack() {
+  if (S.view !== "settings") return;
+  if (S.channel) {
+    S.channel = "";
+    if (S.qrTimer) { clearInterval(S.qrTimer); S.qrTimer = null; }
+    renderSettings();
+    return;
+  }
+  if (matchMedia("(max-width: 800px)").matches && S.settingsTab) {
+    S.settingsTab = "";
+    S.agentForm = null;
+    S.mcpForm = null;
+    renderSettings();
+    return;
+  }
+  closeSettings();
+}
+
+// updateSettingsFrame syncs the chrome that depends on width — narrow mode,
+// which pane shows, the back label — without rebuilding the section DOM, so it
+// is safe to call on resize while a form has unsaved input.
+export function updateSettingsFrame() {
+  const view = $("#settings-view");
+  if (!view || S.view !== "settings") return;
+  const narrow = matchMedia("(max-width: 800px)").matches;
+  view.classList.toggle("narrow", narrow);
+  view.classList.toggle("show-section", narrow && !!S.settingsTab);
+  const backLabel = $("[data-settings-back-label]", view);
+  if (backLabel) backLabel.textContent = S.channel ? "Channels" : (narrow && S.settingsTab ? "Sections" : "Chat");
+}
+
 export function renderSettings() {
+  if (S.view !== "settings") return;
+  const view = $("#settings-view");
+  if (!view) return;
+  // The section list leaves settingsTab empty; widening past the breakpoint
+  // would otherwise render the account panel with no tab selected.
+  if (!S.settingsTab && !matchMedia("(max-width: 800px)").matches) S.settingsTab = "agents";
   const tabs = [
     ["agents", "sparkles", "Agents"],
     ["defaults", "star", "Defaults"],
@@ -43,23 +102,31 @@ export function renderSettings() {
   else if (S.settingsTab === "routing") body = routingSettings();
   else if (S.settingsTab === "about") body = aboutSettings();
   else body = accountSettings();
-  const content = `<div class="settings-layout">
-    <nav class="settings-tabs">${tabs.map(([id, ic, label]) => `<button class="settings-tab ${S.settingsTab === id ? "active" : ""}" data-action="settings-tab" data-tab="${id}">${icon(ic)}<span>${label}</span></button>`).join("")}</nav>
+  const nav = tabs.map(([id, ic, label]) => `<button class="settings-tab ${S.settingsTab === id ? "active" : ""}" data-action="settings-tab" data-tab="${id}">${icon(ic)}<span>${label}</span></button>`).join("");
+  const frame = `<div class="settings-view-head">
+    <button class="btn btn-ghost btn-sm settings-back-btn" data-action="settings-back">${icon("chevron-left", "sm")}<span data-settings-back-label>Chat</span></button>
+    <div class="settings-view-title">Control center</div>
+  </div>
+  <div class="settings-layout">
+    <nav class="settings-tabs">${nav}</nav>
     <div class="settings-content" id="settings-content">${body}</div>
   </div>`;
-  const layout = $("#modal-root .settings-modal .settings-layout");
-  if (layout) {
-    $$(".settings-tab", layout).forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === S.settingsTab));
-    $("#settings-content", layout).innerHTML = body;
-  } else openModal(`${modalHead("Control center", "Agents, channels, routing and account")}${content}`, { size: "settings-modal" });
-  const tabsEl = $("#modal-root .settings-tabs");
-  const activeTab = tabsEl?.querySelector(".settings-tab.active");
-  if (tabsEl && activeTab && tabsEl.scrollWidth > tabsEl.clientWidth) {
-    const bounds = tabsEl.getBoundingClientRect(), active = activeTab.getBoundingClientRect();
-    if (active.left < bounds.left) tabsEl.scrollLeft += active.left - bounds.left;
-    else if (active.right > bounds.right) tabsEl.scrollLeft += active.right - bounds.right;
+  if (!$(".settings-layout", view)) {
+    view.innerHTML = frame;
+  } else {
+    $$(".settings-tab", view).forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === S.settingsTab));
+    $("#settings-content", view).innerHTML = body;
   }
-  if (S.settingsTab === "channels") startQRTimer();
+  updateSettingsFrame();
+  if (S.lastSection !== S.settingsTab + "/" + S.channel) {
+    S.lastSection = S.settingsTab + "/" + S.channel;
+    const content = $("#settings-content", view);
+    if (content) content.scrollTop = 0;
+  }
+  // The QR poller and the joined-group load belong to the WhatsApp screen
+  // only — never to the channels list or any other section.
+  if (S.settingsTab === "channels" && S.channel === "whatsapp") { startQRTimer(); ensureWaGroups(); }
+  else if (S.qrTimer) { clearInterval(S.qrTimer); S.qrTimer = null; }
 }
 
 export function settingsHead(title, desc, action = "") {
@@ -208,21 +275,47 @@ export function mcpFormHTML() {
 }
 
 export function channelsSettings() {
-  return `${settingsHead("Channels", "Web always sees everything. WhatsApp receives one message when the turn finishes, plus approval pings.")}
-    <div class="agent-list" id="channel-cards">${channelCards()}</div>
-    <div id="wa-panel" style="margin-top:20px">${whatsappPanel()}</div>`;
+  if (S.channel === "whatsapp") {
+    return `<div class="channel-screen">
+      <div class="section-head"><div><h3>WhatsApp</h3><div class="settings-desc" style="margin:3px 0 0">One message when the turn finishes, plus approval pings.</div></div><button class="btn btn-ghost btn-sm" data-action="channel-back">${icon("chevron-left", "sm")} Channels</button></div>
+      <div id="wa-panel">${whatsappPanel()}</div>
+    </div>`;
+  }
+  if (S.channel === "telegram") {
+    return `<div class="channel-screen">
+      <div class="section-head"><div><h3>Telegram</h3><div class="settings-desc" style="margin:3px 0 0">A bot that answers private chats and allowed groups, one formatted message per turn.</div></div><button class="btn btn-ghost btn-sm" data-action="channel-back">${icon("chevron-left", "sm")} Channels</button></div>
+      <div id="tg-panel">${telegramPanel()}</div>
+    </div>`;
+  }
+  return `${settingsHead("Channels", "Web always sees everything. External channels receive one message when the turn finishes, plus approval pings.")}
+    <div class="agent-list" id="channel-cards">${channelCards()}</div>`;
 }
 
 // The built-in web channel is not a manageable adapter; it stays out of the
 // card list everywhere the list re-renders (initial render, WS updates, QR
 // timer, refresh button).
 export function channelCards() {
-  return S.channels.filter((ch) => ch.name !== "web").map(channelCard).join("");
+  const list = S.channels.filter((ch) => ch.name !== "web");
+  const cards = list.map(channelCard).join("");
+  if (list.some((ch) => ch.name === "telegram")) return cards;
+  // Without -no-telegram the card is simply absent, so the Channels screen
+  // must say why instead of silently omitting the channel.
+  const app = (S.bootstrap && S.bootstrap.app) || {};
+  const detail = app.telegramDisabled
+    ? "Telegram is disabled for this process. Remove NUSAMATION_NO_TELEGRAM and restart to enable it."
+    : "Telegram did not start for this process. Check the server log for the startup error.";
+  return cards + `<div class="settings-section" style="margin-top:14px"><div class="settings-title">Telegram</div><div class="settings-desc">${esc(detail)}</div></div>`;
 }
 
 export function channelCard(ch) {
-  const statusClass = ch.loggedIn ? "" : ch.state === "error" ? "offline" : "warn";
-  return `<div class="agent-card"><span class="tool-icon kind-execute" style="width:34px;height:34px">${ch.name === "whatsapp" ? icon("message") : icon("globe")}</span><div class="agent-card-main"><div class="agent-card-name">${esc(ch.label || ch.name)} <span class="status-dot ${statusClass}"></span></div><div class="agent-card-sub">${esc(ch.state || "unknown")}${ch.detail ? " · " + esc(ch.detail) : ""}</div></div>${ch.selfID ? `<span class="badge-soft green">${esc(ch.selfID)}</span>` : ""}</div>`;
+  // Telegram keeps LoggedIn=true after Disconnect (the getMe identity is
+  // still known), so its dot must follow Connected — the sub-line already
+  // says "disconnected".
+  const online = ch.name === "telegram" ? ch.connected : ch.loggedIn;
+  const statusClass = online ? "" : ch.state === "error" ? "offline" : "warn";
+  const opens = ch.name === "whatsapp" || ch.name === "telegram";
+  const glyph = ch.name === "whatsapp" ? icon("message") : ch.name === "telegram" ? icon("send") : icon("globe");
+  return `<div class="agent-card${opens ? " channel-card" : ""}"${opens ? ` role="button" tabindex="0" data-action="channel-open" data-channel="${esc(ch.name)}" title="Open ${esc(ch.label || ch.name)}"` : ""}><span class="tool-icon kind-execute" style="width:34px;height:34px">${glyph}</span><div class="agent-card-main"><div class="agent-card-name">${esc(ch.label || ch.name)} <span class="status-dot ${statusClass}"></span></div><div class="agent-card-sub">${esc(ch.state || "unknown")}${ch.detail ? " · " + esc(ch.detail) : ""}</div></div>${ch.selfID ? `<span class="badge-soft green">${esc(ch.selfID)}</span>` : ""}${opens ? icon("chevron-right", "sm") : ""}</div>`;
 }
 
 export function routingSettings() {
@@ -241,7 +334,7 @@ export function routingSettings() {
 export function loadMCP() {
   api("/mcp").then((d) => {
     S.mcp = d.servers || S.mcp;
-    if (S.modal?.type === "settings" && S.settingsTab === "mcp" && !S.mcpForm) renderSettings();
+    if (S.view === "settings" && S.settingsTab === "mcp" && !S.mcpForm) renderSettings();
   }).catch(() => {});
 }
 
@@ -253,6 +346,7 @@ export function aboutSettings() {
       <div class="about-item"><div class="k">Mode</div><div class="v">${app.dev ? "Development" : "Local-first"}</div></div>
       <div class="about-item"><div class="k">Public URL</div><div class="v">${esc(app.publicUrl || "not configured")}</div></div>
       <div class="about-item"><div class="k">WhatsApp</div><div class="v">${app.whatsappDisabled ? "disabled" : "available"}</div></div>
+      <div class="about-item"><div class="k">Telegram</div><div class="v">${app.telegramDisabled ? "disabled" : "available"}</div></div>
     </div>
     <div class="settings-section" style="margin-top:24px">
       <div class="settings-title">Software update</div>
@@ -335,11 +429,11 @@ export function loadUpdateInfo() {
   api("/settings").then((d) => {
     if (seq === S.notifySeq && !S.notifyBusy) S.notifySettings = d.notifications || S.notifySettings;
     if (updateSeq === S.updateSeq) S.updateInfo = d.update || S.updateInfo;
-    if (S.modal?.type === "settings" && (S.settingsTab === "account" || S.settingsTab === "about")) renderSettings();
+    if (S.view === "settings" && (S.settingsTab === "account" || S.settingsTab === "about")) renderSettings();
   }).catch(() => {
     if (seq !== S.notifySeq) return;
     S.notifyError = "Could not load notification settings.";
-    if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
+    if (S.view === "settings" && S.settingsTab === "account") renderSettings();
   });
 }
 
@@ -355,7 +449,7 @@ export async function checkUpdate() {
     toast("Update check failed", e.message, "error");
   } finally {
     S.updateBusy = "";
-    if (S.modal?.type === "settings" && S.settingsTab === "about") renderSettings();
+    if (S.view === "settings" && S.settingsTab === "about") renderSettings();
   }
 }
 
@@ -371,7 +465,7 @@ export function applyUpdate() {
       toast("Update failed", e.message, "error");
     } finally {
       S.updateBusy = "";
-      if (S.modal?.type === "settings" && S.settingsTab === "about") renderSettings();
+      if (S.view === "settings" && S.settingsTab === "about") renderSettings();
     }
   }, "Update");
 }
@@ -392,7 +486,7 @@ export async function toggleNotifications() {
     toast("Could not save notification setting", e.message, "error");
   }
   S.notifyBusy = false;
-  if (S.modal?.type === "settings" && S.settingsTab === "account") renderSettings();
+  if (S.view === "settings" && S.settingsTab === "account") renderSettings();
 }
 
 export async function testNotification() {
@@ -430,7 +524,7 @@ export async function reloadActiveAgents() {
     else toast(`Reloaded ${reloaded.length} agent${reloaded.length === 1 ? "" : "s"}`, skipped ? `Skipped while busy: ${skipped}.` : "Fresh ACP processes are starting.", "success");
     const list = await api("/agents");
     S.agents = list.agents || S.agents;
-    if (S.modal?.type === "settings" && S.settingsTab === "agents") renderSettings();
+    if (S.view === "settings" && S.settingsTab === "agents") renderSettings();
   } catch (e) {
     toast("Reload failed", e.message, "error");
   }
@@ -445,7 +539,7 @@ export async function probeAgent(id) {
     const m = await api("/mcp");
     S.mcp = m.servers || S.mcp;
     toast("Agent is ready", "Capabilities and model list refreshed.", "success");
-    if (S.modal?.type === "settings" && !S.agentForm && !S.mcpForm) renderSettings();
+    if (S.view === "settings" && !S.agentForm && !S.mcpForm) renderSettings();
     renderTopbar();
   } catch (e) {
     toast("Probe failed", e.message, "error");
@@ -498,7 +592,7 @@ export async function saveAgent(form) {
     }
     if (S.agentForm === agentForm) {
       S.agentForm = null;
-      if (S.modal?.type === "settings") renderSettings();
+      if (S.view === "settings") renderSettings();
     }
     renderTopbar();
     toast(id ? "Agent updated" : "Agent added", d.agent.name + " is ready.", "success");

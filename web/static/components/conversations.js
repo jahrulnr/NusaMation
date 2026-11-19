@@ -10,6 +10,7 @@ import { focusComposer, prepareComposer, renderComposer, upsertTurn } from "./co
 import { closeMobileSidebar, renderSidebar, scheduleSidebarRender } from "./sidebar.js";
 import { renderTopbar } from "./topbar.js";
 import { saveTitle } from "./convmeta.js";
+import { closeSettings } from "./settings.js";
 import { visibleProjectId } from "./projectmodel.js";
 
 export async function selectInitialConversation() {
@@ -31,6 +32,7 @@ export async function selectInitialConversation() {
 
 export async function selectConversation(id, push = true) {
   if (!id) return;
+  closeSettings();
   if (S.current && S.current.id === id && S.messages.length) {
     if (push) setRoute(id);
     closeMobileSidebar();
@@ -314,6 +316,7 @@ export function openMoreMenu(anchor) {
   openPopover(anchor, `<div class="popover-list">
     ${menuItem(c.pinned ? "pin" : "pin", c.pinned ? "Unpin conversation" : "Pin conversation", "toggle-pin", `data-id="${esc(c.id)}"`)}
     ${menuItem("edit", "Rename", "rename-conv", `data-id="${esc(c.id)}"`)}
+    ${menuItem("zap", `Set label${c.label ? ` (@${c.label})` : ""}`, "set-conv-label", `data-id="${esc(c.id)}"`)}
     ${menuItem("clock", "Control activity", "orchestration-activity", `data-id="${esc(c.id)}"`)}
     ${menuItem("git", "Team", "team-panel", `data-id="${esc(c.id)}"`)}
     ${menuItem("download", "Export JSON", "export-conv", `data-id="${esc(c.id)}"`)}
@@ -394,6 +397,27 @@ export function renameConversation(id) {
   });
 }
 
+// setLabelConversation renames the room's @mention handle — the short name
+// the composer autocomplete offers and other rooms resolve through the
+// conversation-control tools.
+export function setLabelConversation(id) {
+  const c = S.conversations.find((x) => x.id === id);
+  if (!c) return;
+  closePopover();
+  promptModal("Set mention label", "Label (lowercase letters, digits, hyphens)", c.label || "", async (value) => {
+    const label = value.trim().toLowerCase();
+    if (!label) return;
+    try {
+      const d = await api(`/conversations/${encodeURIComponent(id)}`, { method: "PATCH", body: { label } });
+      upsertConversation(d.conversation);
+      if (S.current && S.current.id === id) S.current = d.conversation;
+      renderSidebar();
+      closeModal();
+      toast("Label saved", `Mention this room with @${d.conversation.label}`, "success");
+    } catch (e) { toast("Could not set label", e.message, "error"); }
+  }, "e.g. cat");
+}
+
 /* ---------------- actions ---------------- */
 export function newProjectChat(id) {
   if (!id || !(S.projects || []).some((p) => p.id === id)) return;
@@ -405,6 +429,7 @@ export function newProjectChat(id) {
 
 export async function newConversation() {
   if (S.selectedProjectId && !(S.projects || []).some((p) => p.id === S.selectedProjectId)) setSelectedProject("");
+  closeSettings();
   ++S.loadSeq;
   ++S.draftPreviewSeq;
   S.prepareController?.abort();
@@ -432,6 +457,7 @@ export function openConversationMenu(anchor, id) {
   openPopover(anchor, `<div class="popover-list">
     ${menuItem("pin", c.pinned ? "Unpin conversation" : "Pin conversation", "toggle-pin", `data-id="${esc(c.id)}"`)}
     ${menuItem("edit", "Rename", "rename-conv", `data-id="${esc(c.id)}"`)}
+    ${menuItem("zap", `Set label${c.label ? ` (@${c.label})` : ""}`, "set-conv-label", `data-id="${esc(c.id)}"`)}
     ${menuItem("clock", "Control activity", "orchestration-activity", `data-id="${esc(c.id)}"`)}
     ${menuItem("git", "Team", "team-panel", `data-id="${esc(c.id)}"`)}
     ${menuItem("download", "Export JSON", "export-conv", `data-id="${esc(c.id)}"`)}

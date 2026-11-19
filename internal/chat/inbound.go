@@ -99,11 +99,16 @@ func (s *Service) HandleInbound(ctx context.Context, in channels.Inbound) error 
 			_ = s.reply(ctx, in, "There is no conversation to retry yet.")
 			return nil
 		}
-		if _, err := s.Retry(ctx, conv.ID, in.Channel, linkRefFromInbound(in)); err != nil {
+		failed, err := s.store.LastFailedTurn(ctx, conv.ID)
+		if err != nil {
+			_ = s.reply(ctx, in, "Nothing failed to retry.")
+			return nil
+		}
+		if _, err := s.Retry(ctx, conv.ID, failed.ID, in.Channel, linkRefFromInbound(in)); err != nil {
 			_ = s.reply(ctx, in, "Could not retry: "+shortErr(err))
 			return err
 		}
-		_ = s.reply(ctx, in, "Retrying the last message…")
+		_ = s.reply(ctx, in, "Retrying the failed turn…")
 		return nil
 	case "approve", "deny":
 		return s.commandApproval(ctx, in, conv, hasConv, cmd, args)
@@ -139,6 +144,19 @@ func (s *Service) HandleInbound(ctx context.Context, in channels.Inbound) error 
 	if in.IsGroup && !strings.HasPrefix(text, "/") && strings.TrimSpace(in.SenderName) != "" {
 		body = in.SenderName + ": " + text
 	}
+	// Channel-resolved mentions (Telegram inline picks) carry offsets into
+	// the raw text; the group "Name: " prefix shifts them. A reference that
+	// does not validate is dropped — it must never reject the message.
+	var refs []store.PromptReference
+	if shift := len(body) - len(text); len(in.References) > 0 {
+		for _, r := range in.References {
+			ref := store.PromptReference{Kind: r.Kind, ID: r.ID, Label: r.Label,
+				Start: r.Start + shift, End: r.End + shift}
+			if validatePromptReferences(body, []store.PromptReference{ref}) == nil {
+				refs = append(refs, ref)
+			}
+		}
+	}
 	var attachments []store.AttachmentInput
 	for i, att := range in.Attachments {
 		if i >= 6 {
@@ -163,6 +181,7 @@ func (s *Service) HandleInbound(ctx context.Context, in channels.Inbound) error 
 		ConversationID: conv.ID,
 		Text:           body,
 		Attachments:    attachments,
+		References:     refs,
 		Channel:        in.Channel,
 		OriginRef:      linkRefFromInbound(in),
 		// A message while a turn is running has to reach the agent now.
@@ -201,6 +220,9 @@ func (s *Service) newLinkedConversation(ctx context.Context, in channels.Inbound
 	if err != nil {
 		return conv, err
 	}
+	// The chat now belongs to a fresh conversation — drop any per-chat
+	// command menu the previous session published (Telegram).
+	s.clearChannelCommandMenu(ctx, in)
 	conv, _ = s.store.GetConversation(ctx, conv.ID)
 	s.emit("conversation.updated", conv.ID, conv)
 	s.log.Info("linked inbound conversation", "conversation", conv.ID, "channel", in.Channel, "link", link.ID)
@@ -534,6 +556,12 @@ func (s *Service) commandApproval(ctx context.Context, in channels.Inbound, conv
 	// Only the user whose prompt created this turn may answer its approvals.
 	// Older turns without a recorded sender keep the previous behavior.
 	if turn, err := s.store.GetTurn(ctx, ap.TurnID); err == nil {
+		// An unattended run's approval has no chat owner at all: the result
+		// chat must not be able to /approve it, just as it cannot vote.
+		if turnIsAutomation(turn) {
+			_ = s.reply(ctx, in, "That approval belongs to an unattended run — answer it in the web UI.")
+			return nil
+		}
 		if ref := turnOriginSender(turn); ref != "" && in.SenderID != "" && ref != in.SenderID {
 			_ = s.reply(ctx, in, "Only the person who sent that request can approve it.")
 			return nil
@@ -597,6 +625,100 @@ func turnIsAutomation(turn store.Turn) bool {
 	}
 	_ = json.Unmarshal([]byte(turn.OriginRef), &ref)
 	return ref.Automation
+}
+
+// rememberChannelMessage records the WhatsApp message id of a delivered reply
+// on the turn's final assistant message metadata and in the receipt map.
+func (s *Service) rememberChannelMessage(ctx context.Context, conversationID, messageID, channelMessageID string) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	msg, err := s.store.GetMessage(ctx, messageID)
+	if err != nil {
+		s.log.Warn("could not store the channel message id", "message", messageID, "error", err)
+		return
+	}
+	meta := map[string]any{}
+	_ = json.Unmarshal(msg.Metadata, &meta)
+	meta["channelMessageId"] = channelMessageID
+	metaJSON, _ := json.Marshal(meta)
+	if err := s.store.UpdateMessage(ctx, messageID, nil, nil, nil, metaJSON); err != nil {
+		s.log.Warn("could not store the channel message id", "message", messageID, "error", err)
+		return
+	}
+	s.channelMu.Lock()
+	if s.channelMessage == nil {
+		s.channelMessage = map[string]channelMessageRef{}
+	}
+	s.channelMessage[channelMessageID] = channelMessageRef{conversationID: conversationID, messageID: messageID}
+	s.channelMu.Unlock()
+}
+
+// ReportReceipt patches delivered/read state onto the message that carried
+// the WhatsApp id and republishes it. Unknown ids are logged and dropped.
+func (s *Service) ReportReceipt(_ context.Context, chat string, ids []string, state string) error {
+	s.channelMu.Lock()
+	if s.channelMessage == nil {
+		s.channelMessage = map[string]channelMessageRef{}
+	}
+	var hits []channelMessageRef
+	for _, id := range ids {
+		if ref, ok := s.channelMessage[id]; ok {
+			ref.receipt = state
+			s.channelMessage[id] = ref
+			hits = append(hits, ref)
+		}
+	}
+	s.channelMu.Unlock()
+	if len(hits) == 0 {
+		s.log.Debug("receipts for unknown channel messages", "chat", chat, "ids", ids, "state", state)
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, ref := range hits {
+		msg, err := s.store.GetMessage(ctx, ref.messageID)
+		if err != nil {
+			continue
+		}
+		meta := map[string]any{}
+		_ = json.Unmarshal(msg.Metadata, &meta)
+		// A receipt never downgrades read to delivered.
+		if prev, _ := meta["channelReceipt"].(string); prev == "read" && state != "read" {
+			continue
+		}
+		meta["channelReceipt"] = state
+		metaJSON, _ := json.Marshal(meta)
+		if err := s.store.UpdateMessage(ctx, ref.messageID, nil, nil, nil, metaJSON); err != nil {
+			s.log.Warn("could not store the receipt state", "message", ref.messageID, "error", err)
+			continue
+		}
+		updated, err := s.store.GetMessage(ctx, ref.messageID)
+		if err != nil {
+			continue
+		}
+		s.emit("message.updated", ref.conversationID, updated)
+	}
+	return nil
+}
+
+// ReportNotice surfaces a channel-side incident on the conversation that owns
+// the chat, without starting a turn. Unlinked chats stay silent — there is no
+// conversation to report on.
+func (s *Service) ReportNotice(ctx context.Context, in channels.Inbound, title, description string) error {
+	if s.channels == nil {
+		return fmt.Errorf("channel %q is not available", in.Channel)
+	}
+	if _, ok := s.channels.Get(in.Channel); !ok {
+		return fmt.Errorf("channel %q is not available", in.Channel)
+	}
+	conv, err := s.store.FindConversationByChannel(ctx, in.Channel, in.ExternalID, in.ThreadID)
+	if err != nil {
+		return err
+	}
+	s.emit("notice", conv.ID, map[string]any{
+		"severity": "info", "title": title, "description": description,
+	})
+	return nil
 }
 
 func parseCommand(text string) (string, []string) {

@@ -1,7 +1,10 @@
 // Positions in the editor are UTF-16 offsets. Convert only at the API boundary.
+// Trigger prefixes: @ mentions rooms and projects, / commands the session and
+// searches files, folders, skills and MCP servers. # is parked: it starts
+// nothing until a use for it is decided.
 export function referenceTrigger(text, caret) {
   const before = text.slice(0, caret);
-  const match = /(?:^|\s)([@#/])([^\s@#]*)$/.exec(before);
+  const match = /(?:^|\s)([@/])([^\s@#]*)$/.exec(before);
   if (!match) return null;
   const suffix = /^[^\s@#]*/.exec(text.slice(caret))[0];
   return { start: caret - match[2].length - 1, end: caret + suffix.length, prefix: match[1], query: match[2] };

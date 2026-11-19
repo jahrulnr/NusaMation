@@ -125,6 +125,12 @@ type InjectedMCP struct {
 	Command string
 	Args    []string
 	Env     func(conversationID string) ([]acp.EnvVar, bool)
+	// PerConversationName appends the room's handle to Name. Some ACP agents
+	// (OpenCode) scope MCP servers by working directory, not by ACP session,
+	// and reuse the first child for every later room in that directory. A
+	// unique name forces one child per room, so each child keeps that room's
+	// token instead of the first room's.
+	PerConversationName bool
 }
 
 // EnableInjectedMCP replaces the injected server list. app.New wires this
@@ -148,7 +154,7 @@ func (m *Manager) InjectedMCPNames() []string {
 	return names
 }
 
-func (m *Manager) injectedServers(conversationID string) []acp.MCPServerConfig {
+func (m *Manager) injectedServers(ctx context.Context, conversationID string) []acp.MCPServerConfig {
 	m.mu.Lock()
 	specs := append([]InjectedMCP(nil), m.injected...)
 	m.mu.Unlock()
@@ -161,9 +167,55 @@ func (m *Manager) injectedServers(conversationID string) []acp.MCPServerConfig {
 		if !ok {
 			continue
 		}
+		name := spec.Name
+		if spec.PerConversationName {
+			name += "_" + m.conversationMCPName(ctx, conversationID)
+		}
 		out = append(out, acp.MCPServerConfig{
-			Name: spec.Name, Command: spec.Command, Args: spec.Args, Env: env,
+			Name: name, Command: spec.Command, Args: spec.Args, Env: env,
 		})
+	}
+	return out
+}
+
+// conversationMCPName is the room handle used as an injected server's name
+// suffix. Some agents (OpenCode) register MCP servers per working directory,
+// so a shared name lets the first room's child answer for every later room —
+// and that child carries the first room's bearer token. A suffix per room
+// forces a separate child with the right token. Labels are unique; an empty
+// or unreadable label falls back to the conversation id.
+func (m *Manager) conversationMCPName(ctx context.Context, conversationID string) string {
+	suffix := ""
+	if m.store != nil {
+		if conv, err := m.store.GetConversation(ctx, conversationID); err == nil {
+			suffix = conv.Label
+		}
+	}
+	if suffix = sanitizeMCPSuffix(suffix); suffix == "" {
+		suffix = sanitizeMCPSuffix(conversationID)
+	}
+	if suffix == "" {
+		suffix = "room"
+	}
+	return suffix
+}
+
+// sanitizeMCPSuffix keeps a server-name suffix to lowercase letters, digits
+// and underscores. It is read by the agent's tool namespace, so punctuation
+// from a label or id is normalized rather than passed through.
+func sanitizeMCPSuffix(raw string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(raw)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_':
+			b.WriteByte('_')
+		}
+	}
+	out := strings.Trim(b.String(), "_")
+	if len(out) > 32 {
+		out = strings.TrimRight(out[:32], "_")
 	}
 	return out
 }

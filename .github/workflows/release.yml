@@ -2,7 +2,8 @@ name: test-build-release
 
 # Flow: push/merge to master -> unit tests [linux, windows] -> build [linux,
 # windows] -> tag (v<VERSION>) -> GitHub release with binaries + installers,
-# notes from the matching "## [<version>]" section of CHANGELOG.md.
+# notes from the matching "## [<version>]" section of docs/changelogs/*.md
+# (falling back to CHANGELOG.md).
 #
 # The tag is derived from the VERSION file (e.g. "0.1.0" -> "v0.1.0"). If that
 # tag already exists — published release, draft, or bare tag — the release
@@ -147,20 +148,22 @@ jobs:
           git tag -f "$tag" "$GITHUB_SHA"
           git push origin "$tag" --force
           # Release notes come from the matching "## [<version>]" section in
-          # CHANGELOG.md (Keep a Changelog format); fall back to GitHub's
-          # auto-generated notes when the section is missing.
-          if awk -v ver="$version" '
+          # docs/changelogs/*.md, then CHANGELOG.md (Keep a Changelog format);
+          # fall back to GitHub's auto-generated notes when the section is
+          # missing.
+          if { cat docs/changelogs/*.md 2>/dev/null; cat CHANGELOG.md; } |
+            awk -v ver="$version" '
               BEGIN { gsub(/\./, "[.]", ver); pat = "^## \\[" ver "\\]([[:space:]]|$)" }
               $0 ~ pat { insec = 1; next }
               insec && $0 ~ /^## / { insec = 0 }
               insec { print }
-            ' CHANGELOG.md > /tmp/release-notes.md && [ -s /tmp/release-notes.md ]; then
-            echo "::notice title=Release notes::using CHANGELOG.md section for $version"
+            ' > /tmp/release-notes.md && [ -s /tmp/release-notes.md ]; then
+            echo "::notice title=Release notes::using changelog section for $version"
             gh release create "$tag" dist/* \
               --title "NusaMation $tag" \
               --notes-file /tmp/release-notes.md
           else
-            echo "::notice title=Release notes::no CHANGELOG.md section for $version; using generated notes"
+            echo "::notice title=Release notes::no changelog section for $version; using generated notes"
             gh release create "$tag" dist/* \
               --title "NusaMation $tag" \
               --generate-notes

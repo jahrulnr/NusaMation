@@ -13,6 +13,7 @@ import { upsertProject } from "./projects.js";
 import { renderTopbar } from "./topbar.js";
 import { renderSettings } from "./settings.js";
 import { updateWhatsAppPanel } from "./whatsapp.js";
+import { updateTelegramPanel } from "./telegram.js";
 import { refreshBootstrap } from "./boot.js";
 import { dropPaneTabs, showAgentBrowser } from "./browser.js";
 
@@ -102,7 +103,7 @@ export function handleEvent(ev) {
       S.updateSeq++;
       S.updateInfo = data;
       renderTopbar();
-      if (S.modal?.type === "settings" && S.settingsTab === "about") renderSettings();
+      if (S.view === "settings" && S.settingsTab === "about") renderSettings();
       if (data.stage === "restarting") toast("Restarting to finish update", "This page reconnects and refreshes automatically.", "info", 15000);
       break;
     }
@@ -336,7 +337,7 @@ export function handleEvent(ev) {
         ag.status = data.status;
         ag.lastError = data.lastError || "";
         renderTopbar();
-        if (S.modal?.type === "settings" && S.settingsTab === "agents" && !S.agentForm && !S.mcpForm) renderSettings();
+        if (S.view === "settings" && S.settingsTab === "agents" && !S.agentForm && !S.mcpForm) renderSettings();
       }
       break;
     }
@@ -356,6 +357,10 @@ export function handleEvent(ev) {
         S.whatsapp = ch;
         if (ch.state === "connected" && ch.connected) { /* no toast to avoid noise */ }
         updateWhatsAppPanel();
+      }
+      if (ch.name === "telegram") {
+        S.telegram = ch;
+        updateTelegramPanel();
       }
       break;
     }

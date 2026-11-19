@@ -33,6 +33,22 @@ func (s *Store) CreateTurn(ctx context.Context, conversationID, userMessageID, o
 	return s.GetTurn(ctx, t.ID)
 }
 
+// LastFailedTurn returns the newest turn that ended in error — the retry
+// anchor when a caller has no specific error card to point at (the channel
+// /retry command).
+func (s *Store) LastFailedTurn(ctx context.Context, conversationID string) (Turn, error) {
+	var t Turn
+	err := s.db.QueryRowContext(ctx, `SELECT id,conversation_id,user_message_id,status,stop_reason,error,
+		origin_channel,origin_ref,queue_position,started_at,ended_at,created_at FROM turns
+		WHERE conversation_id=? AND status='error' ORDER BY created_at DESC, rowid DESC LIMIT 1`, conversationID).
+		Scan(&t.ID, &t.ConversationID, &t.UserMessageID, &t.Status, &t.StopReason, &t.Error,
+			&t.OriginChannel, &t.OriginRef, &t.QueuePosition, &t.StartedAt, &t.EndedAt, &t.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return t, ErrNotFound
+	}
+	return t, err
+}
+
 func (s *Store) GetTurn(ctx context.Context, id string) (Turn, error) {
 	var t Turn
 	err := s.db.QueryRowContext(ctx, `SELECT id,conversation_id,user_message_id,status,stop_reason,error,

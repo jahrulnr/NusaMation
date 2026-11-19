@@ -2,9 +2,9 @@ import { $, esc, icon } from "./util.js";
 import { S } from "./state.js";
 import { api } from "./api.js";
 import { toast } from "./toast.js";
-import { closeModal, confirmModal } from "./modal.js";
+import { confirmModal } from "./modal.js";
 import { renderSidebar } from "./sidebar.js";
-import { channelCards, openSettings, renderSettings } from "./settings.js";
+import { channelCards, renderSettings } from "./settings.js";
 
 export function whatsappPanel() {
   const ch = S.whatsapp || S.channels.find((c) => c.name === "whatsapp");
@@ -39,29 +39,78 @@ export function whatsappPanel() {
     </div>
     <div class="settings-section">
       <div class="settings-title">Allowlist</div>
-      <div class="settings-desc">One phone number or JID per line. An empty allowlist allows <em>no one</em> — a message only gets a reply once you add a number or <code class="mono">*</code>. The wildcard <code class="mono">*</code> allows everyone and must be the only entry.</div>
-      <textarea class="textarea allowlist" id="wa-allowlist" placeholder="+628123456789&#10;1203630...@g.us">${esc((settings.allowedNumbers || []).join("\n"))}</textarea>
-      <div class="form-actions" style="justify-content:flex-start"><button class="btn btn-secondary btn-sm" data-action="wa-save-allowlist">Save allowlist</button><button class="btn btn-ghost btn-sm" data-action="wa-allow-everyone">Allow everyone (*)</button><button class="btn btn-ghost btn-sm" data-action="wa-load-groups">${icon("refresh", "sm")} Load groups</button></div>
-      <div id="wa-groups" class="settings-desc" style="margin-top:8px"></div>
+      <div class="settings-desc">One phone number per line. An empty allowlist allows <em>no one</em> — a message only gets a reply once you add a number or <code class="mono">*</code>. The wildcard <code class="mono">*</code> allows everyone and must be the only entry.</div>
+      <textarea class="textarea allowlist" id="wa-allowlist" placeholder="+628123456789">${esc((settings.allowedNumbers || []).join("\n"))}</textarea>
+      <div class="form-actions" style="justify-content:flex-start"><button class="btn btn-secondary btn-sm" data-action="wa-save-allowlist">Save allowlist</button><button class="btn btn-ghost btn-sm" data-action="wa-allow-everyone">Allow everyone (*)</button></div>
     </div>
+    ${groupsSection(settings)}
     ${blockedSection(ch)}`;
+}
+
+// groupsSection is the group allowlist as a picker: a group has no identity
+// an operator can type from memory like a phone number, so groups are added
+// and removed from the list of groups this account has joined. Every toggle
+// saves immediately — there is no textarea step and no JID copying.
+function groupsSection(settings) {
+  const stored = settings.allowedGroups || [];
+  const known = Array.isArray(S.waGroups) ? S.waGroups : null;
+  const loading = !!S.waGroupsLoading;
+  const nameOf = (jid) => (known ? (known.find((g) => g.jid === jid) || {}).name : "") || "";
+  let rows = "";
+  if (known) {
+    const storedSet = new Set(stored);
+    const left = new Set(stored);
+    rows = known.map((g) => {
+      left.delete(g.jid);
+      const on = storedSet.has(g.jid);
+      return `<div class="settings-row"><div><div class="label">${esc(g.name || "Group")}</div><div class="desc mono">${esc(g.jid)}${g.participants ? " · " + esc(String(g.participants)) + " members" : ""}</div></div><button class="btn ${on ? "btn-ghost" : "btn-secondary"} btn-sm" data-action="wa-group-toggle" data-jid="${esc(g.jid)}" data-name="${esc(g.name || "")}">${on ? "Remove ✓" : "Add"}</button></div>`;
+    }).join("");
+    // Groups that were allowed but left since still show, so the list
+    // stays honest about what is whitelisted.
+    for (const jid of left) {
+      rows += `<div class="settings-row"><div><div class="label">${esc(nameOf(jid) || "Left group")}</div><div class="desc mono">${esc(jid)} · not joined anymore</div></div><button class="btn btn-ghost btn-sm" data-action="wa-group-toggle" data-jid="${esc(jid)}" data-name="">Remove</button></div>`;
+    }
+    if (!known.length) rows = `<div class="settings-desc">No groups joined on this account.</div>`;
+  } else if (stored.length) {
+    rows = stored.map((jid) => `<div class="settings-row"><div><div class="label">${esc(nameOf(jid) || "Group")}</div><div class="desc mono">${esc(jid)}</div></div><button class="btn btn-ghost btn-sm" data-action="wa-group-toggle" data-jid="${esc(jid)}" data-name="">Remove</button></div>`).join("");
+  }
+  const note = known ? "" : `${stored.length ? "Connect and load your joined groups to see their names." : "Load your joined groups to pick the ones the bot may answer in."}`;
+  return `<div class="settings-section">
+    <div class="settings-title" style="display:flex;align-items:center;gap:8px">Group allowlist <span class="grow"></span><button class="btn btn-ghost btn-xs" data-action="wa-load-groups" ${loading ? "disabled" : ""}>${icon("refresh", "sm")} ${loading ? "Loading…" : "Load groups"}</button></div>
+    <div class="settings-desc">Groups are picked, not typed — a group has no number you can enter here. The group policy still decides when the bot replies inside an allowed group.</div>
+    ${rows}
+    ${note ? `<div class="settings-desc">${note}</div>` : ""}
+  </div>`;
 }
 
 // blockedSection lists recent senders the allowlist rejected, each with a
 // one-tap allow button that appends the normalized number to the allowlist.
+// Group traffic gets an Allow-group action too: allowing the member's number
+// would only whitelist their private chats, not the group they wrote in.
 function blockedSection(ch) {
   const blocked = ch?.stats?.blocked || [];
   if (!blocked.length) return "";
   const allowed = new Set((S.whatsappSettings?.allowedNumbers || []).map((n) => String(n).replace(/\D/g, "")));
+  const groupsAllowed = new Set(S.whatsappSettings?.allowedGroups || []);
   return `<div class="settings-section">
     <div class="settings-title">Blocked senders <span class="muted" style="font-weight:400">(${blocked.length})</span></div>
-    <div class="settings-desc">Messages these senders were ignored. Allowing adds their number to the allowlist; they can then start a turn.</div>
-    ${blocked.map((b) => `<div class="settings-row"><div><div class="label">${esc(b.pushName || b.sender)}</div><div class="desc mono">${esc(b.chat || b.sender)}${b.pushName ? " · " + esc(b.sender) : ""}</div></div><button class="btn btn-secondary btn-sm" data-action="wa-allow-sender" data-sender="${esc(b.sender)}" ${allowed.has(String(b.sender).replace(/\D/g, "")) ? "disabled" : ""}>${allowed.has(String(b.sender).replace(/\D/g, "")) ? "Allowed" : "Allow"}</button></div>`).join("")}
+    <div class="settings-desc">Messages these senders were ignored. Allowing a number opens their private chat; for group traffic allow the group itself.</div>
+    ${blocked.map((b) => {
+      const group = b.chat && String(b.chat).endsWith("@g.us") ? b.chat : "";
+      const groupOn = group && groupsAllowed.has(group);
+      const senderOn = allowed.has(String(b.sender).replace(/\D/g, ""));
+      const groupBtn = group ? `<button class="btn ${groupOn ? "btn-ghost" : "btn-secondary"} btn-sm" data-action="wa-allow-group" data-jid="${esc(group)}" ${groupOn ? "disabled" : ""}>${groupOn ? "Group allowed" : "Allow group"}</button>` : "";
+      return `<div class="settings-row"><div><div class="label">${esc(b.pushName || b.sender)}</div><div class="desc mono">${esc(b.chat || b.sender)}${b.pushName ? " · " + esc(b.sender) : ""}</div></div><div style="display:flex;gap:6px">${groupBtn}<button class="btn ${senderOn ? "btn-ghost" : "btn-secondary"} btn-sm" data-action="wa-allow-sender" data-sender="${esc(b.sender)}" ${senderOn ? "disabled" : ""}>${senderOn ? "Allowed" : "Allow"}</button></div></div>`;
+    }).join("")}
   </div>`;
 }
 
 export function startQRTimer() {
   if (S.qrTimer) clearInterval(S.qrTimer);
+  S.qrTimer = null;
+  // The poller lives only while the WhatsApp screen is actually visible —
+  // never on the channels list or while the chat is showing.
+  if (S.view !== "settings" || S.settingsTab !== "channels" || S.channel !== "whatsapp") return;
   const ch = S.whatsapp || S.channels.find((c) => c.name === "whatsapp");
   if (!ch || !["pairing", "connecting"].includes(ch.state)) return;
   S.qrTimer = setInterval(async () => {
@@ -80,9 +129,13 @@ export function startQRTimer() {
 }
 
 export function updateWhatsAppPanel() {
-  if (S.modal?.type !== "settings" || S.settingsTab !== "channels") return;
-  const cards = $("#channel-cards");
-  if (cards) cards.innerHTML = channelCards();
+  if (S.view !== "settings" || S.settingsTab !== "channels") return;
+  if (!S.channel) {
+    const cards = $("#channel-cards");
+    if (cards) cards.innerHTML = channelCards();
+    return;
+  }
+  if (S.channel !== "whatsapp") return;
   const el = $("#wa-panel");
   if (!el) return;
   const active = document.activeElement;
@@ -125,8 +178,7 @@ export async function waAction(action) {
       confirmModal("Unlink WhatsApp?", "This removes the linked device from NusaMation. Your WhatsApp account is not deleted.", async () => {
         await api("/channels/whatsapp/logout", { method: "POST" });
         await refreshChannels();
-        closeModal();
-        openSettings("channels");
+        renderSettings();
         toast("WhatsApp unlinked", "", "success");
       }, "Unlink");
     }
@@ -144,27 +196,57 @@ export async function refreshChannels() {
     if (wa) S.whatsapp = wa;
     renderSidebar();
     updateWhatsAppPanel();
-    if (S.modal?.type === "settings" && S.settingsTab === "channels") {
-      const cards = $("#channel-cards");
-      if (cards) cards.innerHTML = channelCards();
-    }
   } catch (e) { console.warn(e); }
 }
 
-// loadWaGroups lists the joined groups so the operator has the JIDs the
-// allowlist needs without copying them out of a log.
+// loadWaGroups refreshes the joined-group list the picker renders from; the
+// section itself re-renders from S.waGroups, so no DOM is patched by hand.
 export async function loadWaGroups() {
-  const host = $("#wa-groups");
-  if (!host) return;
-  host.innerHTML = `<span class="spinner"></span> Loading groups…`;
+  S.waGroupsLoading = true;
+  updateWhatsAppPanel();
   try {
     const d = await api("/channels/whatsapp/groups");
-    const groups = d.groups || [];
-    if (!groups.length) { host.textContent = "No groups joined."; return; }
-    host.innerHTML = groups.map((g) => `<div class="settings-row"><div><div class="label">${esc(g.name || "Group")}</div><div class="desc mono">${esc(g.jid)}</div></div><button class="btn btn-ghost btn-sm" data-action="wa-use-group" data-jid="${esc(g.jid)}">Use</button></div>`).join("");
+    S.waGroups = d.groups || [];
+    S.waGroupsLoading = false;
+    updateWhatsAppPanel();
   } catch (e) {
-    host.textContent = "";
+    S.waGroupsLoading = false;
+    updateWhatsAppPanel();
     toast("Could not load groups", e.message, "error");
+  }
+}
+
+// ensureWaGroups loads the joined list once per session when the account is
+// linked, so the picker is ready the moment the channels tab opens. A silent
+// skip keeps the stored groups renderable when offline.
+export async function ensureWaGroups() {
+  const ch = S.whatsapp;
+  if (S.view !== "settings" || S.settingsTab !== "channels" || S.channel !== "whatsapp") return;
+  if (!ch?.loggedIn || S.waGroupsTried || S.waGroupsLoading || Array.isArray(S.waGroups)) return;
+  S.waGroupsTried = true;
+  await loadWaGroups();
+}
+
+// toggleWaGroup adds or removes one group from the group allowlist and saves
+// immediately — the picker has no separate save step.
+export async function toggleWaGroup(jid, name) {
+  if (!jid) return;
+  const cur = (S.whatsappSettings?.allowedGroups || []).slice();
+  const has = cur.includes(jid);
+  const next = has ? cur.filter((g) => g !== jid) : [...cur, jid];
+  if (await saveWaSettings({ allowedGroups: next })) {
+    toast(has ? "Group removed from allowlist" : "Group added to allowlist", name || jid, "success");
+  }
+}
+
+// allowWaGroup whitelists the group a blocked message came from; the sender's
+// number would be the wrong object for group traffic.
+export async function allowWaGroup(jid) {
+  if (!jid || !String(jid).endsWith("@g.us")) return;
+  const cur = (S.whatsappSettings?.allowedGroups || []).slice();
+  if (cur.includes(jid)) return;
+  if (await saveWaSettings({ allowedGroups: [...cur, jid] })) {
+    toast("Group added to allowlist", jid, "success");
   }
 }
 

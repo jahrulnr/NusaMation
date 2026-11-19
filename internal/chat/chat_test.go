@@ -276,6 +276,7 @@ func TestParseCommandAndHelpers(t *testing.T) {
 	}{
 		{"/help", "help", nil},
 		{"/approve ap_123", "approve", []string{"ap_123"}},
+		{"/approve@somebot ap_123", "approve", []string{"ap_123"}},
 		{"/model@nusa fake-fast", "model", []string{"fake-fast"}},
 		{"hello", "", nil},
 		{" /new fake ", "new", []string{"fake"}},

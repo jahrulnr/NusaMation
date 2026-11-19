@@ -12,6 +12,7 @@ there (or `journalctl --user -u nusamation` under systemd).
 | Automation run interrupted | Inspect its linked chat before retrying. A server interruption between claiming a run and linking its turn is recorded as interrupted; it is not automatically replayed. |
 | ACP default cannot be saved | Reopen **Control center → Defaults**, check the agent can start and authenticate, and select options again in order. A later option that resets an earlier one is re-applied automatically; the save only fails when the combination cannot hold at all. |
 | WhatsApp offline | `GET /api/channels` → find `name:"whatsapp"`; if `stats.paired:false`, re-scan the QR (see whatsapp.md). Try `connect`/`disconnect` before deleting `whatsapp.db`. |
+| Telegram offline | `GET /api/channels` → find `name:"telegram"`; check `state`, `detail` and `stats.tokenSet`. A revoked token stops polling after six consecutive failures — save a fresh @BotFather token and Connect (see telegram.md). |
 | WhatsApp ignores someone | Check the allowlist and group policy (`whatsapp show`). Empty allowlist = everyone is allowed. |
 | Port already in use | Another instance is running on `--addr`, or the port is taken by something else. |
 | Database locked | Two processes writing the same `nusamation.db`. Run one server per data dir; the CLI is safe alongside the server. |

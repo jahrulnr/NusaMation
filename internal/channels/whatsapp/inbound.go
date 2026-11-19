@@ -158,11 +158,54 @@ func (c *Channel) handleReceipt(v *events.Receipt) {
 	if err := c.store.MarkWhatsAppReceipt(ctx, v.Chat.ToNonAD().String(), ids, state); err != nil {
 		c.log.Debug("could not record WhatsApp receipt", "error", err)
 	}
+	// The chat layer maps the ids onto the conversation bubbles that carried
+	// them and republishes those messages.
+	if reporter, ok := c.handler.(channels.ReceiptReporter); ok {
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel2()
+		if err := reporter.ReportReceipt(ctx2, v.Chat.ToNonAD().String(), ids, state); err != nil {
+			c.log.Debug("could not report WhatsApp receipts", "error", err)
+		}
+	}
 }
 
 // cheapChatName labels a live indexed message without network calls: group
 // names come from the cache when present, DMs use the push name. The full
 // groupName lookup fills the cache when the message is answered.
+// notifyUndecryptable surfaces one undecryptable message per chat per minute
+// on the conversation that owns the chat, so the operator learns the bot went
+// silent on a real message instead of just the log knowing.
+func (c *Channel) notifyUndecryptable(info types.MessageInfo) {
+	c.noticeMu.Lock()
+	if c.noticeAt == nil {
+		c.noticeAt = map[string]time.Time{}
+	}
+	if at, ok := c.noticeAt[info.Chat.String()]; ok && time.Since(at) < time.Minute {
+		c.noticeMu.Unlock()
+		return
+	}
+	c.noticeAt[info.Chat.String()] = time.Now()
+	c.noticeMu.Unlock()
+	if c.handler == nil {
+		return
+	}
+	reporter, ok := c.handler.(channels.NoticeReporter)
+	if !ok {
+		return
+	}
+	in := channels.Inbound{
+		Channel: "whatsapp", ExternalID: info.Chat.String(), SenderID: info.Sender.String(),
+		SenderName: strings.TrimSpace(info.PushName), IsGroup: info.IsGroup,
+		Timestamp: info.Timestamp.UnixMilli(),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := reporter.ReportNotice(ctx, in, "Undecryptable WhatsApp message",
+		"A message from "+in.SenderName+" could not be decrypted — its content is missing from this conversation."); err != nil {
+		c.log.Debug("could not report undecryptable WhatsApp message", "error", err)
+	}
+}
+
 func (c *Channel) cheapChatName(info types.MessageInfo) string {
 	if info.IsGroup {
 		if name := c.cachedGroupName(info.Chat); name != "" {

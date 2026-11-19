@@ -55,6 +55,7 @@ export function renderShell() {
         <div class="chat-scroll" id="chat-scroll"><div class="chat-inner" id="chat"></div></div>
         <div class="plan-dock" id="plan-dock"></div>
         <div class="composer-wrap" id="composer-wrap"></div>
+        <div class="settings-view" id="settings-view" hidden></div>
       </main>
       <aside class="browser-pane" id="browser-pane" hidden></aside>
     </div>`;

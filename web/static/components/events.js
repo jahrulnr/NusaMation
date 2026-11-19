@@ -10,7 +10,7 @@ import { openToolMenu, previewAnnotation, previewFile, renderChat, renderPlanDoc
 import { changeElicitationPage, renderApprovalsModal, resolveApproval, respondElicitation, showAgentBlocker, showPendingRequest, submitElicitation } from "./requests.js";
 import { autoGrow, editAnnotationComment, editRecordingComment, focusComposer, openAgentMenu, openComposerConfig, openComposerSettings, openConfigMenu, openSendMenu, openUsageDetail, pickAgent, prepareComposer, renderComposer, renderPendingAttachments, retryTurn, sendMessage, setConfig, setSendMode, stopTurn } from "./composer.js";
 import { activatePaneTab, addPaneTab, annotatePage, browserDeviceMode, browserEscape, browserHistory, browserInstall, browserReconnect, browserTakeover, cancelAnnotation, closeBrowserPane, closePaneTab, openBrowserMenu, openNewTabMenu, openPaneCard, openProfilePicker, openSavedLogins, recordingAttach, recordingAttachSubmit, recordingDismiss, recordingPause, recordingResume, recordingStart, recordingStop, submitAnnotation, toggleAnnotate, toggleBrowserPane, toggleDeviceBar, toggleDevtools } from "./browser.js";
-import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, newProjectChat, openControlActivity, openConversationMenu, openMoreMenu, openRoutingMenu, openTeamPanel, renameConversation, selectConversation, setRoute, togglePin, toggleRouting } from "./conversations.js";
+import { archiveConversation, deleteConversation, exportConversation, loadConversation, loadOlderMessages, newConversation, newProjectChat, openControlActivity, openConversationMenu, openMoreMenu, openRoutingMenu, openTeamPanel, renameConversation, selectConversation, setLabelConversation, setRoute, togglePin, toggleRouting } from "./conversations.js";
 import { renderOffline } from "./shell.js";
 import { scheduleDraftSave } from "./convmeta.js";
 import { closeMobileSidebar, filterSidebar, openMobileSidebar, renderSidebar, toggleProjectRow, toggleSidebarCollapsed } from "./sidebar.js";
@@ -18,10 +18,11 @@ import { addDraftSource, confirmAddedFolders, deleteProject, loadFolderBrowser, 
 import { renderTopbar } from "./topbar.js";
 import { closeWS, connectWS } from "./ws.js";
 import { openAuthTerminal } from "./terminal.js";
-import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadMCP, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, reloadActiveAgents, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications } from "./settings.js";
+import { applyUpdate, checkUpdate, closeSettings, deleteAgent, deleteMCP, envRowsHTML, loadMCP, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, reloadActiveAgents, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, settingsBack, testNotification, toggleNotifications, updateSettingsFrame } from "./settings.js";
 import { copyEnvRef, insertSecretRef, openSecretRefPopover, refreshAgentEnvRow } from "./browser-secrets.js";
 import { loadAutomations, saveAutomation, updateAutomationBuilder } from "./automations.js";
-import { refreshChannels, saveWaSettings, loadWaGroups, allowWaSender, waAction } from "./whatsapp.js";
+import { refreshChannels, saveWaSettings, loadWaGroups, ensureWaGroups, toggleWaGroup, allowWaGroup, allowWaSender, waAction } from "./whatsapp.js";
+import { saveTgSettings, tgAction, allowTgSender, allowTgGroup, allowTgEveryone, refreshTelegram } from "./telegram.js";
 import { openPalette, runPalette } from "./palette.js";
 import { doLogin, doLogout } from "./auth.js";
 import { startApp } from "./boot.js";
@@ -202,6 +203,7 @@ export function bindEvents() {
     if (sel.dataset.change === "ui-font") setUiFont(sel.value);
     if (sel.dataset.change === "ui-font-size") setUiFontSize(sel.value);
     if (sel.dataset.change === "wa-group") saveWaSettings({ groupPolicy: sel.value });
+    if (sel.dataset.change === "tg-group") saveTgSettings({ groupPolicy: sel.value });
     if (sel.dataset.change === "wa-number") {
       const min = Number(sel.min ?? 0), max = Number(sel.max ?? 60);
       let v = Math.round(Number(sel.value));
@@ -277,9 +279,18 @@ export function bindEvents() {
       case "close-sidebar": closeMobileSidebar(); break;
       case "open-settings": openSettings(target.dataset.tab || ""); break;
       case "open-account": openSettings("account"); break;
+      case "settings-back": settingsBack(); break;
+      case "channel-open":
+        // Only channels with a dedicated screen push a level; other cards
+        // stay inert instead of re-rendering the same list behind a Back.
+        if (target.dataset.channel !== "whatsapp" && target.dataset.channel !== "telegram") break;
+        S.channel = target.dataset.channel;
+        renderSettings();
+        break;
+      case "channel-back": settingsBack(); break;
       case "settings-tab":
-        S.settingsTab = target.dataset.tab; S.agentForm = null; S.mcpForm = null;
-        if (S.qrTimer && S.settingsTab !== "channels") { clearInterval(S.qrTimer); S.qrTimer = null; }
+        S.settingsTab = target.dataset.tab; S.agentForm = null; S.mcpForm = null; S.channel = "";
+        if (S.qrTimer) { clearInterval(S.qrTimer); S.qrTimer = null; }
         if (S.settingsTab === "automations") loadAutomations();
         else if (S.settingsTab === "defaults") {
           S.defaultDraft = { agentId: S.agentDefaults.agentId || "", selections: (S.agentDefaults.selections || []).map((s) => ({ ...s })) };
@@ -301,7 +312,7 @@ export function bindEvents() {
         S.automationLoading = true; renderSettings();
         try { const d = await api(`/automations/${encodeURIComponent(id)}`); S.automationJob = d.automation; S.automationRuns = d.runs || []; S.automationView = "history"; }
         catch (err) { S.automationError = err.message; }
-        finally { S.automationLoading = false; if (S.modal?.type === "settings" && S.settingsTab === "automations") renderSettings(); }
+        finally { S.automationLoading = false; if (S.view === "settings" && S.settingsTab === "automations") renderSettings(); }
         break;
       }
       case "automation-room": closeModal(); await selectConversation(id); break;
@@ -333,7 +344,7 @@ export function bindEvents() {
       case "close-modal": closeModal(); break;
       case "confirm-action": {
         const fn = S.confirmAction;
-        if (fn) { try { await fn(); } finally { S.confirmAction = null; } }
+        if (fn) { try { await fn(); } finally { S.confirmAction = null; closeModal(); } }
         break;
       }
       case "prompt-save": {
@@ -382,6 +393,7 @@ export function bindEvents() {
       case "toggle-pin": await togglePin(id); closePopover(); break;
       case "toggle-plan": S.planExpanded = !S.planExpanded; renderPlanDock(); break;
       case "rename-conv": renameConversation(id); break;
+      case "set-conv-label": setLabelConversation(id); break;
       case "archive-conv": await archiveConversation(id); break;
       case "delete-conv": await deleteConversation(id); break;
       case "export-conv": exportConversation(id); break;
@@ -444,7 +456,7 @@ export function bindEvents() {
         }
         break;
       }
-      case "retry": await retryTurn(); break;
+      case "retry": await retryTurn(target.dataset.turn); break;
       case "retry-boot": startApp(); break;
       case "retry-load": await loadConversation(id, false); break;
       case "load-older":
@@ -597,7 +609,7 @@ export function bindEvents() {
           } else if (saved) {
             detail = saved === 1 ? "1 entry." : `${saved} entries.`;
           } else {
-            detail = "Empty allowlist — no one can reach the agent until you add a number or *.";
+            detail = "Empty allowlist — direct messages are denied until you add a number or *.";
           }
           toast("Allowlist saved", dropped > 0 ? `${detail} ${dropped} ignored (invalid or duplicate).` : detail, "success");
         }
@@ -605,16 +617,63 @@ export function bindEvents() {
       }
       case "wa-allow-everyone": await saveWaSettings({ allowedNumbers: ["*"] }); break;
       case "wa-load-groups": await loadWaGroups(); break;
-      case "wa-use-group": {
-        const ta = $("#wa-allowlist");
-        if (ta && target.dataset.jid) {
-          ta.value = (ta.value.trim() ? ta.value.replace(/\s*$/, "\n") : "") + target.dataset.jid;
-          ta.focus();
+      case "wa-group-toggle": await toggleWaGroup(target.dataset.jid, target.dataset.name); break;
+      case "wa-allow-group": await allowWaGroup(target.dataset.jid); break;
+      case "wa-allow-sender": await allowWaSender(target.dataset.sender); break;
+      case "tg-connect": await tgAction("connect"); break;
+      case "tg-disconnect": await tgAction("disconnect"); break;
+      case "tg-logout": await tgAction("logout"); break;
+      case "tg-toggle": {
+        const key = target.dataset.key;
+        const cur = S.telegramSettings || {};
+        await saveTgSettings({ [key]: !cur[key] });
+        break;
+      }
+      case "tg-save-token": {
+        const field = $("#tg-token");
+        const token = (field?.value || "").trim();
+        if (!token) { toast("Nothing to save", "Paste the bot token from @BotFather first.", "info"); break; }
+        if (await saveTgSettings({ token })) {
+          if (field) field.value = "";
+          toast("Bot token saved", "The token was verified against Telegram and stored encrypted.", "success");
         }
         break;
       }
-      case "wa-allow-sender": await allowWaSender(target.dataset.sender); break;
-      case "refresh-channels": await refreshChannels(); break;
+      case "tg-save-users": {
+        const raw = $("#tg-user-allowlist")?.value || "";
+        const allowedUserIds = raw.split(/\n|,/).map((s) => s.trim()).filter(Boolean);
+        if (await saveTgSettings({ allowedUserIds })) {
+          const saved = (S.telegramSettings?.allowedUserIds || []).length;
+          // The server rejects invalid entries outright, so anything the
+          // normalized list dropped here is a duplicate.
+          const dropped = allowedUserIds.length - saved;
+          let detail;
+          if (saved === 1 && (S.telegramSettings?.allowedUserIds || [])[0] === "*") {
+            detail = "Wildcard — any sender can reach the agent.";
+          } else if (saved) {
+            detail = saved === 1 ? "1 entry." : `${saved} entries.`;
+          } else {
+            detail = "Empty allowlist — messages are denied until you add an id or *.";
+          }
+          toast("User allowlist saved", dropped > 0
+            ? `${detail} ${dropped} duplicate ${dropped === 1 ? "entry" : "entries"} removed.`
+            : detail, "success");
+        }
+        break;
+      }
+      case "tg-save-groups": {
+        const raw = $("#tg-group-allowlist")?.value || "";
+        const allowedGroupIds = raw.split(/\n|,/).map((s) => s.trim()).filter(Boolean);
+        if (await saveTgSettings({ allowedGroupIds })) {
+          const saved = (S.telegramSettings?.allowedGroupIds || []).length;
+          toast("Group allowlist saved", saved === 1 ? "1 entry." : `${saved} entries.`, "success");
+        }
+        break;
+      }
+      case "tg-allow-everyone": await allowTgEveryone(); break;
+      case "tg-allow-sender": await allowTgSender(target.dataset.id); break;
+      case "tg-allow-group": await allowTgGroup(target.dataset.chat); break;
+      case "refresh-channels": await refreshChannels(); await refreshTelegram(); break;
       case "update-check": await checkUpdate(); break;
       case "update-apply": applyUpdate(); break;
       case "notify-toggle": await toggleNotifications(); break;
@@ -702,6 +761,7 @@ export function bindEvents() {
     if (e.key === "Escape") {
       if ($("#modal-root").innerHTML) { closeModal(); return; }
       if ($(".popover")) { closePopover(); return; }
+      if (S.view === "settings") { settingsBack(); return; }
       if (browserEscape()) return;
       closeMobileSidebar();
       return;
@@ -710,7 +770,7 @@ export function bindEvents() {
       e.preventDefault();
       $("[data-action=prompt-save]")?.click();
     }
-    if ((e.key === "Enter" || e.key === " ") && e.target?.classList?.contains("conv-item")) {
+    if ((e.key === "Enter" || e.key === " ") && (e.target?.classList?.contains("conv-item") || e.target?.classList?.contains("channel-card"))) {
       e.preventDefault();
       e.target.click();
     }
@@ -720,6 +780,13 @@ export function bindEvents() {
 
   window.addEventListener("resize", () => {
     syncAppHeight();
+    const settingsView = $("#settings-view");
+    // Crossing the breakpoint is class-only except widening out of the
+    // section list, which needs a concrete tab restored — the one case with
+    // no unsaved input to rebuild away.
+    if (S.view === "settings" && settingsView && settingsView.classList.contains("narrow") !== isMobile()) {
+      if (S.settingsTab || isMobile()) updateSettingsFrame(); else renderSettings();
+    }
     const editingPopover = isMobile() && document.activeElement?.matches(".composer-search, .annotate-comment") ? document.activeElement.closest(".popover") : null;
     if (editingPopover) editingPopover._reposition?.(); else closePopover();
     autoGrow();
@@ -745,6 +812,6 @@ export function bindEvents() {
   window.addEventListener("popstate", () => {
     const m = location.pathname.match(/^\/c\/([^/]+)/);
     if (m) selectConversation(decodeURIComponent(m[1]), false);
-    else { ++S.loadSeq; S.loadingConversation = false; S.current = null; switchComposer(""); S.messages = []; S.turns = {}; renderTopbar(); renderChat(); renderComposer(); }
+    else { ++S.loadSeq; S.loadingConversation = false; S.current = null; switchComposer(""); S.messages = []; S.turns = {}; closeSettings(); renderTopbar(); renderChat(); renderComposer(); }
   });
 }

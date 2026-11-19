@@ -63,6 +63,30 @@ func TestSlashReferenceDoesNotBecomeCommand(t *testing.T) {
 	}
 }
 
+// A room or project mention tells the agent exactly which id to act on, so
+// "@cat" is resolvable without the agent guessing from the title.
+func TestRoomAndProjectMentionsBecomeAgentContext(t *testing.T) {
+	text := "@NusaLLM juga, cek si @cat deh"
+	proj := strings.Index(text, "@NusaLLM")
+	cat := strings.Index(text, "@cat")
+	refs := []store.PromptReference{
+		{Kind: "project", ID: "prj_nusallm", Label: "@NusaLLM", Start: proj, End: proj + len("@NusaLLM")},
+		{Kind: "conversation", ID: "cv_hunter", Label: "@cat", Start: cat, End: cat + len("@cat")},
+	}
+	if err := validatePromptReferences(text, refs); err != nil {
+		t.Fatal(err)
+	}
+	prompt, blocks, command := promptReferences(text, refs)
+	if command || prompt != text {
+		t.Fatalf("mention prompt=%q command=%v", prompt, command)
+	}
+	if len(blocks) != 1 || !strings.Contains(blocks[0].Text, "@cat refers to conversation cv_hunter") ||
+		!strings.Contains(blocks[0].Text, "nusamation_conversation tools") ||
+		!strings.Contains(blocks[0].Text, "@NusaLLM refers to the project with id prj_nusallm") {
+		t.Fatalf("mention blocks=%+v", blocks)
+	}
+}
+
 func TestReferenceSearchSeparatesSameNameAndUsesProjectRoots(t *testing.T) {
 	svc, st, _, ag := newProjectEnv(t, "")
 	root := t.TempDir()

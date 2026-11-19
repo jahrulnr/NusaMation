@@ -214,12 +214,12 @@ Side-effecting prompts are never blindly replayed by the supervisor; a failed tu
 
 ## Extending
 
-To add Telegram/Discord:
+To add another chat channel (Discord, Slack, …):
 
 1. Implement `channels.Channel` and, if controllable, `channels.Controller`.
 2. Convert inbound payloads into `channels.Inbound` with a stable chat/thread ID.
 3. Enforce the adapter's own allowlist/group policy before calling the handler.
 4. Return a `Delivery` from `Begin` that edits the acknowledgement if the platform supports edits; otherwise no-op and send on final.
-5. Register the channel in `internal/app` and add a settings card in `web/static/components/settings.js` (channel status/panel helpers live in `components/whatsapp.js`).
+5. Register the channel in `internal/app` and add a settings card in `web/static/components/settings.js` (channel status/panel helpers live next to the adapter's panel, e.g. `components/whatsapp.js` and `components/telegram.js`).
 
 No changes to the orchestrator are required for a plain text channel.

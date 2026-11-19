@@ -99,18 +99,28 @@ nusamation whatsapp set --enabled --group-policy mention --allow-add +6281234567
 
 ### Allowlist
 
-`allowedNumbers` accepts phone numbers or JIDs, one per line/entry:
+`allowedNumbers` accepts phone numbers, one per line/entry:
 
 ```text
 +62 812 3456 7890
-1203630...@g.us
 ```
 
-Values are normalised to digits. **An empty list allows no one** — the agent stays silent until you add a number, so an unforgotten form never turns into a public agent. A single `*` entry allows everyone explicitly and must be the only entry; the CLI and the web control center refuse `*` combined with numbers. A group is allowed if either the group JID or a sender is allowlisted. The CLI and the web control center both refuse to save a list whose entries are all invalid — it would normalize to empty and deny everyone by accident; clearing the list explicitly (`[]` or an empty textarea) is the deliberate way to deny everyone. The success toast reports the normalized entry count and how many raw lines were dropped as invalid or duplicate.
+Values are normalised to digits. **An empty list allows no one** — the agent stays silent until you add a number, so an unforgotten form never turns into a public agent. A single `*` entry allows everyone explicitly and must be the only entry; the CLI and the web control center refuse `*` combined with numbers or groups. The CLI and the web control center both refuse to save a list whose entries are all invalid — it would normalize to empty and deny everyone by accident; clearing the list explicitly (`[]` or an empty textarea) is the deliberate way to deny everyone. The success toast reports the normalized entry count and how many raw lines were dropped as invalid or duplicate.
 
-**Finding the JIDs:** `nusamation whatsapp groups` (or `GET /api/channels/whatsapp/groups`) lists every joined group with its JID and name; the web panel has a **Load groups** button beside the allowlist that fills a list with a **Use** action per group.
+### Group allowlist
 
-**Blocked senders:** messages a rejected sender is logged at info level and recorded in a small per-channel list, shown in the web panel with an **Allow** button that appends the number to the allowlist.
+Groups are allowlisted by **picking**, not typing: a group has no identity an operator can enter from memory like a phone number, so `allowedGroups` stores full `...@g.us` JIDs and is filled from the list of groups the linked account has joined. In the web panel the **Group allowlist** section lists every joined group by name with an **Add**/**Remove ✓** toggle — each tap saves immediately, there is no textarea step and no JID copying. The picker loads automatically once the account is linked; **Load groups** refreshes it. A group that was allowed but has since been left keeps a remove row so the list stays honest.
+
+A group message is allowed when its group JID is in `allowedGroups` — or, for legacy installs, when the group's stripped digits or a sender still sits in `allowedNumbers`. The group policy still decides when the bot replies inside an allowed group. The CLI mirrors the picker:
+
+```bash
+nusamation whatsapp set --group-add 1203630...@g.us --group-remove 1203630old@g.us
+nusamation whatsapp set --groups '1203630a@g.us,1203630b@g.us'   # replace; empty clears
+```
+
+Bare digits are refused as group entries — they are ambiguous with phone numbers and belong in `allowedNumbers`. `nusamation whatsapp groups` (or `GET /api/channels/whatsapp/groups`) lists every joined group with its JID, name and allow state.
+
+**Blocked senders:** messages a rejected sender is logged at info level and recorded in a small per-channel list, shown in the web panel with an **Allow** button that appends the number to the allowlist; traffic from a group also gets **Allow group**, because allowing the member's number only opens their private chat, not the group they wrote in.
 
 **Set an allowlist before sharing the linked number.** The agent has access to the configured workspace.
 
@@ -161,6 +171,48 @@ WhatsApp receives a single message when the turn finishes. Interim assistant blo
 ### Outbound digest
 
 The chat layer converts markdown to WhatsApp-friendly text (bold, italic, headings, links) and strips ANSI. The final digest is the assistant's final text; if the agent only used tools, a short tool summary is sent. Replies are truncated by characters — WhatsApp accepts up to 30,000, matching the rule the agent is told; other channels use a 3,500-character default unless they declare their own limit. Explicit `whatsapp send` paths are read verbatim from anywhere the server can read, unlike reply attachments, which stay confined to the workspace.
+
+## Telegram
+
+The Telegram adapter is a private bot driven over `getUpdates` **long polling** — no webhook, no public URL needed. It speaks to `https://api.telegram.org/bot<token>/METHOD` through a thin stdlib HTTP client; there is no Telegram library in `go.mod`.
+
+### Token and polling
+
+A bot token from `@BotFather` is stored sealed with the store sealer under `channel.telegram.token`; `Settings()` only ever reports `tokenSet`, never the token itself. A new token is verified with `getMe` before it is saved — a typo cannot overwrite a working token. **Connect** validates the token once, publishes the command menu once, then runs the single poll loop. Saving a different token while connected cancels the old flow and starts a new one immediately; a per-flow generation prevents the old flow's cleanup from clearing the new flow's client or status. **Forget token** also clears the per-chat menu fingerprints. The poll offset (`last update_id + 1`) is persisted under `channel.telegram.offset`, so a restart resumes where it left off instead of replaying updates. `allowed_updates` is pinned to `message` and `inline_query`; edited messages, channel posts and callback queries are never delivered, and channel-type chats are skipped outright.
+
+A `429` with `parameters.retry_after` is honored: the poll loop sleeps (capped at one minute) without counting a consecutive failure, and a send waits out a hint of ten seconds or less once when the caller's deadline leaves room.
+
+### The `/` command menu
+
+On connect the adapter calls `setMyCommands` with the fixed 12-entry menu — `start help new agent model mode set status stop retry approve deny` — in the **default** scope. Names satisfy `^[a-z0-9_]{1,32}$` and descriptions stay within 256 characters. Telegram clients offer that menu while a user types `/`. The actual command handling is unchanged: `internal/chat` parses `/cmd@botname` suffixes, and `/start` is answered alongside `/help`. `/cancel` still works but is not advertised.
+
+When the linked conversation's ACP session advertises slash commands, that chat gets its own menu (`scope` `chat`): the same 12 commands first, then session commands whose names pass the grammar and do not collide, capped at 100. Names outside the grammar are skipped, as are entries whose description is shorter than Telegram's 3-character minimum (an empty description defaults to the command name), so one bad entry cannot fail the whole `setMyCommands` call. An empty session list deletes the chat scope so the default menu shows again, and `/new` does the same because the chat now belongs to a conversation that has not advertised commands yet. Forum topics share a chat id, so they share one menu. A failed publish is logged and does not fail the turn.
+
+### Mentions
+
+A bare `@` in a Telegram client is the username list; the bot cannot fill it with room labels. `#` has no registry in the Bot API and stays parked. Room and project mentions go through **inline mode**: the user types `@botusername`, the bot answers with rooms (label prefix or title) and projects (name or slug), and tapping one inserts `@handle` as the user's own message. That message comes back with `via_bot` set to this bot, and those tokens become conversation or project references — room labels win when a slug collides. An ordinary `@cat` that was typed without the inline picker stays plain text. Inline mode has to be enabled in BotFather (`/setinline`); until then Telegram never sends `inline_query` updates. File, folder, skill and MCP search stay on the web composer.
+
+An inline query from a sender the allowlist rejects gets an empty answer, so their client stops waiting. In a group whose policy is `mention`, a message sent through this bot's inline mode counts as addressing the bot.
+
+### Allowlist and group policy
+
+The allowlist model mirrors WhatsApp: **an empty list allows no one**. `allowedUserIds` takes decimal numeric user ids; `allowedGroupIds` takes **negative** numeric chat ids for groups/supergroups. A positive id in the group list is refused by the settings API and dropped from stored legacy settings — a private chat's `chat_id` equals the user id, so accepting it would silently open that DM. A lone `*` in the user list allows every sender — it must be the only entry, and group policy still applies on top. Rejected senders land in a bounded blocked ring shown in the panel with an **Allow** button that adds the numeric id; group traffic also gets **Allow group** for the chat id. Usernames are never allowed — they can change. Messages older than two hours are dropped before the allowlist runs, so stale stranger messages never enter that ring.
+
+Group policy: `disabled` ignores groups, `mention` (default) requires an `@bot` mention entity or literal, a `text_mention` of the bot, a reply to a bot message, a message sent through this bot's inline mode, or a `/` command, and `all` accepts everything Telegram delivers — which still requires privacy mode off in BotFather, since privacy mode keeps ordinary group messages from reaching the bot at all. A literal mention must be a whole username token: `@nusa_bot_extra` and `x@nusa_bot` do not count. Forum topics stay separated: `message_thread_id` is carried inbound and back out on every reply.
+
+### Delivery
+
+One `sendMessage` per completed turn, sent with `parse_mode: HTML` and capped at 4,096 **UTF-16 code units** — Telegram's own unit, where an astral emoji counts as two. Cutting happens at the send boundary without splitting a rune. Thoughts and tool output stay on the web. `ResponseRules` tells the agent which tags render — `<b>`, `<i>`, `<u>`, `<s>`, `<code>`, `<pre>`, `<blockquote>` and `<a href="https://…">` — that Markdown, headings and tables do not, and that an emoji can consume two units.
+
+While a turn runs, the adapter refreshes `sendChatAction` (`typing`) about every four seconds; it stops on the final send, disconnect or shutdown and never creates a message.
+
+Every outgoing text — turn final, `/help`, command replies, approval pings — passes one sanitizer before send: `&`, `<` and `>` in plain text become entities, unknown or mismatched tags are escaped as text, tags inside `<code>`/`<pre>` stay literal, and a tag still open at the end is closed. If Telegram still rejects the entities, the original text is resent without `parse_mode` (the first error is logged), so a formatting mistake never swallows a message. Media captions use the same sanitizer and are cut to 1,024 UTF-16 units.
+
+### Media
+
+Replies may attach files with `[name](path)` or `![name](path)`; the chat layer collects and reads them, and the adapter uploads each as multipart `form-data` with `chat_id`, `message_thread_id` when the chat is a forum topic, and the sanitized caption. Upload file names have control characters stripped and are length-bounded so an agent-supplied label cannot inject multipart headers. Images up to 10 MB go through `sendPhoto`, larger images become documents (`sendPhoto` refuses them), GIFs go through `sendAnimation`, video through `sendVideo`, OGG audio through `sendVoice`, other audio through `sendAudio`, and everything else through `sendDocument`. The 25 MB chat-layer ceiling is not raised. A caption Telegram cannot parse is retried unparsed while the file still arrives.
+
+Inbound, `photo` (largest rendition), `document`, `video`, `audio`, `voice`, `video_note`, `animation` and `sticker` are downloaded through `getFile` and stored as conversation attachments; stickers arrive as `image/webp` files, never echoed back as stickers. A file whose declared size exceeds the Bot API's 20 MB `getFile` limit is not requested at all and the prompt text gets `[File is larger than 20 MB and was not downloaded]`; a failed lookup or transfer appends the WhatsApp-style marker for that kind (`[Image could not be downloaded]`, …). The bot token never appears in those errors or the log. Telegram sends albums as one update per item: items sharing `chat_id`, `message_thread_id` and `media_group_id` are buffered for 400 ms after the last one and delivered as a single inbound with at most six attachments, the first item's id, and the captions joined. A pending album is flushed on disconnect. There is no Telegram-specific send route; control goes through the generic `/api/channels/telegram/*` endpoints.
 
 ## Adding a channel
 

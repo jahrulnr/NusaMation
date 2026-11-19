@@ -2,11 +2,14 @@ package whatsapp
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.mau.fi/whatsmeow/types"
 
 	"github.com/jahrulnr/nusamation/internal/store"
 )
@@ -48,6 +51,46 @@ func TestAllowlistAndNormalization(t *testing.T) {
 	}
 	if s.allows([]string{"999@s.whatsapp.net"}, []string{"555@g.us"}) {
 		t.Fatal("unknown sender/group should be denied")
+	}
+}
+
+func TestGroupAllowlist(t *testing.T) {
+	// Group entries keep their full @g.us JID: the identity survives the
+	// save, so the panel picker can show which group a row is.
+	s := Settings{AllowedGroups: []string{"1203630-1234@g.us:7", "Family Group", "1203630-1234@g.us"}}
+	s.Normalize()
+	if len(s.AllowedGroups) != 1 || s.AllowedGroups[0] != "1203630-1234@g.us" {
+		t.Fatalf("normalized groups = %#v", s.AllowedGroups)
+	}
+	if !s.allows(nil, []string{"1203630-1234@g.us"}) {
+		t.Fatal("the allowlisted group chat should be allowed even with no allowlisted sender")
+	}
+	if s.allows(nil, []string{"1203630-9999@g.us"}) {
+		t.Fatal("a different group should be denied")
+	}
+	// A group JID can never whitelist an individual sender.
+	if s.allows([]string{"1203630-1234@g.us"}, []string{"628@s.whatsapp.net"}) {
+		t.Fatal("group entries must not match sender JIDs")
+	}
+	// A phone number stays required for one-to-one chats.
+	if s.allows([]string{"6281234567890@s.whatsapp.net"}, nil) {
+		t.Fatal("groups-only allowlist should still deny direct messages")
+	}
+	// Bare digits are ambiguous with a phone number, so they are refused.
+	if NormalizeGroupJID("1203630") != "" || NormalizeGroupJID("1203630@lid") != "" || NormalizeGroupJID("team room@g.us") != "" {
+		t.Fatal("only digits-and-hyphen @g.us JIDs are valid group entries")
+	}
+	// The wildcard must stand alone across both lists.
+	mixed := Settings{AllowedNumbers: []string{"*"}, AllowedGroups: []string{"1203630-1234@g.us"}}
+	mixed.Normalize()
+	if err := mixed.ValidateAllowlist(); err == nil {
+		t.Fatal("wildcard combined with groups should be refused")
+	}
+	// Legacy installs may keep a stripped group JID among the numbers; the
+	// chat-JID comparison keeps working.
+	legacy := Settings{AllowedNumbers: []string{"1203630"}}
+	if !legacy.allows([]string{"999@s.whatsapp.net"}, []string{"1203630@g.us"}) {
+		t.Fatal("legacy stripped group entry should still allow the group")
 	}
 }
 
@@ -174,6 +217,55 @@ func TestUpdateSettingsRefusesInvalidAllowlist(t *testing.T) {
 	}
 }
 
+// The group allowlist is picker-driven, so a save that carries group entries
+// refuses non-group values loudly instead of dropping them into a silent
+// deny, and an intentional clear stays a clear.
+func TestUpdateSettingsGroupAllowlist(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	c := &Channel{store: st, log: slog.New(slog.NewTextHandler(io.Discard, nil)), settings: DefaultSettings()}
+
+	// A bare number is ambiguous with the numbers allowlist and refused.
+	err = c.UpdateSettings(ctx, []byte(`{"allowedGroups":["6281234567890"]}`))
+	if err == nil || !strings.Contains(err.Error(), "not a group JID") {
+		t.Fatalf("bare number as group error = %v, want refusal", err)
+	}
+	if got := c.settingsSnapshot(); len(got.AllowedGroups) != 0 {
+		t.Fatalf("settings changed after group refusal: %#v", got)
+	}
+
+	// Picker JIDs save verbatim and keep the group reachable.
+	if err := c.UpdateSettings(ctx, []byte(`{"allowedGroups":["1203630-1234@g.us:7"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	got := c.settingsSnapshot()
+	if len(got.AllowedGroups) != 1 || got.AllowedGroups[0] != "1203630-1234@g.us" {
+		t.Fatalf("group allowlist = %#v", got.AllowedGroups)
+	}
+	if !got.allows(nil, []string{"1203630-1234@g.us"}) {
+		t.Fatal("saved group should be allowed")
+	}
+
+	// The wildcard may not be mixed with groups either.
+	err = c.UpdateSettings(ctx, []byte(`{"allowedNumbers":["*"],"allowedGroups":["1203630-1234@g.us"]}`))
+	if err == nil || !strings.Contains(err.Error(), "only allowlist entry") {
+		t.Fatalf("wildcard+groups error = %v, want refusal", err)
+	}
+
+	// An explicit empty array is an intentional clear; without the key the
+	// stored groups stay untouched.
+	if err := c.UpdateSettings(ctx, []byte(`{"allowedGroups":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.settingsSnapshot().AllowedGroups) != 0 {
+		t.Fatal("group clear was not applied")
+	}
+}
+
 // Pacing and queue-cap clamp into their configured ranges; defaults are 5 s
 // and 20.
 func TestSettingsPacingNormalization(t *testing.T) {
@@ -193,5 +285,61 @@ func TestSettingsPacingNormalization(t *testing.T) {
 	def := DefaultSettings()
 	if def.SendPacing != 5 || def.QueueCap != 20 {
 		t.Fatalf("defaults = %d/%d, want 5/20", def.SendPacing, def.QueueCap)
+	}
+}
+
+type fakePresence struct {
+	resp  []types.IsOnWhatsAppResponse
+	err   error
+	calls [][]string
+}
+
+func (f *fakePresence) IsOnWhatsApp(_ context.Context, phones []string) ([]types.IsOnWhatsAppResponse, error) {
+	f.calls = append(f.calls, phones)
+	return f.resp, f.err
+}
+
+// Saving an allowlist through the running server verifies that bare numbers
+// are registered WhatsApp accounts; the wildcard and @-JIDs pass unchecked.
+func TestUpdateSettingsChecksPresence(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	c := &Channel{store: st, log: slog.New(slog.NewTextHandler(io.Discard, nil)), settings: DefaultSettings()}
+	fake := &fakePresence{resp: []types.IsOnWhatsAppResponse{
+		{Query: "6281234567890", IsIn: true}, {Query: "6281299998888", IsIn: false},
+	}}
+	c.presenceLookup = fake
+
+	err = c.UpdateSettings(ctx, []byte(`{"allowedNumbers":["+62 812-3456-7890","+62 812-9999-8888","1203630@g.us"]}`))
+	if err == nil || !strings.Contains(err.Error(), "6281299998888") {
+		t.Fatalf("presence error = %v, want 6281299998888 refused", err)
+	}
+	if got := c.settingsSnapshot(); len(got.AllowedNumbers) != 0 {
+		t.Fatalf("settings changed after refusal: %#v", got)
+	}
+	if len(fake.calls) != 1 || strings.Join(fake.calls[0], ",") != "6281234567890,6281299998888" {
+		t.Fatalf("presence lookups = %#v (group JID must be skipped)", fake.calls)
+	}
+
+	// A lookup failure must not block the save.
+	fake.err = errors.New("whatsapp down")
+	if err := c.UpdateSettings(ctx, []byte(`{"allowedNumbers":["628123"]}`)); err != nil {
+		t.Fatalf("lookup failure blocked the save: %v", err)
+	}
+	if got := c.settingsSnapshot(); len(got.AllowedNumbers) != 1 || got.AllowedNumbers[0] != "628123" {
+		t.Fatalf("save after failed lookup = %#v", got.AllowedNumbers)
+	}
+
+	// Entries without a patch skip the check entirely.
+	before := len(fake.calls)
+	if err := c.UpdateSettings(ctx, []byte(`{"sendTyping":false}`)); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.calls) != before {
+		t.Fatal("presence checked without an allowlist patch")
 	}
 }

@@ -24,6 +24,45 @@ type Store struct {
 
 func (s *Store) SetSealer(sealer *security.Sealer) { s.sealer = sealer }
 
+// ErrSealedValueUnreadable reports a value written with the store sealer being
+// read while no sealer (or the wrong one) is attached — e.g. a data directory
+// that lost its secret.key. Callers must not guess at the plaintext.
+var ErrSealedValueUnreadable = errors.New("sealed value cannot be opened: no sealer configured")
+
+// SealString encrypts a small standalone secret (a channel bot token, unlike
+// the per-agent env lists in sealSecrets). Sealed output is marked "sealed:"
+// so OpenString can tell sealed blobs from values written before a sealer
+// existed. With no sealer configured the plaintext is returned — the same
+// fallback sealSecrets uses in tests and unsealed stores.
+func (s *Store) SealString(plain string) (string, error) {
+	if s.sealer == nil {
+		return plain, nil
+	}
+	enc, err := s.sealer.Seal([]byte(plain))
+	if err != nil {
+		return "", err
+	}
+	return "sealed:" + enc, nil
+}
+
+// OpenString reverses SealString. A value without the "sealed:" marker was
+// stored unsealed and is returned verbatim, so stores that gain a sealer
+// later still read their old tokens.
+func (s *Store) OpenString(v string) (string, error) {
+	rest, ok := strings.CutPrefix(v, "sealed:")
+	if !ok {
+		return v, nil
+	}
+	if s.sealer == nil {
+		return "", ErrSealedValueUnreadable
+	}
+	b, err := s.sealer.Open(rest)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
@@ -47,6 +86,9 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// Rooms that predate labels get an animal handle so they are
+	// mentionable right after the upgrade; a no-op once every row has one.
+	s.backfillConversationLabels(ctx)
 	return s, nil
 }
 

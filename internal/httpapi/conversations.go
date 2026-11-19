@@ -446,7 +446,14 @@ func (s *Server) handleCancelQueuedTurn(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleRetry(w http.ResponseWriter, r *http.Request) {
-	turn, err := s.chat.Retry(r.Context(), r.PathValue("id"), "web", "")
+	var in struct {
+		TurnID string `json:"turnId"`
+	}
+	if err := readJSON(w, r, &in, 64<<10); err != nil || strings.TrimSpace(in.TurnID) == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "turnId is required — every error card carries its failed turn.")
+		return
+	}
+	turn, err := s.chat.Retry(r.Context(), r.PathValue("id"), in.TurnID, "web", "")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "retry_failed", err.Error())
 		return

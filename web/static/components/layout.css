@@ -62,21 +62,6 @@
   .welcome { padding: 30px 18px 60px; }
   .suggestion-grid { grid-template-columns: 1fr; }
   .welcome-orb { width: 54px; height: 54px; }
-  .modal.settings-modal { height: 94dvh; }
-  .settings-modal .settings-layout { flex: 1; min-height: 0; }
-  .settings-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
-  .settings-tabs {
-    display: grid; grid-auto-flow: column; grid-auto-columns: minmax(4.5rem, 1fr); overflow-x: auto;
-    align-items: stretch; align-self: start; gap: 2px;
-    border-right: 0; border-bottom: 1px solid var(--border); padding: 7px 6px;
-  }
-  .settings-tab {
-    flex-direction: column; justify-content: center; gap: 3px;
-    min-width: 0; min-height: 52px; padding: 6px 3px; border-radius: 8px;
-    font-size: 10.5px; line-height: 1.15; text-align: center;
-  }
-  .settings-tab .icon { display: block; width: 18px; height: 18px; }
-  .settings-tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .settings-content { padding: 16px; }
   .agent-card { flex-wrap: wrap; }
   .agent-card-main { flex: 1 1 180px; }
@@ -105,7 +90,6 @@
   .topbar-title-wrap { flex: 1; }
 }
 @media (max-width: 480px) {
-  .settings-tab { font-size: 10px; }
   .topbar-actions .pill-btn:not(.agent-pill) { display: none; }
   .chat-inner { padding: 14px 11px 8px; }
   .msg.user { padding-left: 0; }
@@ -114,9 +98,6 @@
   .composer-hint { display: none; }
   .composer textarea { font-size: 16px; } /* prevents iOS zoom */
   .topbar-actions .icon-btn { width: 36px; height: 36px; }
-}
-@media (max-width: 360px) {
-  .settings-tab { font-size: 9.5px; letter-spacing: -0.01em; }
 }
 /* The browser pane squeezes the chat column while the window stays wide, so
    the topbar also compacts against the column width, not just the viewport. */

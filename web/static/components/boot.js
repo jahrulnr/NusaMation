@@ -79,8 +79,12 @@ export function applyBootstrap(data) {
   S.approvalsById = new Map(S.approvals.map((a) => [a.id, a]));
   S.agentDefaults = data.agentDefaults || { agentId: "", selections: [] };
   S.welcomeAgent = S.welcomeAgent || (S.agents.find((a) => a.id === S.agentDefaults.agentId && a.enabled) || {}).id || (S.agents.find((a) => a.enabled) || {}).id || "";
-  S.channels.forEach((c) => { if (c.name === "whatsapp") S.whatsapp = c; });
+  S.channels.forEach((c) => {
+    if (c.name === "whatsapp") S.whatsapp = c;
+    if (c.name === "telegram") S.telegram = c;
+  });
   S.whatsappSettings = data.whatsapp || S.whatsappSettings || null;
+  S.telegramSettings = data.telegram || S.telegramSettings || null;
   S.routingDefaults = data.routingDefaults || S.routingDefaults || null;
   // S.current stays untouched: it is the room actually loaded by
   // selectInitialConversation/loadConversation, not a guess at the top row —

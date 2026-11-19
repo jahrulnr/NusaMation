@@ -76,7 +76,7 @@ The toolbar's red record button starts a session recording: a controls row shows
 
 ## Session instructions
 
-Type `/`, `@`, or `#` in the composer to search files, folders, skills, MCP servers, and commands advertised by the active session. Use arrow keys and Tab or click to select; Escape closes the menu. Without selection, the typed text is sent normally. Selected items keep their identities in drafts and queued messages; editing inside one removes its selection. Workspace and home skill directories are searched; the bounded search may not visit every file in a large workspace. MCP results name registered enabled servers; agent tool availability can vary. Drafts for new conversations have no session command list yet.
+The composer has two trigger prefixes. Type `/` to command the session: files, folders, skills, MCP servers, and slash commands advertised by the active session. Type `@` to mention — rooms by their label and projects by name; the send tells the agent exactly which conversation or project the mention refers to. `#` is parked: it triggers nothing for now. Use arrow keys and Tab or click to select; Escape closes the menu. Without selection, the typed text is sent normally. Selected items keep their identities in drafts and queued messages; editing inside one removes its selection. Workspace and home skill directories are searched; the bounded search may not visit every file in a large workspace. MCP results name registered enabled servers; agent tool availability can vary. Drafts for new conversations have no session command list yet.
 
 Selected files become ACP resource links, folders are identified by path, and skills and MCP servers are identified in instructions to the agent. The agent's access and capabilities determine whether it can use them. Selected commands are sent in the agent's `/command` form while the chat shows the original text.
 
@@ -141,13 +141,16 @@ Pass `--data-dir` when the server uses a non-default data directory. Env and hea
 
 ## Conversation control MCP
 
-NusaMation injects a second stdio MCP server, `nusamation_conversation`
-(`nusamation mcp run --conversation`). Every conversation can use every tool;
-there is no per-conversation or global opt-in.
+NusaMation injects a second stdio MCP server, `nusamation_conversation_<room>`
+(`nusamation mcp run --conversation`; the suffix is the room's label). The
+per-room name keeps harnesses that scope MCP servers by working directory from
+reusing one child — and one room's token — for every room in that directory.
+Every conversation can use every tool; there is no per-conversation or global
+opt-in.
 
 Tools exposed:
 
-- `list` — all conversations; `project` filters by id, name, or project-folder basename, and each row carries `lastTurn` status/prompt/answer previews.
+- `list` — all conversations; `project` filters by id, name, or project-folder basename, and each row carries its `label` (the room's mention handle) and `lastTurn` status/prompt/answer previews.
 - `projects_list` — project ids, names, root paths, pins, and active chat counts.
 - `search` — ranked snippets across message text; default kinds text/error, `kinds` can include tool/thought.
 - `export` — JSONL file for deep `rg`/`jq` analysis; expires in ten minutes.
@@ -157,6 +160,22 @@ Tools exposed:
 - `stop` — cancel a specific or the target's current turn.
 - `spawn` — create a delegated conversation with an optional first prompt and `project` (id or name).
 - `report` — one short progress message per minute to the caller's channel.
+
+Every conversation has a short lowercase `label` (an animal like `cat` for
+new rooms, editable in the web panel's conversation menu). The tools that
+name a target — `read`, `wait`, `send`, `stop` — accept the conversation id
+or its label, so a prompt mentioning `@cat` is a one-step lookup. When the
+user mentions a room or project with `@…`, the prompt arrives with a
+selected-references note carrying the exact conversation or project id.
+
+**Your connection belongs to one room.** In `list`, the row with `isSelf:
+true` is the room this connection is scoped to — verify it before relaying
+on a room's behalf. Some agents host several conversations in one process
+and can route a session's conversation tools through another room's
+connection; when that state is likely — the caller room is idle while its
+agent runs a turn elsewhere — `list` and `send` responses carry a
+`warning` naming the room whose identity may be wrong. Do not send under an
+identity that is not your room; say the mismatch in your reply instead.
 
 Target turns created by the bridge have origin `agent`: their final answer is
 not delivered to the target's own channel, and their approvals notify the

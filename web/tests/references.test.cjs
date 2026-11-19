@@ -7,10 +7,12 @@ const src = fs.readFileSync(path.join(__dirname, '../static/components/reference
 const { referenceTrigger, reconcileReferences, referencesForSend, referencesFromStored } = vm.runInNewContext(src + '\n;({ referenceTrigger, reconcileReferences, referencesForSend, referencesFromStored })', { TextEncoder, TextDecoder });
 const json = x => JSON.parse(JSON.stringify(x));
 
-test('all prefixes find the token at the caret, not email text', () => {
-  for (const p of ['/', '@', '#']) assert.deepEqual(json(referenceTrigger(`look ${p}mcp`, 9)), { start: 5, end: 9, prefix: p, query: 'mcp' });
+test('the active prefixes find the token at the caret, not email text', () => {
+  for (const p of ['/', '@']) assert.deepEqual(json(referenceTrigger(`look ${p}mcp`, 9)), { start: 5, end: 9, prefix: p, query: 'mcp' });
   assert.equal(referenceTrigger('me@example.com', 14), null);
   assert.deepEqual(json(referenceTrigger('look @mcp done', 7)), { start: 5, end: 9, prefix: '@', query: 'm' });
+  // # is parked: it starts no picker until a use is decided.
+  assert.equal(referenceTrigger('look #mcp', 9), null);
 });
 
 test('editing either duplicate keeps the other identity and shifts positions', () => {

@@ -31,6 +31,9 @@ Set flags:
   --allow "*"          Allow everyone (must be the only entry, never with numbers)
   --allow-add N        Add a number to the allowlist (repeatable)
   --allow-remove N     Remove a number from the allowlist (repeatable)
+  --groups "jid,jid"   Replace the group allowlist (full ...@g.us JIDs; empty clears)
+  --group-add JID      Add a group to the group allowlist (repeatable)
+  --group-remove JID   Remove a group from the group allowlist (repeatable)
   --read-receipts=B    Send read receipts
   --send-typing=B      Send typing indicators
   --retention-days N   Purge indexed messages older than N days (0 = keep)
@@ -38,8 +41,10 @@ Set flags:
   --queue-cap N        Maximum queued messages per chat
 
 Numbers may include +, spaces or JID suffixes; they are normalized to digits.
-An empty allowlist allows no one — the operator may not have filled the form
-yet. A single "*" allows everyone; "*" cannot be combined with numbers.
+Groups keep their full ...@g.us JID — find the JID of every joined group with
+'nusamation whatsapp groups'. An empty allowlist allows no one — the operator
+may not have filled the form yet. A single "*" allows everyone; "*" cannot be
+combined with numbers or groups.
 
 Flags:
   --data-dir DIR       NusaMation data directory (default ~/.nusamation)
@@ -106,14 +111,17 @@ func whatsappShow(args []string) error {
 func whatsappSet(args []string) error {
 	fs, dataDir := subFlagSet("whatsapp set", whatsappUsage)
 	var enabled, autoStart, readReceipts, sendTyping bool
-	var groupPolicy, allow string
-	var allowAdd, allowRemove stringList
+	var groupPolicy, allow, groups string
+	var allowAdd, allowRemove, groupAdd, groupRemove stringList
 	fs.BoolVar(&enabled, "enabled", false, "enable channel")
 	fs.BoolVar(&autoStart, "auto-start", false, "connect automatically when paired")
 	fs.StringVar(&groupPolicy, "group-policy", "", "disabled|mention|all")
 	fs.StringVar(&allow, "allow", "", "replace allowlist (comma-separated)")
 	fs.Var(&allowAdd, "allow-add", "add number to allowlist (repeatable)")
 	fs.Var(&allowRemove, "allow-remove", "remove number from allowlist (repeatable)")
+	fs.StringVar(&groups, "groups", "", "replace group allowlist (comma-separated ...@g.us JIDs)")
+	fs.Var(&groupAdd, "group-add", "add group JID to group allowlist (repeatable)")
+	fs.Var(&groupRemove, "group-remove", "remove group JID from group allowlist (repeatable)")
 	fs.BoolVar(&readReceipts, "read-receipts", false, "send read receipts")
 	fs.BoolVar(&sendTyping, "send-typing", false, "send typing indicators")
 	retention := fs.Int("retention-days", 0, "purge indexed messages older than N days (0 = keep)")
@@ -130,7 +138,8 @@ func whatsappSet(args []string) error {
 	mutating := false
 	for _, name := range []string{
 		"enabled", "auto-start", "group-policy", "allow",
-		"allow-add", "allow-remove", "read-receipts", "send-typing", "retention-days", "send-pacing", "queue-cap",
+		"allow-add", "allow-remove", "groups", "group-add", "group-remove",
+		"read-receipts", "send-typing", "retention-days", "send-pacing", "queue-cap",
 	} {
 		mutating = mutating || changed[name]
 	}
@@ -222,6 +231,45 @@ func whatsappSet(args []string) error {
 			return err
 		}
 		s.AllowedNumbers = list
+	}
+	if changed["groups"] || changed["group-add"] || changed["group-remove"] {
+		nextGroups := s.AllowedGroups
+		if changed["groups"] {
+			nextGroups = nil
+			if strings.TrimSpace(groups) != "" {
+				for p := range strings.SplitSeq(groups, ",") {
+					g := whatsapp.NormalizeGroupJID(p)
+					if g == "" {
+						return fmt.Errorf("group allowlist entry %q is not a group JID (...@g.us); find joined groups with 'nusamation whatsapp groups'", p)
+					}
+					nextGroups = append(nextGroups, g)
+				}
+			}
+		}
+		for _, raw := range groupAdd {
+			g := whatsapp.NormalizeGroupJID(raw)
+			if g == "" {
+				return fmt.Errorf("group allowlist entry %q is not a group JID (...@g.us)", raw)
+			}
+			nextGroups = append(nextGroups, g)
+		}
+		if changed["group-remove"] {
+			removed := map[string]bool{}
+			for _, raw := range groupRemove {
+				removed[whatsapp.NormalizeGroupJID(raw)] = true
+			}
+			kept := make([]string, 0, len(nextGroups))
+			for _, g := range nextGroups {
+				if !removed[g] {
+					kept = append(kept, g)
+				}
+			}
+			nextGroups = kept
+		}
+		if err := (whatsapp.Settings{AllowedNumbers: s.AllowedNumbers, AllowedGroups: nextGroups}).ValidateAllowlist(); err != nil {
+			return err
+		}
+		s.AllowedGroups = nextGroups
 	}
 	s.Normalize()
 	if err := st.SetJSONSetting(ctx, whatsapp.SettingsKey, s); err != nil {

@@ -318,7 +318,7 @@ func (r *Runtime) loadOrCreate(ctx context.Context, s *Session, req EnsureReques
 		return s, err
 	}
 	mcps := mcpConfigs(mcpList, client.Capabilities().AgentCapabilities)
-	for _, extra := range r.mgr.injectedServers(s.ConversationID()) {
+	for _, extra := range r.mgr.injectedServers(ctx, s.ConversationID()) {
 		mcps = replaceMCP(mcps, extra)
 	}
 	systemPrompt := sessionSystemPrompt(client.Capabilities().SupportsSystemPrompt())
@@ -332,6 +332,15 @@ func (r *Runtime) loadOrCreate(ctx context.Context, s *Session, req EnsureReques
 	loadedExisting := false
 	var state acp.SessionState
 	if acpID != "" && !req.ForceNew {
+		// Another conversation already holds this id live: the agent is
+		// reusing session ids across hosts. Refuse before adopting, so the
+		// stored id keeps serving its original room.
+		if other := r.sessionOwner(acpID); other != nil && other != s {
+			r.log.Warn("agent session id already owned by another conversation",
+				"agent", r.agent.Slug, "session", acpID,
+				"owner", other.ConversationID(), "conversation", s.ConversationID())
+			return s, &SessionReuseError{OwnerConversationID: other.ConversationID(), ReusedACPID: acpID}
+		}
 		s.mu.Lock()
 		s.acpID = acpID
 		s.mu.Unlock()
@@ -395,6 +404,16 @@ func (r *Runtime) loadOrCreate(ctx context.Context, s *Session, req EnsureReques
 		if req.ACPSessionID != "" || acpID != "" {
 			recovered = true
 		}
+	}
+	if other := r.sessionOwner(state.SessionID); other != nil && other != s {
+		// The agent minted an id another conversation already owns — the
+		// cross-host reuse case (an agent backend attaching its latest
+		// session instead of starting fresh). Without this guard the later
+		// room silently hijacks every notification routed by that id.
+		r.log.Warn("agent returned a session id owned by another conversation",
+			"agent", r.agent.Slug, "session", state.SessionID,
+			"owner", other.ConversationID(), "conversation", s.ConversationID())
+		return s, &SessionReuseError{OwnerConversationID: other.ConversationID(), ReusedACPID: state.SessionID}
 	}
 	s.mu.Lock()
 	s.acpID = state.SessionID
@@ -666,6 +685,32 @@ func (r *Runtime) registerACP(s *Session, acpID string) {
 	r.mu.Lock()
 	r.byACP[acpID] = s
 	r.mu.Unlock()
+}
+
+// SessionReuseError reports an agent that handed two conversations the same
+// ACP session id. Sharing one agent session would interleave both rooms'
+// prompts into a single context and reroute notifications to the last
+// registrant, so the ensure refuses instead of silently cross-wiring rooms.
+type SessionReuseError struct {
+	OwnerConversationID string
+	ReusedACPID         string
+}
+
+func (e *SessionReuseError) Error() string {
+	return fmt.Sprintf("the agent returned ACP session %q, which conversation %s already owns; refusing to share one agent session between rooms — reset this room's session or reconnect the agent",
+		e.ReusedACPID, e.OwnerConversationID)
+}
+
+// sessionOwner returns the session registered for an ACP id, or nil when the
+// id is free. An owner that is another conversation is agent-side session
+// reuse — a real agent mints a unique id per session/new.
+func (r *Runtime) sessionOwner(acpID string) *Session {
+	if acpID == "" {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.byACP[acpID]
 }
 
 func (r *Runtime) drainPending(acpID string, s *Session) {

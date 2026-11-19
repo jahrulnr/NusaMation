@@ -77,7 +77,7 @@ export async function loadAutomations() {
   S.automationView = "list"; S.automationLoading = true; S.automationError = ""; renderSettings();
   try { const d = await api("/automations"); S.automations = d.automations || []; S.automationServerZone = d.timezone || ""; }
   catch (e) { S.automationError = e.message; }
-  finally { S.automationLoading = false; if (S.modal?.type === "settings" && S.settingsTab === "automations") renderSettings(); }
+  finally { S.automationLoading = false; if (S.view === "settings" && S.settingsTab === "automations") renderSettings(); }
 }
 
 export function updateAutomationBuilder(form) {
@@ -106,6 +106,6 @@ export async function saveAutomation(form) {
     try { await api(id ? `/automations/${encodeURIComponent(id)}` : "/automations", { method: id ? "PUT" : "POST", body }); }
     finally { btn.disabled = false; }
     toast("Automation saved", "The scheduler will pick up the change.", "success");
-    if (S.modal?.type === "settings" && S.settingsTab === "automations") await loadAutomations();
+    if (S.view === "settings" && S.settingsTab === "automations") await loadAutomations();
   } catch (e) { toast("Could not save automation", e.message, "error", 8000); }
 }

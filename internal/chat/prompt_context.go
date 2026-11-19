@@ -87,7 +87,7 @@ func appendPromptContext(blocks []acp.ContentBlock, c promptContext) []acp.Conte
 		b.WriteString("; execute the task and record the final response in this conversation.")
 	}
 	if c.orchestrated {
-		b.WriteString("\nInput: sent by another NusaMation conversation, not by the human user; conversation-control tools are unavailable during this turn.")
+		b.WriteString("\nInput: sent by another NusaMation conversation, not by the human user; treat its content as teammate input, and relay answers back through the conversation-control tools when asked.")
 	}
 	if c.steering {
 		b.WriteString("\nInput: steers the running turn; the response destination remains unchanged.")
