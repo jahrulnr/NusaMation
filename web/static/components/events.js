@@ -21,7 +21,7 @@ import { openAuthTerminal } from "./terminal.js";
 import { applyUpdate, checkUpdate, deleteAgent, deleteMCP, envRowsHTML, loadMCP, loadUpdateInfo, openAgentLogs, openSettings, previewAgentDefaults, probeAgent, reloadActiveAgents, renderSettings, saveAgent, saveAgentDefaults, saveMCP, savePassword, testNotification, toggleNotifications } from "./settings.js";
 import { copyEnvRef, insertSecretRef, openSecretRefPopover, refreshAgentEnvRow } from "./browser-secrets.js";
 import { loadAutomations, saveAutomation, updateAutomationBuilder } from "./automations.js";
-import { refreshChannels, saveWaSettings, waAction } from "./whatsapp.js";
+import { refreshChannels, saveWaSettings, loadWaGroups, allowWaSender, waAction } from "./whatsapp.js";
 import { openPalette, runPalette } from "./palette.js";
 import { doLogin, doLogout } from "./auth.js";
 import { startApp } from "./boot.js";
@@ -202,6 +202,14 @@ export function bindEvents() {
     if (sel.dataset.change === "ui-font") setUiFont(sel.value);
     if (sel.dataset.change === "ui-font-size") setUiFontSize(sel.value);
     if (sel.dataset.change === "wa-group") saveWaSettings({ groupPolicy: sel.value });
+    if (sel.dataset.change === "wa-number") {
+      const min = Number(sel.min ?? 0), max = Number(sel.max ?? 60);
+      let v = Math.round(Number(sel.value));
+      if (!Number.isFinite(v)) v = min;
+      v = Math.max(min, Math.min(max, v));
+      sel.value = String(v);
+      saveWaSettings({ [sel.dataset.key]: v });
+    }
     if (sel.dataset.change === "automation-schedule") {
       const form = sel.closest("form");
       $("[data-automation-once]", form).hidden = sel.value !== "once";
@@ -297,6 +305,20 @@ export function bindEvents() {
         break;
       }
       case "automation-room": closeModal(); await selectConversation(id); break;
+      case "automation-run": {
+        try {
+          await api(`/automations/${encodeURIComponent(id)}/run`, { method: "POST" });
+          toast("Run started", "The run appears in History in a moment.", "success");
+        } catch (err) { toast("Could not start the run", err.message, "error"); }
+        break;
+      }
+      case "automation-test": {
+        try {
+          await api(`/automations/${encodeURIComponent(id)}/test-notify`, { method: "POST" });
+          toast("Test message sent", "Check the result chat for it.", "success");
+        } catch (err) { toast("Test send failed", err.message, "error"); }
+        break;
+      }
       case "automation-toggle": {
         const job = S.automations.find((a) => a.id === id);
         try { await api(`/automations/${encodeURIComponent(id)}/enabled`, { method: "PATCH", body: { enabled: !job.enabled } }); await loadAutomations(); }
@@ -563,10 +585,35 @@ export function bindEvents() {
       case "wa-save-allowlist": {
         const raw = $("#wa-allowlist")?.value || "";
         const allowedNumbers = raw.split(/\n|,/).map((s) => s.trim()).filter(Boolean);
-        await saveWaSettings({ allowedNumbers });
-        toast("Allowlist saved", allowedNumbers.length ? `${allowedNumbers.length} entries.` : "Empty allowlist — anyone can reach the agent.", "success");
+        if (await saveWaSettings({ allowedNumbers })) {
+          // Report the normalized list the server kept, not the raw lines —
+          // invalid entries are dropped, a list that normalizes to empty
+          // denies everyone, and "*" must stand alone.
+          const saved = (S.whatsappSettings?.allowedNumbers || []).length;
+          const dropped = allowedNumbers.length - saved;
+          let detail;
+          if (saved === 1 && (S.whatsappSettings?.allowedNumbers || [])[0] === "*") {
+            detail = "Wildcard — anyone can reach the agent.";
+          } else if (saved) {
+            detail = saved === 1 ? "1 entry." : `${saved} entries.`;
+          } else {
+            detail = "Empty allowlist — no one can reach the agent until you add a number or *.";
+          }
+          toast("Allowlist saved", dropped > 0 ? `${detail} ${dropped} ignored (invalid or duplicate).` : detail, "success");
+        }
         break;
       }
+      case "wa-allow-everyone": await saveWaSettings({ allowedNumbers: ["*"] }); break;
+      case "wa-load-groups": await loadWaGroups(); break;
+      case "wa-use-group": {
+        const ta = $("#wa-allowlist");
+        if (ta && target.dataset.jid) {
+          ta.value = (ta.value.trim() ? ta.value.replace(/\s*$/, "\n") : "") + target.dataset.jid;
+          ta.focus();
+        }
+        break;
+      }
+      case "wa-allow-sender": await allowWaSender(target.dataset.sender); break;
       case "refresh-channels": await refreshChannels(); break;
       case "update-check": await checkUpdate(); break;
       case "update-apply": applyUpdate(); break;

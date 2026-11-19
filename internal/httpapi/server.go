@@ -37,6 +37,11 @@ import (
 
 const sessionCookie = "nm_session"
 
+// AutomationRunner launches scheduled jobs on demand (the scheduler).
+type AutomationRunner interface {
+	RunNow(jobID string) error
+}
+
 type Server struct {
 	cfg          config.Config
 	store        *store.Store
@@ -46,6 +51,7 @@ type Server struct {
 	browserUse   *grants.Grants
 	conversation *grants.Grants
 	channels     *channels.Manager
+	automations  AutomationRunner
 	hub          *realtime.Hub
 	notifier     *notify.Broadcaster
 	updater      *update.Manager
@@ -82,6 +88,7 @@ type Options struct {
 	Hub                 *realtime.Hub
 	Notifier            *notify.Broadcaster
 	Updater             *update.Manager
+	Automations         AutomationRunner
 	Log                 *slog.Logger
 }
 
@@ -98,7 +105,7 @@ func New(opts Options) (*Server, error) {
 	s := &Server{
 		cfg: opts.Config, store: opts.Store, chat: opts.Chat, agents: opts.Agents,
 		browser: opts.Browser, browserUse: opts.BrowserUse, conversation: opts.ConversationControl,
-		channels: opts.Channels, hub: opts.Hub,
+		channels: opts.Channels, automations: opts.Automations, hub: opts.Hub,
 		notifier: opts.Notifier, updater: opts.Updater, log: log.With("component", "http"),
 		started: time.Now(), limiter: newLoginLimiter(8, 5*time.Minute), static: static, index: index,
 		etags: map[string]string{}, waits: map[string]int{},
@@ -124,6 +131,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/automations/{id}", s.protected(s.handleAutomation))
 	mux.HandleFunc("DELETE /api/automations/{id}", s.protected(s.handleAutomation))
 	mux.HandleFunc("PATCH /api/automations/{id}/enabled", s.protected(s.handleAutomationEnabled))
+	mux.HandleFunc("POST /api/automations/{id}/run", s.protected(s.handleAutomationRun))
+	mux.HandleFunc("POST /api/automations/{id}/test-notify", s.protected(s.handleAutomationTestNotify))
 	mux.HandleFunc("GET /api/bootstrap", s.protected(s.handleBootstrap))
 	mux.HandleFunc("GET /api/references", s.protected(s.handleReferenceSearch))
 	mux.HandleFunc("GET /api/events", s.protected(s.handleEvents))
@@ -188,6 +197,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/channels/{name}/connect", s.protected(s.handleChannelConnect))
 	mux.HandleFunc("POST /api/channels/whatsapp/send", s.protected(s.handleWhatsAppSend))
 	mux.HandleFunc("GET /api/channels/whatsapp/user", s.protected(s.handleWhatsAppUser))
+	mux.HandleFunc("GET /api/channels/whatsapp/groups", s.protected(s.handleWhatsAppGroups))
 	mux.HandleFunc("POST /api/channels/{name}/disconnect", s.protected(s.handleChannelDisconnect))
 	mux.HandleFunc("POST /api/channels/{name}/logout", s.protected(s.handleChannelLogout))
 	mux.HandleFunc("GET /api/channels/{name}/qr", s.protected(s.handleChannelQR))

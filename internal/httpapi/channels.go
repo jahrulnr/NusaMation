@@ -62,6 +62,27 @@ func (s *Server) handleWhatsAppUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) handleWhatsAppGroups(w http.ResponseWriter, r *http.Request) {
+	ch, ok := s.channelByName("whatsapp")
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "WhatsApp channel not found.")
+		return
+	}
+	list, ok := ch.(interface {
+		Groups(context.Context) ([]map[string]any, error)
+	})
+	if !ok {
+		writeError(w, http.StatusBadRequest, "not_supported", "WhatsApp group listing is unavailable.")
+		return
+	}
+	groups, err := list.Groups(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "groups_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
+}
+
 func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"channels": s.channelStatuses()})
 }

@@ -113,12 +113,18 @@ func (s *Service) notifyApprovalPoll(ctx context.Context, ch channels.Channel, t
 // notifyElicitation surfaces a pending elicitation to the origin channel.
 // Single-field choice questions become polls; anything else (multi-field,
 // free text, URL mode) gets a pointer to the web UI — previously channel
-// users heard nothing at all.
+// users heard nothing at all. Automation turns are excluded: their result
+// chat only receives the run's answer, not its controls — an unattended
+// question there could never be answered (the voter guard denies automation
+// turns), so it would only ever be noise.
 func (s *Service) notifyElicitation(a *activeTurn, e Elicitation) {
 	a.mu.Lock()
 	routing := a.conv.Routing
 	a.mu.Unlock()
 	if !routing.NotifyApprovals {
+		return
+	}
+	if turnIsAutomation(a.turn) {
 		return
 	}
 	ch, target, ok := s.originChannel(a)
@@ -298,10 +304,23 @@ func (s *Service) resolvePollVote(ctx context.Context, in channels.Inbound) erro
 	}
 	s.mu.Unlock()
 	if w == nil {
+		// A vote on one of our polls whose pending request is already gone
+		// (answered, expired, canceled on restart) gets one short feedback
+		// instead of vanishing. General-purpose poll votes never reach this
+		// structurally — they arrive as text.
+		if in.PollVote != nil && in.PollVote.PollMessageID != "" {
+			_ = s.reply(ctx, in, "That request has already ended.")
+		}
 		return nil
 	}
 	if !s.pollVoterAllowed(ctx, w.turnID, in.SenderID) {
-		_ = s.reply(ctx, in, "Only the person who sent that request can answer it.")
+		// In a group the requester still answers; replying there would only
+		// broadcast other participants' taps. The DM case keeps its feedback.
+		if in.IsGroup {
+			s.log.Info("ignoring poll vote from a non-requesting participant", "channel", in.Channel, "sender", in.SenderID)
+		} else {
+			_ = s.reply(ctx, in, "Only the person who sent that request can answer it.")
+		}
 		return nil
 	}
 	for _, option := range in.PollVote.Selected {
@@ -360,8 +379,9 @@ func (s *Service) resolvePollVote(ctx context.Context, in channels.Inbound) erro
 }
 
 // pollVoterAllowed mirrors the /approve guard: only the sender recorded on
-// the turn may answer its questions. Missing origins/senders keep the
-// previous permissive behavior.
+// the turn may answer its questions. A turn with no recorded sender is denied
+// unless it predates sender recording — automation turns always deny, because
+// their result chat must not answer unattended approvals.
 func (s *Service) pollVoterAllowed(ctx context.Context, turnID, senderID string) bool {
 	if turnID == "" {
 		return true
@@ -370,8 +390,16 @@ func (s *Service) pollVoterAllowed(ctx context.Context, turnID, senderID string)
 	if err != nil {
 		return true
 	}
+	if turnIsAutomation(turn) {
+		return false
+	}
 	ref := turnOriginSender(turn)
-	return ref == "" || senderID == "" || ref == senderID
+	if ref == "" {
+		// Legacy turns recorded no origin sender; keep them permissive so an
+		// approval answered on the linked chat still works.
+		return true
+	}
+	return senderID == "" || ref == senderID
 }
 
 // finishPollVote resolves the pending question with the decoded selection and

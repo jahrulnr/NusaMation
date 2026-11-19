@@ -49,6 +49,11 @@ type Automation struct {
 	NextRunAt      int64  `json:"nextRunAt"`
 	CreatedAt      int64  `json:"createdAt"`
 	UpdatedAt      int64  `json:"updatedAt"`
+	// NotifyChannel/NotifyTarget optionally deliver each run's final answer
+	// to a chat channel (for example "whatsapp" + a chat JID). Empty keeps
+	// results in the run conversation only.
+	NotifyChannel string `json:"notifyChannel"`
+	NotifyTarget  string `json:"notifyTarget"`
 }
 type AutomationRun struct {
 	ID             string `json:"id"`
@@ -74,6 +79,29 @@ func ValidateAutomation(a *Automation, now time.Time) error {
 	}
 	if a.SessionMode != "isolated" && a.SessionMode != "same" {
 		return errors.New("session mode must be isolated or same")
+	}
+	a.NotifyChannel = strings.ToLower(strings.TrimSpace(a.NotifyChannel))
+	a.NotifyTarget = strings.TrimSpace(a.NotifyTarget)
+	if a.NotifyChannel != "" && a.NotifyTarget == "" {
+		return errors.New("notify target is required when a notify channel is set")
+	}
+	if a.NotifyTarget != "" && a.NotifyChannel == "" {
+		return errors.New("notify channel is required when a notify target is set")
+	}
+	if a.NotifyTarget != "" && !strings.Contains(a.NotifyTarget, "@") {
+		// A bare phone number is normalized to the user JID form WhatsApp
+		// uses for private chats, matching how inbound messages address the
+		// chat. Group JIDs pass through as written.
+		digits := strings.Map(func(r rune) rune {
+			if r >= '0' && r <= '9' {
+				return r
+			}
+			return -1
+		}, a.NotifyTarget)
+		if digits == "" {
+			return errors.New("notify target must be a phone number, user JID or group JID")
+		}
+		a.NotifyTarget = digits + "@s.whatsapp.net"
 	}
 	if a.Timezone == "" {
 		a.Timezone = LocalTimezone()
@@ -109,12 +137,12 @@ func ValidateAutomation(a *Automation, now time.Time) error {
 	return nil
 }
 
-const automationSelect = `SELECT id,name,prompt,agent_id,schedule,cron,run_at,timezone,session_mode,conversation_id,expires_at,enabled,next_run_at,created_at,updated_at FROM automations`
+const automationSelect = `SELECT id,name,prompt,agent_id,schedule,cron,run_at,timezone,session_mode,conversation_id,expires_at,enabled,next_run_at,created_at,updated_at,notify_channel,notify_target FROM automations`
 
 func scanAutomation(r rowScanner) (Automation, error) {
 	var a Automation
 	var enabled int
-	err := r.Scan(&a.ID, &a.Name, &a.Prompt, &a.AgentID, &a.Schedule, &a.Cron, &a.RunAt, &a.Timezone, &a.SessionMode, &a.ConversationID, &a.ExpiresAt, &enabled, &a.NextRunAt, &a.CreatedAt, &a.UpdatedAt)
+	err := r.Scan(&a.ID, &a.Name, &a.Prompt, &a.AgentID, &a.Schedule, &a.Cron, &a.RunAt, &a.Timezone, &a.SessionMode, &a.ConversationID, &a.ExpiresAt, &enabled, &a.NextRunAt, &a.CreatedAt, &a.UpdatedAt, &a.NotifyChannel, &a.NotifyTarget)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -177,7 +205,7 @@ func (s *Store) SaveAutomation(ctx context.Context, a Automation, now time.Time)
 		a.ID = ids.New("auto")
 		a.CreatedAt = now.UnixMilli()
 		a.UpdatedAt = a.CreatedAt
-		_, err = s.db.ExecContext(ctx, `INSERT INTO automations(id,name,prompt,agent_id,schedule,cron,run_at,timezone,session_mode,conversation_id,expires_at,enabled,next_run_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ID, a.Name, a.Prompt, a.AgentID, a.Schedule, a.Cron, a.RunAt, a.Timezone, a.SessionMode, "", a.ExpiresAt, boolInt(a.Enabled), a.NextRunAt, a.CreatedAt, a.UpdatedAt)
+		_, err = s.db.ExecContext(ctx, `INSERT INTO automations(id,name,prompt,agent_id,schedule,cron,run_at,timezone,session_mode,conversation_id,expires_at,enabled,next_run_at,created_at,updated_at,notify_channel,notify_target) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ID, a.Name, a.Prompt, a.AgentID, a.Schedule, a.Cron, a.RunAt, a.Timezone, a.SessionMode, "", a.ExpiresAt, boolInt(a.Enabled), a.NextRunAt, a.CreatedAt, a.UpdatedAt, a.NotifyChannel, a.NotifyTarget)
 	} else {
 		old, e := s.GetAutomation(ctx, a.ID)
 		if e != nil {
@@ -193,7 +221,7 @@ func (s *Store) SaveAutomation(ctx context.Context, a Automation, now time.Time)
 			a.NextRunAt = old.NextRunAt
 		}
 		var result sql.Result
-		result, err = s.db.ExecContext(ctx, `UPDATE automations SET name=?,prompt=?,agent_id=?,schedule=?,cron=?,run_at=?,timezone=?,session_mode=?,conversation_id=?,expires_at=?,enabled=?,next_run_at=?,updated_at=? WHERE id=? AND updated_at=? AND next_run_at=?`, a.Name, a.Prompt, a.AgentID, a.Schedule, a.Cron, a.RunAt, a.Timezone, a.SessionMode, a.ConversationID, a.ExpiresAt, boolInt(a.Enabled), a.NextRunAt, now.UnixMilli(), a.ID, old.UpdatedAt, old.NextRunAt)
+		result, err = s.db.ExecContext(ctx, `UPDATE automations SET name=?,prompt=?,agent_id=?,schedule=?,cron=?,run_at=?,timezone=?,session_mode=?,conversation_id=?,expires_at=?,enabled=?,next_run_at=?,updated_at=?,notify_channel=?,notify_target=? WHERE id=? AND updated_at=? AND next_run_at=?`, a.Name, a.Prompt, a.AgentID, a.Schedule, a.Cron, a.RunAt, a.Timezone, a.SessionMode, a.ConversationID, a.ExpiresAt, boolInt(a.Enabled), a.NextRunAt, now.UnixMilli(), a.NotifyChannel, a.NotifyTarget, a.ID, old.UpdatedAt, old.NextRunAt)
 		if err == nil {
 			if n, _ := result.RowsAffected(); n == 0 {
 				return a, errors.New("automation changed; reload it before saving")
@@ -278,6 +306,14 @@ func (s *Store) ClaimAutomation(ctx context.Context, a Automation, now time.Time
 		return run, false, err
 	}
 	return run, true, nil
+}
+
+// CreateManualAutomationRun records a one-off manual run without advancing
+// the job's schedule — "Run now" must not consume the next cron occurrence.
+func (s *Store) CreateManualAutomationRun(ctx context.Context, a Automation, now time.Time) (AutomationRun, error) {
+	run := AutomationRun{ID: ids.New("run"), AutomationID: a.ID, ScheduledAt: now.UnixMilli(), StartedAt: now.UnixMilli(), Status: "launching"}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO automation_runs(id,automation_id,scheduled_at,started_at,status) VALUES(?,?,?,?,?)`, run.ID, run.AutomationID, run.ScheduledAt, run.StartedAt, run.Status)
+	return run, err
 }
 
 // CreateAutomationTurn commits the queue entry and its run link together, so

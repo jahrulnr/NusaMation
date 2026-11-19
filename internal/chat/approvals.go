@@ -208,8 +208,14 @@ func (s *Service) createApproval(ctx context.Context, a *activeTurn, title, kind
 
 // approvalChannel prefers the turn's origin. An orchestrated turn has origin
 // "agent", which has no channel; notifications then go to the target's first
-// linked chat so the human can still answer the approval.
+// linked chat so the human can still answer the approval. Automation turns
+// are excluded from that fallback: they run unattended, carry no origin
+// sender, and their result chat must not become a remote control for the
+// agent — their approvals stay in the web inbox.
 func (s *Service) approvalChannel(a *activeTurn) (channels.Channel, channels.Target, bool) {
+	if turnIsAutomation(a.turn) {
+		return nil, channels.Target{}, false
+	}
 	if ch, target, ok := s.originChannel(a); ok {
 		return ch, target, true
 	}

@@ -45,48 +45,149 @@ func (c *Channel) jidAliases(ctx context.Context, jids ...types.JID) []string {
 	return out
 }
 
-func (c *Channel) handleMessage(ctx context.Context, evt *events.Message) error {
+// gateInbound reports whether an inbound message may reach the agent at all:
+// cheap checks only (no downloads), so it can run synchronously in the event
+// handler before an intake slot is taken. handleMessage re-runs it as defense
+// in depth. Rejected senders are recorded for the web panel's blocked list.
+func (c *Channel) gateInbound(ctx context.Context, evt *events.Message) bool {
 	info := evt.Info
 	if info.IsFromMe || info.Chat.IsEmpty() || info.Sender.IsEmpty() {
-		return nil
+		return false
 	}
 	switch info.Chat.Server {
 	case "broadcast", "newsletter":
-		return nil
+		return false
 	}
 	if info.Chat.User == "status" {
-		return nil
+		return false
 	}
 	if evt.IsEdit {
-		return nil
+		return false
 	}
 	settings := c.settingsSnapshot()
 	if !settings.Enabled {
-		return nil
+		return false
 	}
 	if info.IsGroup {
 		switch settings.GroupPolicy {
 		case "disabled":
-			return nil
+			return false
 		case "mention":
 			// Poll creations, votes and added options cannot carry an
 			// @mention by design — requiring one would make them permanently
 			// invisible. They pass as passive context; the allowlist still
 			// gates which chats reach the agent at all.
 			if !isPollTraffic(evt.Message) && !c.mentionsMe(info, evt.Message) {
-				return nil
+				return false
 			}
 		}
 	}
 	senderJIDs := c.jidAliases(ctx, info.Sender, info.SenderAlt)
 	chatJIDs := c.jidAliases(ctx, info.Chat)
 	if !settings.allows(senderJIDs, chatJIDs) {
-		c.log.Debug("ignoring WhatsApp message from non-allowlisted sender", "sender", info.Sender.String())
-		return nil
+		c.recordBlocked(info)
+		c.log.Info("ignoring WhatsApp message from a non-allowlisted sender",
+			"sender", info.Sender.String(), "chat", info.Chat.String())
+		return false
 	}
 	if !info.Timestamp.IsZero() && time.Since(info.Timestamp) > 2*time.Hour {
+		return false
+	}
+	return true
+}
+
+// recordBlocked keeps a small deduplicated ring of senders the allowlist
+// rejected so the operator can allow one with a single tap in the web panel.
+func (c *Channel) recordBlocked(info types.MessageInfo) {
+	entry := blockedEntry{
+		Sender:    info.Sender.ToNonAD().String(),
+		Chat:      info.Chat.ToNonAD().String(),
+		PushName:  strings.TrimSpace(info.PushName),
+		Timestamp: info.Timestamp.UnixMilli(),
+	}
+	c.blockedMu.Lock()
+	out := c.blocked[:0]
+	for _, b := range c.blocked {
+		if b.Sender != entry.Sender || b.Chat != entry.Chat {
+			out = append(out, b)
+		}
+	}
+	out = append(out, entry)
+	if len(out) > blockedListLimit {
+		out = out[len(out)-blockedListLimit:]
+	}
+	c.blocked = out
+	c.blockedMu.Unlock()
+	c.publish()
+}
+
+func (c *Channel) blockedList() []blockedEntry {
+	c.blockedMu.Lock()
+	defer c.blockedMu.Unlock()
+	return append([]blockedEntry(nil), c.blocked...)
+}
+
+// handleReceipt records the furthest delivered/read state of outgoing
+// messages so the index can answer "did it reach them?".
+func (c *Channel) handleReceipt(v *events.Receipt) {
+	if c.store == nil || v.Chat.IsEmpty() || len(v.MessageIDs) == 0 {
+		return
+	}
+	var state string
+	switch v.Type {
+	case types.ReceiptTypeDelivered:
+		state = "delivered"
+	case types.ReceiptTypeRead:
+		state = "read"
+	default:
+		// "sender" receipts acknowledge our own other devices; "retry" is a
+		// decryption failure, not a delivery state.
+		return
+	}
+	ids := make([]string, 0, len(v.MessageIDs))
+	for _, id := range v.MessageIDs {
+		if id != "" {
+			ids = append(ids, string(id))
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.store.MarkWhatsAppReceipt(ctx, v.Chat.ToNonAD().String(), ids, state); err != nil {
+		c.log.Debug("could not record WhatsApp receipt", "error", err)
+	}
+}
+
+// cheapChatName labels a live indexed message without network calls: group
+// names come from the cache when present, DMs use the push name. The full
+// groupName lookup fills the cache when the message is answered.
+func (c *Channel) cheapChatName(info types.MessageInfo) string {
+	if info.IsGroup {
+		if name := c.cachedGroupName(info.Chat); name != "" {
+			return name
+		}
+		return "Group +" + info.Chat.User
+	}
+	if name := strings.TrimSpace(info.PushName); name != "" {
+		return name
+	}
+	return "+" + info.Sender.User
+}
+
+func (c *Channel) cachedGroupName(jid types.JID) string {
+	c.groupMu.Lock()
+	defer c.groupMu.Unlock()
+	return c.groupCache[jid.String()].name
+}
+
+func (c *Channel) handleMessage(ctx context.Context, evt *events.Message) error {
+	info := evt.Info
+	if !c.gateInbound(ctx, evt) {
 		return nil
 	}
+	settings := c.settingsSnapshot()
 
 	text := waText(evt.Message)
 	attachments := []channels.Attachment{}
@@ -195,8 +296,17 @@ func (c *Channel) handleMessage(ctx context.Context, evt *events.Message) error 
 			// A vote on a poll this channel sent (agent question/approval) —
 			// carry the selection structurally so the chat service can
 			// resolve the pending question instead of prompting the agent.
+			sentOptions, sent := c.sentPollOptions(ctx, info.Chat, mk.GetID())
+			if sent {
+				c.cachePollOptions(info.Chat.String(), mk.GetID(), sentOptions)
+			}
 			decoded, picked := c.decodeVote(ctx, evt, mk)
 			if decoded == nil || (len(decoded.GetSelectedOptions()) > 0 && len(picked) != len(decoded.GetSelectedOptions())) {
+				// A tap on one of our polls whose request already ended
+				// (restart, answered elsewhere) must not vanish silently.
+				if sent {
+					c.notifyStalePoll(info.Chat)
+				}
 				return nil
 			}
 			vote = &channels.PollVote{PollMessageID: mk.GetID(), Selected: picked}

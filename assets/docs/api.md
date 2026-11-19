@@ -56,6 +56,8 @@ GET  /api/bootstrap                      # config, version, whatsapp settings
 GET|POST /api/automations
 GET|PUT|DELETE /api/automations/{id}      # GET includes run history
 PATCH /api/automations/{id}/enabled
+POST /api/automations/{id}/run            # one immediate run, schedule untouched
+POST /api/automations/{id}/test-notify    # ping the result chat
 POST /api/settings/agent-defaults/preview
 PUT  /api/settings/agent-defaults
 GET|POST /api/conversations

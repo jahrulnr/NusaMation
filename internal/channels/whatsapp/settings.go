@@ -3,6 +3,8 @@ package whatsapp
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -20,12 +22,21 @@ type Settings struct {
 	GroupPolicy    string   `json:"groupPolicy"` // disabled, mention, all
 	ReadReceipts   bool     `json:"readReceipts"`
 	SendTyping     bool     `json:"sendTyping"`
+	// RetentionDays purges indexed messages older than this many days
+	// (0 keeps the index forever).
+	RetentionDays int `json:"retentionDays"`
+	// SendPacing is the minimum gap in seconds between two messages sent to
+	// the same chat (0 disables pacing); QueueCap bounds the per-chat send
+	// queue. Both shape the human-like outbound cadence.
+	SendPacing int `json:"sendPacing"`
+	QueueCap   int `json:"queueCap"`
 }
 
 func DefaultSettings() Settings {
 	return Settings{
 		Enabled: true, AutoStart: true, AllowedNumbers: []string{},
-		GroupPolicy: "mention", ReadReceipts: true, SendTyping: true,
+		GroupPolicy: "mention", ReadReceipts: true, SendTyping: true, RetentionDays: 0,
+		SendPacing: 5, QueueCap: 20,
 	}
 }
 
@@ -40,7 +51,7 @@ func failClosedSettings() Settings {
 
 // loadSettings returns the stored settings. A missing row yields defaults;
 // any other failure (corrupt JSON, DB error) keeps the fallback so the
-// channel does not silently reopen with an empty allowlist.
+// channel does not silently flip its enabled state or allowlist on a bad read.
 func (c *Channel) loadSettings(ctx context.Context, fallback Settings) Settings {
 	s := DefaultSettings()
 	err := c.store.GetJSONSetting(ctx, SettingsKey, &s)
@@ -59,12 +70,39 @@ func (s *Settings) Normalize() {
 	if s.GroupPolicy != "disabled" && s.GroupPolicy != "mention" && s.GroupPolicy != "all" {
 		s.GroupPolicy = "mention"
 	}
+	if s.RetentionDays < 0 {
+		s.RetentionDays = 0
+	}
+	if s.RetentionDays > 3650 {
+		s.RetentionDays = 3650
+	}
+	if s.SendPacing < 0 {
+		s.SendPacing = 0
+	}
+	if s.SendPacing > 60 {
+		s.SendPacing = 60
+	}
+	if s.QueueCap < 1 {
+		s.QueueCap = 1
+	}
+	if s.QueueCap > 200 {
+		s.QueueCap = 200
+	}
 	if s.AllowedNumbers == nil {
 		s.AllowedNumbers = []string{}
 	}
 	seen := map[string]bool{}
 	out := make([]string, 0, len(s.AllowedNumbers))
 	for _, raw := range s.AllowedNumbers {
+		// "*" is the explicit allow-everyone token; it passes through so the
+		// save paths can refuse a list that mixes it with numbers.
+		if strings.TrimSpace(raw) == "*" {
+			if !seen["*"] {
+				seen["*"] = true
+				out = append(out, "*")
+			}
+			continue
+		}
 		v := NormalizeNumber(raw)
 		if v == "" || seen[v] {
 			continue
@@ -76,13 +114,35 @@ func (s *Settings) Normalize() {
 	s.AllowedNumbers = out
 }
 
-func (s Settings) allows(senderJIDs, chatJIDs []string) bool {
-	if len(s.AllowedNumbers) == 0 {
-		return true
+// ValidateAllowlist refuses a saved allowlist that mixes the wildcard with
+// concrete numbers: "*" must be the single entry.
+func (s Settings) ValidateAllowlist() error {
+	if len(s.AllowedNumbers) > 1 {
+		if slices.Contains(s.AllowedNumbers, "*") {
+			return errors.New("* must be the only allowlist entry; it cannot be combined with numbers")
+		}
 	}
+	return nil
+}
+
+func (s Settings) allows(senderJIDs, chatJIDs []string) bool {
+	// An empty allowlist denies everyone: the operator may simply not have
+	// filled the form yet, so silence is safer than a broadcast reply. A
+	// single "*" entry is the explicit opt-in to allow all senders.
+	if len(s.AllowedNumbers) == 0 {
+		return false
+	}
+	wildcard := false
 	allowed := map[string]bool{}
 	for _, n := range s.AllowedNumbers {
+		if n == "*" {
+			wildcard = true
+			continue
+		}
 		allowed[NormalizeNumber(n)] = true
+	}
+	if wildcard {
+		return true
 	}
 	for _, j := range append(append([]string{}, senderJIDs...), chatJIDs...) {
 		if allowed[NormalizeNumber(j)] {
@@ -123,11 +183,30 @@ func (c *Channel) UpdateSettings(ctx context.Context, raw json.RawMessage) error
 	c.mu.Lock()
 	cur := c.settings
 	c.mu.Unlock()
+	// Track whether the patch actually carries an allowlist so an
+	// intentional clear (`[]`) stays allowed — it now denies everyone —
+	// while a list whose entries are all invalid, which would normalize to
+	// the same denial by accident, is refused like the CLI. A single "*"
+	// grants everyone.
+	var patch struct {
+		AllowedNumbers *[]string `json:"allowedNumbers"`
+	}
+	_ = json.Unmarshal(raw, &patch)
 	next := cur
+	// next shares AllowedNumbers' backing array with the live settings;
+	// json.Unmarshal reuses that array in place when decoding a longer list,
+	// which would corrupt c.settings even when this update is refused.
+	next.AllowedNumbers = append([]string(nil), cur.AllowedNumbers...)
 	if err := json.Unmarshal(raw, &next); err != nil {
 		return err
 	}
 	next.Normalize()
+	if err := next.ValidateAllowlist(); err != nil {
+		return err
+	}
+	if patch.AllowedNumbers != nil && len(*patch.AllowedNumbers) > 0 && len(next.AllowedNumbers) == 0 {
+		return errors.New("allowlist has no valid numbers; an empty list allows no one — use * to allow everyone")
+	}
 	if err := c.store.SetJSONSetting(ctx, SettingsKey, next); err != nil {
 		return err
 	}
@@ -135,6 +214,9 @@ func (c *Channel) UpdateSettings(ctx context.Context, raw json.RawMessage) error
 	c.settings = next
 	c.mu.Unlock()
 	c.publish()
+	if next.RetentionDays > 0 && next.RetentionDays != cur.RetentionDays {
+		go c.purgeOlderThan(next.RetentionDays)
+	}
 	if !next.Enabled {
 		_ = c.Disconnect()
 	} else if next.Enabled && next.AutoStart {
@@ -168,6 +250,7 @@ func (c *Channel) status() channels.Status {
 			"qr":     c.qrCode != "", "groupPolicy": c.settings.GroupPolicy,
 			"autoStart": c.settings.AutoStart,
 			"lastError": c.lastErr,
+			"blocked":   c.blockedList(),
 		},
 	}
 	if c.lastErr != "" && c.detail == "" {

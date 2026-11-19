@@ -106,9 +106,19 @@ nusamation whatsapp set --enabled --group-policy mention --allow-add +6281234567
 1203630...@g.us
 ```
 
-Values are normalised to digits. An empty list allows any sender who can message the account. A group is allowed if either the group JID or a sender is allowlisted.
+Values are normalised to digits. **An empty list allows no one** — the agent stays silent until you add a number, so an unforgotten form never turns into a public agent. A single `*` entry allows everyone explicitly and must be the only entry; the CLI and the web control center refuse `*` combined with numbers. A group is allowed if either the group JID or a sender is allowlisted. The CLI and the web control center both refuse to save a list whose entries are all invalid — it would normalize to empty and deny everyone by accident; clearing the list explicitly (`[]` or an empty textarea) is the deliberate way to deny everyone. The success toast reports the normalized entry count and how many raw lines were dropped as invalid or duplicate.
+
+**Finding the JIDs:** `nusamation whatsapp groups` (or `GET /api/channels/whatsapp/groups`) lists every joined group with its JID and name; the web panel has a **Load groups** button beside the allowlist that fills a list with a **Use** action per group.
+
+**Blocked senders:** messages a rejected sender is logged at info level and recorded in a small per-channel list, shown in the web panel with an **Allow** button that appends the number to the allowlist.
 
 **Set an allowlist before sharing the linked number.** The agent has access to the configured workspace.
+
+Messages timestamped more than two hours in the past are ignored without a reply — late delivery retries and stale history must not trigger fresh agent turns.
+
+**Retention:** `--retention-days N` (CLI, or the `retentionDays` setting, default 0 = keep forever) purges indexed messages older than N days; the purge runs at startup and daily afterwards.
+
+**Message index and search:** every message (live and history-synced) is indexed with its chat name; full-text search uses an FTS5 index (Unicode case-folding) with a substring fallback, and deleted-for-everyone messages are tombstoned out of the index. Outgoing messages carry a `receipt` field (`delivered`/`read`) from incoming receipts.
 
 ### Group policy
 
@@ -118,25 +128,39 @@ Values are normalised to digits. An empty list allows any sender who can message
 
 ### Approvals and questions
 
-When `notifyApprovals` is on, pending approvals and single-field choice agent questions (elicitation form fields with enum/oneOf/boolean/array options) are delivered as **native WhatsApp polls** — tap to vote, single-select resolves immediately, multi-select resolves after a ~15 s quiet window. Without poll support or for option lists over 12, approvals fall back to `/approve <id>` and questions point to the web UI. Votes on approval/question polls are routed to the pending request; votes on user-created and general-purpose polls arrive as `[Poll vote: …]` text.
+When `notifyApprovals` is on, pending approvals and single-field choice agent questions (elicitation form fields with enum/oneOf/boolean/array options) are delivered as **native WhatsApp polls** — tap to vote, single-select resolves immediately, multi-select resolves after a ~15 s quiet window. Without poll support or for option lists over 12, approvals fall back to `/approve <id>` and questions point to the web UI. Votes on approval/question polls are routed to the pending request; votes on user-created and general-purpose polls arrive as `[Poll vote: …]` text. Approval-poll option names are persisted, so a vote still decodes — and a tap on a request that already ended answers "That request has already ended." instead of vanishing. In a group, a vote from anyone other than the request's author is logged, never answered into the room.
+
+### Intake queue
+
+Inbound messages occupy one of four intake slots; media downloads can hold a slot up to 90 s. Gating (from-me, chat filters, group policy, allowlist, staleness) runs before a slot is taken. If all slots are busy, an allowed sender receives "The assistant is still working on the previous message. Please try again in a moment." instead of silence.
 
 ### Media
 
 Images, documents, videos, video notes, voice notes and stickers are downloaded up to 25 MB and stored as app uploads. Locations, live locations, contact cards (single or multi), events, group invites, Flow/form responses, orders and product cards arrive as `[Type: …]` text markers. Images (and stickers) are sent to models whose ACP prompt capabilities advertise image support; audio goes to models that advertise audio support and otherwise reaches the agent as a `file://` resource link, like videos and other binary documents. In the other direction, media emitted by the agent — image/audio content blocks, `file://` resource links, or `file://` URIs and markdown links (including `![alt](path)` images) to allowed local paths in its reply — is uploaded to WhatsApp as a real attachment. Reply paths are read verbatim: spaces, Windows backslashes and a `/C:/…` drive spelling are accepted, and angle brackets or quotes around a destination (`[shot](<C:\Users\Some Name\shot.png>)`) are unwrapped. Paths are confined to the workspace, upload dir and conversation/agent working directories.
 
-An agent can also send explicitly with `nusamation whatsapp send` (or `POST /api/channels/whatsapp/send`): `type` is `image`, `video`, `audio` or `document`/`file` with a server-readable `path` or base64 `data`, plus optional `mime`, `caption` and `name`. Stickers are a separate `sticker` type and require WebP — a photo must not be converted to a sticker to deliver it.
+### Sending and updating messages
+
+Besides reply delivery, an agent can send explicitly with `nusamation whatsapp send` (or `POST /api/channels/whatsapp/send`): `type` is `image`, `video`, `audio` or `document`/`file` with a server-readable `path` or base64 `data`, plus optional `mime`, `caption` and `name`. Stickers are a separate `sticker` type and require WebP — a photo must not be converted to a sticker to deliver it. Two more types update history: `edit` (`messageId` + `text`) rewrites one of the bot's own messages, and `revoke` (`messageId`) deletes it for everyone; both update the index to match. Group replies @mention the author of the message being answered, so WhatsApp highlights them.
+
+### Delivery receipts
+
+Incoming delivered/read receipts for the bot's own outgoing messages are recorded per indexed message (`receipt: delivered|read`) and returned in search results.
 
 ### Presence and read receipts
 
 When enabled, allowed messages are marked read after the orchestrator accepts them. `Begin` sends a composing presence, and final updates pause it.
 
+### Outbound pacing
+
+Outbound messages are sent with a human-like cadence, per chat: `sendPacing` (seconds, default 5, 0–60) is the minimum gap between two messages to the same chat, and `queueCap` (default 20, 1–200) bounds the per-chat send queue. Messages that arrive faster than the gap wait in the queue — they are never dropped for pacing; the only rejections are the queue cap and a caller that is already gone. Order per chat is FIFO, chats never wait for each other, only a successful send starts the gap, and the queue lives in memory (a restart discards pending sends — the callers' failure paths run). Both values are editable in the web panel's Behaviour section and via `whatsapp set --send-pacing / --queue-cap`.
+
 ### One message per turn
 
-WhatsApp receives a single message when the turn finishes. Partial replies are not sent and existing messages are not edited. While the turn runs, typing presence is refreshed if that setting is on.
+WhatsApp receives a single message when the turn finishes. Interim assistant blocks, tool calls and new agent message ids never reach the channel while the turn runs. Partial replies are not sent and existing messages are not edited. While the turn runs, typing presence is refreshed if that setting is on. If the final send fails, the web conversation shows an error notice — the reply text is retried once to the origin chat and otherwise only exists on the web.
 
 ### Outbound digest
 
-The chat layer converts markdown to WhatsApp-friendly text (bold, italic, headings, links), truncates safely by UTF-8 bytes and strips ANSI. The final digest is the assistant's final text; if the agent only used tools, a short tool summary is sent.
+The chat layer converts markdown to WhatsApp-friendly text (bold, italic, headings, links) and strips ANSI. The final digest is the assistant's final text; if the agent only used tools, a short tool summary is sent. Replies are truncated by characters — WhatsApp accepts up to 30,000, matching the rule the agent is told; other channels use a 3,500-character default unless they declare their own limit. Explicit `whatsapp send` paths are read verbatim from anywhere the server can read, unlike reply attachments, which stay confined to the workspace.
 
 ## Adding a channel
 

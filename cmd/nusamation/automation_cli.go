@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jahrulnr/nusamation/internal/store"
@@ -13,7 +14,7 @@ const automationUsage = `usage: nusamation automation <list|get|add|set|pause|re
 
   list [--json]                         List jobs
   get <id> [--json]                     Show a job and its history
-  add --name NAME --prompt TEXT --agent SLUG (--at TIME | --cron 'M H D M W') [--session isolated|same] [--tz ZONE] [--expires TIME]
+  add --name NAME --prompt TEXT --agent SLUG (--at TIME | --cron 'M H D M W') [--session isolated|same] [--tz ZONE] [--expires TIME] [--notify-channel NAME --notify-target JID]
   set <id> [same flags as add]          Update selected fields
   pause|resume|remove|history <id>       Manage a job
 
@@ -64,6 +65,8 @@ func automationSave(action string, args []string) error {
 	zone := fs.String("tz", "", "IANA timezone")
 	expires := fs.String("expires", "", "expiry date and time; empty clears")
 	mode := fs.String("session", "", "isolated or same")
+	notifyChannel := fs.String("notify-channel", "", "channel that receives each run's final answer (empty clears)")
+	notifyTarget := fs.String("notify-target", "", "chat JID that receives each run's final answer")
 	jsonOut := fs.Bool("json", false, "JSON output")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -132,6 +135,12 @@ func automationSave(action string, args []string) error {
 		if err != nil {
 			return err
 		}
+	}
+	if present["notify-channel"] {
+		job.NotifyChannel = strings.ToLower(*notifyChannel)
+	}
+	if present["notify-target"] {
+		job.NotifyTarget = *notifyTarget
 	}
 	job, err = st.SaveAutomation(ctx, job, time.Now())
 	if err != nil {

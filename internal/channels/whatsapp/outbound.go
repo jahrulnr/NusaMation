@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -176,6 +177,16 @@ func (c *Channel) SendStructured(ctx context.Context, req OutboundRequest) (stri
 	}
 	var msg *waE2E.Message
 	switch req.Type {
+	case "edit":
+		if strings.TrimSpace(req.Text) == "" || req.MessageID == "" {
+			return "", errors.New("edit requires messageId and text")
+		}
+		msg = client.BuildEdit(jid, types.MessageID(req.MessageID), &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: new(strings.TrimSpace(req.Text))}})
+	case "revoke":
+		if req.MessageID == "" {
+			return "", errors.New("revoke requires messageId")
+		}
+		msg = client.BuildRevoke(jid, types.EmptyJID, types.MessageID(req.MessageID))
 	case "reaction":
 		if req.MessageID == "" || req.SenderID == "" {
 			return "", errors.New("reaction requires messageId and senderId")
@@ -204,15 +215,59 @@ func (c *Channel) SendStructured(ctx context.Context, req OutboundRequest) (stri
 			return "", err
 		}
 	}
-	resp, err := client.SendMessage(ctx, jid, msg)
-	if err != nil {
-		return "", err
-	}
-	c.indexSent(ctx, jid, resp, msg, "")
-	return resp.ID, nil
+	var id string
+	err = c.pacerSend(ctx, jid.String(), func(sendCtx context.Context) error {
+		resp, err := client.SendMessage(sendCtx, jid, msg)
+		if err != nil {
+			return err
+		}
+		// Edit and revoke do not index their protocol wrapper — they update the
+		// original message row instead, so search reflects what the chat shows.
+		if c.store != nil && (req.Type == "edit" || req.Type == "revoke") {
+			if req.Type == "edit" {
+				if err := c.store.UpdateWhatsAppMessageText(sendCtx, jid.ToNonAD().String(), req.MessageID, strings.TrimSpace(req.Text)); err != nil {
+					c.log.Warn("could not update edited WhatsApp message in the index", "error", err)
+				}
+			} else if err := c.store.RevokeWhatsAppMessage(sendCtx, jid.ToNonAD().String(), req.MessageID); err != nil {
+				c.log.Warn("could not tombstone revoked WhatsApp message", "error", err)
+			}
+			id = resp.ID
+			return nil
+		}
+		c.indexSent(sendCtx, jid, resp, msg, "")
+		id = resp.ID
+		return nil
+	})
+	return id, err
 }
 
 func generalPollKey(chat, id string) string { return "channel.whatsapp.poll." + chat + "." + id }
+
+// sentPollKey persists the option names of an approval/question poll the
+// channel sent, so a vote still decodes after a restart — otherwise the tap
+// would be undecipherable and look lost.
+func sentPollKey(chat, id string) string { return "channel.whatsapp.pollsent." + chat + "." + id }
+
+func (c *Channel) sentPollOptions(ctx context.Context, chat types.JID, id string) ([]string, bool) {
+	if c.store == nil {
+		return nil, false
+	}
+	var names []string
+	if err := c.store.GetJSONSetting(ctx, sentPollKey(chat.ToNonAD().String(), id), &names); err != nil {
+		return nil, false
+	}
+	return names, len(names) > 0
+}
+
+// notifyStalePoll tells the voter that the poll they tapped no longer
+// carries a pending request, instead of dropping the tap without feedback.
+func (c *Channel) notifyStalePoll(chat types.JID) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_, _ = c.sendText(ctx, chat, "That poll is no longer active — the request it carried has already ended.")
+	}()
+}
 
 func (c *Channel) generalPollOptions(ctx context.Context, chat types.JID, id string) ([]string, bool) {
 	if c.store == nil {

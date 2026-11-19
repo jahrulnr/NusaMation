@@ -33,6 +33,8 @@ type Channel struct {
 	mgr   *channels.Manager
 	log   *slog.Logger
 
+	pacer pacer
+
 	mu         sync.Mutex
 	container  *sqlstore.Container
 	client     *whatsmeow.Client
@@ -57,6 +59,9 @@ type Channel struct {
 	groupMu    sync.Mutex
 	groupCache map[string]groupEntry
 
+	blockedMu sync.Mutex
+	blocked   []blockedEntry
+
 	pollMu sync.Mutex
 	polls  map[string][]string
 }
@@ -66,10 +71,31 @@ type groupEntry struct {
 	at   time.Time
 }
 
+// blockedEntry records a recent sender the allowlist rejected, so the web
+// panel can surface it with a one-tap allow action.
+type blockedEntry struct {
+	Sender    string `json:"sender"`
+	Chat      string `json:"chat"`
+	PushName  string `json:"pushName,omitempty"`
+	Timestamp int64  `json:"timestampMs"`
+}
+
+const blockedListLimit = 50
+
 var _ channels.Channel = (*Channel)(nil)
 var _ channels.Controller = (*Channel)(nil)
 var _ channels.MediaSender = (*Channel)(nil)
 var _ channels.ResponseStyler = (*Channel)(nil)
+
+// maxReplyRunes is the largest final reply sent as one WhatsApp message. It
+// matches the truncation rule in ResponseRules, so the agent knows exactly
+// how much of its text arrives.
+const maxReplyRunes = 30000
+
+// DeliveredTextLimit is the channel-level form of the delivery's cap so the
+// chat layer can size mirrored digests (which use Notify, not a delivery)
+// by the same rule the agent was told.
+func (c *Channel) DeliveredTextLimit() int { return maxReplyRunes }
 
 func New(st *appstore.Store, cfg config.Config, mgr *channels.Manager, log *slog.Logger) (*Channel, error) {
 	if log == nil {
@@ -93,8 +119,62 @@ func New(st *appstore.Store, cfg config.Config, mgr *channels.Manager, log *slog
 		container: container, settings: DefaultSettings(), state: "unpaired", lifeCtx: ctx, lifeStop: cancel,
 		sem: make(chan struct{}, 4), groupCache: map[string]groupEntry{}, polls: map[string][]string{},
 	}
+	c.pacer = *newPacer()
 	c.settings = c.loadSettings(context.Background(), failClosedSettings())
+	go c.retentionLoop()
 	return c, nil
+}
+
+// retentionLoop purges indexed WhatsApp messages older than the configured
+// retention window (0 disables retention). It checks daily so a settings
+// change takes effect without a restart.
+func (c *Channel) retentionLoop() {
+	t := time.NewTicker(24 * time.Hour)
+	defer t.Stop()
+	for {
+		if days := c.settingsSnapshot().RetentionDays; days > 0 {
+			c.purgeOlderThan(days)
+		}
+		select {
+		case <-c.lifeCtx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+func (c *Channel) purgeOlderThan(days int) {
+	cutoff := time.Now().AddDate(0, 0, -days).UnixMilli()
+	n, err := c.store.PurgeWhatsAppMessages(context.Background(), cutoff)
+	if err != nil {
+		c.log.Warn("WhatsApp retention purge failed", "error", err)
+	} else if n > 0 {
+		c.log.Info("purged indexed WhatsApp messages past retention", "removed", n, "days", days)
+	}
+}
+
+// Groups lists the joined WhatsApp groups with their JIDs and names — the
+// operator needs a group JID to allowlist it.
+func (c *Channel) Groups(ctx context.Context) ([]map[string]any, error) {
+	client := c.clientCopy()
+	if client == nil || !client.IsLoggedIn() {
+		return nil, errors.New("WhatsApp is not connected")
+	}
+	list, err := client.GetJoinedGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, g := range list {
+		if g == nil || g.JID.IsEmpty() {
+			continue
+		}
+		out = append(out, map[string]any{
+			"jid": g.JID.ToNonAD().String(), "name": g.GroupName.Name,
+			"participants": g.ParticipantCount,
+		})
+	}
+	return out, nil
 }
 
 func (c *Channel) SetHandler(h channels.InboundHandler) { c.handler = h }
@@ -152,6 +232,7 @@ func (c *Channel) Stop() error {
 	}
 	c.stopped = true
 	c.lifeStop()
+	c.pacerStop()
 	if c.qrCancel != nil {
 		c.qrCancel()
 	}
@@ -455,10 +536,21 @@ func (c *Channel) publish() {
 func (c *Channel) handleEvent(evt any) {
 	switch v := evt.(type) {
 	case *events.Message:
-		if err := c.indexMessage(context.Background(), v, "", true); err != nil {
+		chatName := c.cheapChatName(v.Info)
+		if err := c.indexMessage(context.Background(), v, chatName, true); err != nil {
 			c.log.Warn("could not index WhatsApp message", "error", err)
 		}
 		c.enqueueMessage(v)
+	case *events.UndecryptableMessage:
+		// The payload is ciphertext, so it can be neither indexed nor
+		// routed — but a message that silently vanishes looks like the bot
+		// ignoring someone. Name the sender and chat at info level so a
+		// failing session or missing key is diagnosable.
+		c.log.Info("WhatsApp message could not be decrypted",
+			"sender", v.Info.Sender.String(), "chat", v.Info.Chat.String(),
+			"id", string(v.Info.ID), "unavailable", v.IsUnavailable, "type", string(v.UnavailableType))
+	case *events.Receipt:
+		c.handleReceipt(v)
 	case *events.HistorySync:
 		go c.indexHistory(v)
 	case *events.Connected:
@@ -507,6 +599,14 @@ func (c *Channel) handleEvent(evt any) {
 }
 
 func (c *Channel) enqueueMessage(evt *events.Message) {
+	// Gate synchronously so a rejected or uninteresting message never occupies
+	// an intake slot, and a dropped message can still be answered.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if !c.gateInbound(ctx, evt) {
+		cancel()
+		return
+	}
+	cancel()
 	select {
 	case c.sem <- struct{}{}:
 		go func() {
@@ -518,8 +618,19 @@ func (c *Channel) enqueueMessage(evt *events.Message) {
 			}
 		}()
 	default:
-		c.log.Warn("dropping WhatsApp message because the intake queue is full")
+		c.log.Info("WhatsApp intake queue is full; the sender is told the assistant is busy",
+			"chat", evt.Info.Chat.String(), "sender", evt.Info.Sender.String())
+		go c.notifyBusy(evt.Info.Chat)
 	}
+}
+
+// notifyBusy answers an allowed sender whose message could not be taken —
+// media downloads can hold the intake slots for up to 90 s each, so silence
+// would look like the agent ignoring them.
+func (c *Channel) notifyBusy(chat types.JID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, _ = c.sendText(ctx, chat, "The assistant is still working on the previous message. Please try again in a moment.")
 }
 
 func (c *Channel) selfID() string {
@@ -532,24 +643,45 @@ func (c *Channel) selfID() string {
 }
 
 func (c *Channel) sendText(ctx context.Context, chat types.JID, text string) (types.MessageID, error) {
+	return c.sendTextMention(ctx, chat, text, nil)
+}
+
+// sendTextMention sends plain text; in a group chat an optional mention JID is
+// attached as ContextInfo.MentionedJID so WhatsApp highlights the recipient.
+// The actual send runs through the per-chat pacing queue.
+func (c *Channel) sendTextMention(ctx context.Context, chat types.JID, text string, mention *types.JID) (types.MessageID, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		text = "Done."
 	}
-	text = textfmt.Truncate(text, 30000)
-	c.mu.Lock()
-	client := c.client
-	c.mu.Unlock()
-	if client == nil || !client.IsLoggedIn() {
+	text = textfmt.TruncateRunes(text, maxReplyRunes)
+	if client := c.clientCopy(); client == nil || !client.IsLoggedIn() {
 		return "", errors.New("WhatsApp is not connected")
 	}
-	msg := &waE2E.Message{Conversation: new(text)}
-	resp, err := client.SendMessage(ctx, chat, msg)
-	if err != nil {
-		return "", err
-	}
-	c.indexSent(ctx, chat, resp, msg, "")
-	return resp.ID, nil
+	var id types.MessageID
+	err := c.pacerSend(ctx, chat.String(), func(sendCtx context.Context) error {
+		client := c.clientCopy()
+		if client == nil || !client.IsLoggedIn() {
+			return errors.New("WhatsApp is not connected")
+		}
+		var msg *waE2E.Message
+		if mention != nil && !mention.IsEmpty() && chat.Server == types.GroupServer {
+			msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text:        new(text),
+				ContextInfo: &waE2E.ContextInfo{MentionedJID: []string{mention.String()}},
+			}}
+		} else {
+			msg = &waE2E.Message{Conversation: new(text)}
+		}
+		resp, err := client.SendMessage(sendCtx, chat, msg)
+		if err != nil {
+			return err
+		}
+		c.indexSent(sendCtx, chat, resp, msg, "")
+		id = resp.ID
+		return nil
+	})
+	return id, err
 }
 
 func (c *Channel) parseTarget(target channels.Target) (types.JID, error) {
@@ -576,7 +708,7 @@ func (c *Channel) Begin(ctx context.Context, target channels.Target, text string
 	if !settings.Enabled {
 		return nil, errors.New("WhatsApp channel is disabled")
 	}
-	d := &delivery{ch: c, chat: jid}
+	d := &delivery{ch: c, chat: jid, sender: target.SenderID}
 	if settings.SendTyping {
 		d.startTyping()
 	}
@@ -588,8 +720,21 @@ func (c *Channel) Notify(ctx context.Context, target channels.Target, text strin
 	if err != nil {
 		return err
 	}
-	_, err = c.sendText(ctx, jid, text)
+	_, err = c.sendTextMention(ctx, jid, text, mentionJID(jid, target.SenderID))
 	return err
+}
+
+// mentionJID resolves the reply's target sender so group replies can @mention
+// them; nil outside groups or with an unusable sender id.
+func mentionJID(chat types.JID, sender string) *types.JID {
+	if sender == "" || chat.Server != types.GroupServer {
+		return nil
+	}
+	jid, err := types.ParseJID(sender)
+	if err != nil || jid.IsEmpty() {
+		return nil
+	}
+	return &jid
 }
 
 // SendPoll delivers a native WhatsApp poll so agent option questions
@@ -621,14 +766,29 @@ func (c *Channel) SendPoll(ctx context.Context, target channels.Target, question
 	if len(names) == 0 {
 		return "", errors.New("poll options are all empty")
 	}
-	msg := client.BuildPollCreation(question, names, maxSelectable)
-	resp, err := client.SendMessage(ctx, jid, msg)
-	if err != nil {
-		return "", err
+	if client := c.clientCopy(); client == nil || !client.IsLoggedIn() {
+		return "", errors.New("WhatsApp is not connected")
 	}
-	c.indexSent(ctx, jid, resp, msg, "")
-	c.cachePollOptions(jid.String(), resp.ID, names)
-	return resp.ID, nil
+	var id string
+	err = c.pacerSend(ctx, jid.String(), func(sendCtx context.Context) error {
+		msg := client.BuildPollCreation(question, names, maxSelectable)
+		resp, err := client.SendMessage(sendCtx, jid, msg)
+		if err != nil {
+			return err
+		}
+		c.indexSent(sendCtx, jid, resp, msg, "")
+		c.cachePollOptions(jid.String(), resp.ID, names)
+		// Persist the option names so a vote still decodes — and a stale tap
+		// can still be answered — after a restart.
+		if c.store != nil {
+			if err := c.store.SetJSONSetting(sendCtx, sentPollKey(jid.ToNonAD().String(), resp.ID), names); err != nil {
+				c.log.Warn("could not persist poll options", "error", err)
+			}
+		}
+		id = resp.ID
+		return nil
+	})
+	return id, err
 }
 
 // SendMedia uploads an image, video, audio clip or document to WhatsApp
@@ -650,6 +810,12 @@ func (c *Channel) sendMedia(ctx context.Context, target channels.Target, media c
 	}
 	data := media.Data
 	if len(data) == 0 && strings.TrimSpace(media.Path) != "" {
+		// Check the size before reading so an oversized file never occupies
+		// memory; the explicit send path is not workspace-confined (unlike
+		// reply attachments) and is documented as server-readable paths.
+		if info, err := os.Stat(media.Path); err == nil && info.Size() > maxMediaBytes {
+			return "", fmt.Errorf("media exceeds the %d byte limit", maxMediaBytes)
+		}
 		data, err = os.ReadFile(media.Path)
 		if err != nil {
 			return "", fmt.Errorf("read media %q: %w", media.Path, err)
@@ -681,7 +847,13 @@ func (c *Channel) sendMedia(ctx context.Context, target channels.Target, media c
 		return "", errors.New("WhatsApp is not connected")
 	}
 	mediaType := mediaTypeFor(mime)
-	return c.deliverMedia(ctx, jid, client, data, mediaType, mime, caption, name)
+	var id string
+	err = c.pacerSend(ctx, jid.String(), func(sendCtx context.Context) error {
+		sent, err := c.deliverMedia(sendCtx, jid, client, data, mediaType, mime, caption, name)
+		id = sent
+		return err
+	})
+	return id, err
 }
 
 // deliverMedia uploads and sends one attachment through the media client. It
@@ -813,6 +985,7 @@ const whatsAppTypingTTL = 10 * time.Second
 type delivery struct {
 	ch         *Channel
 	chat       types.JID
+	sender     string
 	typingMu   sync.Mutex
 	typingStop context.CancelFunc
 }
@@ -863,15 +1036,10 @@ func keepTyping(ctx context.Context, every time.Duration, beat func(types.ChatPr
 
 func (d *delivery) ID() string { return "" }
 
-func (d *delivery) SendSegment(ctx context.Context, text string) error {
-	_, err := d.ch.sendText(ctx, d.chat, text)
-	d.typingMu.Lock()
-	if d.typingStop != nil {
-		d.ch.presence(d.chat, types.ChatPresenceComposing)
-	}
-	d.typingMu.Unlock()
-	return err
-}
+// DeliveredTextLimit declares the per-message cap the chat layer truncates
+// the final reply to. It matches the rule ResponseRules gives the agent, so
+// nothing the agent was allowed to write is silently dropped.
+func (d *delivery) DeliveredTextLimit() int { return maxReplyRunes }
 
 func (d *delivery) Update(ctx context.Context, text string, final bool) error {
 	if !final {
@@ -881,7 +1049,7 @@ func (d *delivery) Update(ctx context.Context, text string, final bool) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	_, err := d.ch.sendText(ctx, d.chat, text)
+	_, err := d.ch.sendTextMention(ctx, d.chat, text, mentionJID(d.chat, d.sender))
 	return err
 }
 

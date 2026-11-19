@@ -180,10 +180,11 @@ func New(cfg config.Config) (*App, error) {
 }
 
 func (a *App) Serve(ctx context.Context) error {
+	scheduler := &automation.Scheduler{Store: a.store, Chat: a.chat, Log: a.log}
 	api, err := httpapi.New(httpapi.Options{
 		Config: a.cfg, Store: a.store, Chat: a.chat, Agents: a.agents,
 		Browser: a.browser, BrowserUse: a.browserUse, ConversationControl: a.conversationGrants,
-		Channels: a.channels, Hub: a.hub, Log: a.log,
+		Channels: a.channels, Hub: a.hub, Log: a.log, Automations: scheduler,
 		Notifier: a.notifier, Updater: a.updater,
 	})
 	if err != nil {
@@ -255,7 +256,7 @@ func (a *App) Serve(ctx context.Context) error {
 	schedulerDone := make(chan struct{})
 	go func() {
 		defer close(schedulerDone)
-		(&automation.Scheduler{Store: a.store, Chat: a.chat, Log: a.log}).Run(schedulerCtx)
+		scheduler.Run(schedulerCtx)
 	}()
 	go a.updater.Run(schedulerCtx)
 	go a.watchIdleAgents(schedulerCtx)

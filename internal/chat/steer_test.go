@@ -338,12 +338,6 @@ func (c *recChannel) finals() []string {
 type recDelivery struct{ ch *recChannel }
 
 func (d *recDelivery) ID() string { return "rec" }
-func (d *recDelivery) SendSegment(_ context.Context, text string) error {
-	d.ch.mu.Lock()
-	d.ch.events = append(d.ch.events, recEvent{final: true, text: text})
-	d.ch.mu.Unlock()
-	return nil
-}
 func (d *recDelivery) Update(_ context.Context, text string, final bool) error {
 	d.ch.mu.Lock()
 	d.ch.events = append(d.ch.events, recEvent{final: final, text: text})
@@ -354,12 +348,9 @@ func (d *recDelivery) Update(_ context.Context, text string, final bool) error {
 func TestChannelReportsErrorsAfterPartialOutput(t *testing.T) {
 	for _, tc := range []struct {
 		name, current string
-		delivered     bool
 	}{
 		{name: "no output"},
 		{name: "partial output", current: "I am working"},
-		{name: "earlier segment", delivered: true},
-		{name: "earlier and current", current: "More progress", delivered: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &recChannel{}
@@ -367,7 +358,7 @@ func TestChannelReportsErrorsAfterPartialOutput(t *testing.T) {
 			manager := channels.NewManager(events.Nop{}, logger)
 			manager.Register(rec)
 			svc := &Service{channels: manager, log: logger}
-			a := &activeTurn{turn: store.Turn{OriginChannel: "wa", OriginRef: `{"externalId":"chat-1"}`}, delivery: &recDelivery{ch: rec}, deliverToChannel: true, deliveredSegment: tc.delivered, finalStatus: "error", finalError: "agent process exited: exit status 143"}
+			a := &activeTurn{turn: store.Turn{OriginChannel: "wa", OriginRef: `{"externalId":"chat-1"}`}, delivery: &recDelivery{ch: rec}, deliverToChannel: true, finalStatus: "error", finalError: "agent process exited: exit status 143"}
 			a.assistant.WriteString(tc.current)
 			a.assistantAll.WriteString(tc.current)
 			svc.updateDelivery(a, true)
@@ -399,7 +390,10 @@ func TestMirroredErrorFollowsPartialOutput(t *testing.T) {
 	}
 }
 
-func TestChannelDeliversEveryReason(t *testing.T) {
+// TestChannelDeliversOneFinalMessage locks the one-message-per-turn contract:
+// interim assistant blocks, tool calls and new ACP message ids never reach the
+// channel while the turn runs; only the final cumulative reply is sent.
+func TestChannelDeliversOneFinalMessage(t *testing.T) {
 	bin := testutil.BuildFakeACP(t)
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "test.db"))
@@ -446,22 +440,21 @@ func TestChannelDeliversEveryReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return len(rec.finals()) >= 1 }, "first message while agent is working")
-	running, err := st.GetTurn(context.Background(), turn.ID)
-	if err != nil || running.Status != "running" {
-		t.Fatalf("first message arrived after work ended: turn=%#v err=%v", running, err)
-	}
+	// The delivery contract is one message per finished turn: no channel
+	// message leaves while the agent is still working, even across tool
+	// calls and new ACP message ids.
 	waitFor(t, func() bool {
 		got, err := st.GetTurn(context.Background(), turn.ID)
-		return err == nil && got.Status == "completed" && len(rec.finals()) == 3
-	}, "three separate channel messages")
+		return err == nil && got.Status == "completed"
+	}, "turn completes")
+	waitFor(t, func() bool { return len(rec.finals()) == 1 }, "exactly one channel message")
 	finals := rec.finals()
-	if len(finals) != 3 {
+	if len(finals) != 1 {
 		t.Fatalf("final messages = %#v", rec.events)
 	}
-	for i, part := range []string{"reason one", "reason two", "reason three"} {
-		if finals[i] != part {
-			t.Fatalf("message %d = %q, want %q", i, finals[i], part)
+	for _, part := range []string{"reason one", "reason two", "reason three"} {
+		if !strings.Contains(finals[0], part) {
+			t.Fatalf("final message %q misses %q", finals[0], part)
 		}
 	}
 	rec.mu.Lock()

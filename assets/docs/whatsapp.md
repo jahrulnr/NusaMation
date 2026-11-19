@@ -31,8 +31,10 @@ nusamation whatsapp set --read-receipts=false --send-typing=false
 
 - **AllowedNumbers**: who may talk to the bot in private chats. Numbers are
   normalized to digits only (`+`, spaces and `-` are stripped). **An empty
-  allowlist allows everyone** — the CLI refuses to save one that contains no
-  valid numbers.
+  allowlist allows no one** — the agent stays silent until a number or the
+  wildcard `*` is saved, so an unfilled form never becomes a public agent.
+  `*` allows everyone and must be the only entry; the CLI and the web
+  control center refuse `*` combined with numbers.
 - **GroupPolicy**: `disabled` ignores all groups; `mention` replies only when
   @-mentioned or replied to; `all` replies to every group message (use
   carefully). Poll creations, votes and added options are exempt from the
@@ -41,7 +43,18 @@ nusamation whatsapp set --read-receipts=false --send-typing=false
   text markers; votes on approval/question polls resolve the pending request.
 - **ReadReceipts** blue-ticks incoming chats; **SendTyping** shows "typing…"
   while the agent works. A turn finishes as one WhatsApp message. Partial
-  replies are not sent and messages are not edited.
+  replies are not sent and messages are not edited. Replies are truncated at
+  30,000 characters. Messages older than two hours when they arrive are
+  ignored without a reply.
+- **SendPacing** (seconds, default 5, 0 disables) spaces two consecutive
+  messages to the same chat with a human-like gap; faster messages wait in a
+  per-chat queue — never dropped, FIFO, chats independent. **QueueCap**
+  (default 20, 1–200) bounds that queue; beyond it the send is refused.
+- **RetentionDays** (CLI `--retention-days`, default 0 = keep forever) purges
+  indexed messages older than that many days. The index itself supports
+  full-text search and tombstones messages deleted for everyone.
+- Group replies @mention the message author, and `whatsapp send` types
+  `edit` and `revoke` update or delete one of the bot's own messages.
 
 Pending approvals and single/multi-choice agent questions arrive as tappable
 WhatsApp polls when they fit (≤12 options); otherwise approvals use the

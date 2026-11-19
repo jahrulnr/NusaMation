@@ -304,7 +304,7 @@ Back up the whole directory to preserve agents, conversations and the WhatsApp l
 
 Security notes:
 
-- An empty allowlist allows **anyone who can message the linked account**. Set it before sharing the number.
+- An empty allowlist allows **no one** — a guard while you are still setting up; the agent stays silent until you add a number or the wildcard `*` (allow everyone, must be the only entry). Set it before sharing the number.
 - Group policy defaults to **mention only**.
 - The agent's raw thoughts, tool inputs and outputs never leave the web control center.
 - Approvals can be answered in web or from the origin chat with `/approve <id>` / `/deny <id>`.

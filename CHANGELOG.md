@@ -4,6 +4,41 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+### Added
+
+- Outbound send pacing, per chat: `sendPacing` (seconds, default 5, 0–60) is the minimum gap between two messages to the same chat, and `queueCap` (default 20, 1–200) bounds the per-chat FIFO queue. Faster messages wait in the queue instead of being dropped or burst-sent — the WhatsApp-facing cadence now looks human. Both are editable in the web panel (Behaviour → Send pacing / Queue limit) and via `whatsapp set --send-pacing / --queue-cap`.
+- Automation job cards gain **Run now** (one immediate run; the schedule is untouched, so the next cron occurrence still fires) and **Test send** (pings the result chat so a misconfigured channel or target is discovered immediately), with `POST /api/automations/{id}/run` and `/test-notify` behind them.
+- WhatsApp now reports messages it cannot decrypt (`events.UndecryptableMessage`) at info level with sender and chat, instead of dropping them without a trace.
+
+### Changed
+
+- WhatsApp honours the documented one-message-per-turn contract in code: interim assistant blocks (triggered by tool calls, thoughts or new agent message ids) no longer leave the channel while the turn runs. The segment-delivery interface is gone from the chat layer.
+- WhatsApp reply truncation now matches the rule the agent is told: the delivery declares its own 30,000-character limit (`channels.TextLimiter`) and truncation counts runes, not bytes, so a multibyte reply is no longer cut shorter than promised. Channels without a declared limit keep the 3,500-character default.
+- WhatsApp allowlist semantics: an **empty allowlist now denies everyone** — the agent stays silent until the operator explicitly adds a number or the wildcard `*` (allow everyone, which must be the only entry; `*` combined with numbers is refused by the CLI and the web). Previously an empty list allowed anyone, so a forgotten form meant a public agent. Recent blocked senders remain visible in the panel with a one-tap **Allow** action.
+
+### Fixed
+
+- `UpdateSettings` no longer mutates the live allowlist when a save is refused: the patch struct shared the slice backing array with the stored settings, so `json.Unmarshal` overwrote it in place even on the error path.
+- Automation result delivery no longer moves a WhatsApp chat between conversations: the notify target is a delivery target, not a routing link. Previously `MoveChannelLink` reassigned the chat's link to the newest run (reproduced: an isolated run stole the chat from the operator's daily conversation and renamed it).
+- Approvals and agent questions (elicitations) raised by an automation run are web-only and can no longer be answered from a linked chat: unattended turns record no origin sender, so the voter guard now denies them instead of falling open, and the result chat is no longer sent a question it cannot answer.
+- Mirrored final answers now honor the receiving channel's declared reply limit (WhatsApp's 30,000 characters) instead of a fixed 3,000-byte cut, and a failed mirror surfaces as a web notice.
+- An automation notify target without a channel — or a channel without a target — is refused with a clear error instead of silently dropping one side, and bare phone numbers are normalized to full user JIDs.
+- Saving a WhatsApp allowlist from the web whose entries are all invalid is now refused with an error, like the CLI, instead of normalising to an empty deny-everything list by accident. The success toast reports the normalised entry count.
+- A failed final WhatsApp send now surfaces as an error notice in the web conversation instead of disappearing into the log.
+- Messages from non-allowlisted senders are logged at info level instead of debug, and the log line names both sender and chat.
+- The WhatsApp settings panel no longer blames `NUSAMATION_NO_WHATSAPP` when the channel failed to start for another reason (for example an unreadable WhatsApp database).
+
+### Added
+
+- WhatsApp blocked-sender list: recent senders the allowlist rejected are shown in the web panel with a one-tap **Allow** button.
+- `nusamation whatsapp groups` and `GET /api/channels/whatsapp/groups` list joined groups (JID + name) so allowlist entries no longer have to be hunted for; the web panel has a **Load groups** helper.
+- WhatsApp message index upgrades (migration 0012): an FTS5 search index with Unicode case-folding and a substring fallback, a per-message delivered/read `receipt` state from incoming receipts, and a tombstone that wipes text from a message deleted for everyone instead of leaving it searchable.
+- Retention for the WhatsApp index: `--retention-days` / the `retentionDays` setting purges messages older than N days (default keeps everything).
+- `whatsapp send` types `edit` and `revoke` update or delete one of the bot's own messages, keeping the index in sync; oversized media files are size-checked before being read.
+- Group replies @mention the message author, and votes on approval polls survive a restart: a tap on a request that already ended answers "That request has already ended." instead of vanishing, while other participants' votes in a group no longer broadcast a guard message into the room.
+- A full WhatsApp intake queue now tells an allowed sender the assistant is busy instead of dropping the message silently, and gating runs before a slot is taken.
+- Automations can deliver each run's final answer to a chat channel (`--notify-channel`/`--notify-target`, plus form fields). The run's turn is submitted with that chat as its origin and delivered through the standard one-message machinery; no channel link is created, so an automation chat can never steal a link from another conversation, and approvals raised by an unattended run stay in the web inbox (migration 0013).
+
 ## [0.2.12] - 2026-11-18
 
 ### Added

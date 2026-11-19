@@ -83,3 +83,76 @@ func TestWhatsAppMessageUpdatesKeepNewestLiveContent(t *testing.T) {
 		t.Fatalf("page = %#v, %v", page, err)
 	}
 }
+
+func TestWhatsAppTombstoneReceiptsPurgeAndFTS(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	if err := st.SaveWhatsAppMessage(ctx, WhatsAppMessage{
+		Chat: "62@s.whatsapp.net", ID: "m1", Sender: "62@s.whatsapp.net",
+		Timestamp: 100, Text: "secret plans", Raw: []byte(`{"text":"secret plans"}`), Live: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveWhatsAppMessage(ctx, WhatsAppMessage{
+		Chat: "62@s.whatsapp.net", ID: "out1", Sender: "me@s.whatsapp.net", FromMe: true,
+		Timestamp: 110, Text: "my reply", Live: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A revoke clears the content so a deleted message is unsearchable.
+	if err := st.RevokeWhatsAppMessage(ctx, "62@s.whatsapp.net", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	page, err := st.SearchWhatsAppMessages(ctx, WhatsAppSearch{Query: "secret", Limit: 50})
+	if err != nil || len(page.Messages) != 0 {
+		t.Fatalf("revoked message still searchable: %#v, %v", page, err)
+	}
+	if err := st.RevokeWhatsAppMessage(ctx, "62@s.whatsapp.net", "missing"); err != nil {
+		t.Fatalf("revoking an unknown row failed: %v", err)
+	}
+
+	// Receipts progress delivered → read and never downgrade.
+	if err := st.MarkWhatsAppReceipt(ctx, "62@s.whatsapp.net", []string{"out1"}, "delivered"); err != nil {
+		t.Fatal(err)
+	}
+	page, err = st.SearchWhatsAppMessages(ctx, WhatsAppSearch{Query: "reply", Limit: 50})
+	if err != nil || len(page.Messages) != 1 || page.Messages[0].Receipt != "delivered" {
+		t.Fatalf("receipt = %#v, %v", page, err)
+	}
+	if err := st.MarkWhatsAppReceipt(ctx, "62@s.whatsapp.net", []string{"out1"}, "read"); err != nil {
+		t.Fatal(err)
+	}
+	// The delivered receipt must not overwrite the read state.
+	if err := st.MarkWhatsAppReceipt(ctx, "62@s.whatsapp.net", []string{"out1"}, "delivered"); err != nil {
+		t.Fatal(err)
+	}
+	page, err = st.SearchWhatsAppMessages(ctx, WhatsAppSearch{Query: "reply", Limit: 50})
+	if err != nil || page.Messages[0].Receipt != "read" {
+		t.Fatalf("receipt downgrade: %#v", page)
+	}
+	// Inbound messages are never marked.
+	if err := st.MarkWhatsAppReceipt(ctx, "62@s.whatsapp.net", []string{"m1"}, "read"); err != nil {
+		t.Fatal(err)
+	}
+	page, err = st.SearchWhatsAppMessages(ctx, WhatsAppSearch{Query: "secret", Limit: 50})
+	if err != nil || len(page.Messages) != 0 {
+		t.Fatalf("inbound row resurrected: %#v", page)
+	}
+
+	// Punctuation-heavy queries fall back to the substring scan.
+	page, err = st.SearchWhatsAppMessages(ctx, WhatsAppSearch{Query: `"my reply"`, Limit: 50})
+	if err != nil || len(page.Messages) != 1 {
+		t.Fatalf("quoted query = %#v, %v", page, err)
+	}
+
+	// Purge removes only rows older than the cutoff.
+	n, err := st.PurgeWhatsAppMessages(ctx, 105)
+	if err != nil || n != 1 {
+		t.Fatalf("purge = %d, %v", n, err)
+	}
+	page, err = st.SearchWhatsAppMessages(ctx, WhatsAppSearch{Query: "reply", Limit: 50})
+	if err != nil || len(page.Messages) != 1 {
+		t.Fatalf("purge removed the wrong rows: %#v, %v", page, err)
+	}
+}

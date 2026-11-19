@@ -35,6 +35,26 @@ func Truncate(s string, max int) string {
 	return strings.TrimRight(s[:cut], " \n\t") + ellipsis
 }
 
+// TruncateRunes cuts s to max runes (not bytes) and appends an ellipsis when
+// something was removed. Chat channels promise limits in characters, so the
+// delivered text must count them the same way — a byte cut would drop far
+// more of a multibyte reply than the agent was told about.
+func TruncateRunes(s string, max int) string {
+	if max <= 0 {
+		return Truncate(s, max)
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	const ellipsis = "…"
+	if max <= len(ellipsis) {
+		return string(runes[:max])
+	}
+	cut := max - len(ellipsis)
+	return strings.TrimRight(string(runes[:cut]), " \n\t") + ellipsis
+}
+
 // ChatMarkdown converts common markdown constructs into WhatsApp-friendly
 // text. It deliberately keeps fenced code blocks and lists intact.
 func ChatMarkdown(s string) string {

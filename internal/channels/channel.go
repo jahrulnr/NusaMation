@@ -32,6 +32,9 @@ type Target struct {
 	ThreadID    string `json:"threadId,omitempty"`
 	DisplayName string `json:"displayName,omitempty"`
 	IsGroup     bool   `json:"isGroup,omitempty"`
+	// SenderID is the participant who authored the message this target refers
+	// to. Group replies may @mention them so WhatsApp highlights the answer.
+	SenderID string `json:"senderId,omitempty"`
 }
 
 type Attachment struct {
@@ -67,9 +70,12 @@ type Delivery interface {
 	Update(ctx context.Context, text string, final bool) error
 }
 
-// SegmentDelivery sends a completed assistant message while the turn continues.
-type SegmentDelivery interface {
-	SendSegment(ctx context.Context, text string) error
+// TextLimiter is implemented by deliveries that cap the text of a single
+// delivered message themselves. The chat layer truncates the final reply to
+// this limit instead of its own default, so a channel that promises the agent
+// a larger limit actually delivers it.
+type TextLimiter interface {
+	DeliveredTextLimit() int
 }
 
 // OutboundMedia is a file the agent asked to deliver to a chat channel.

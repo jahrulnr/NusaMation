@@ -140,6 +140,73 @@ func TestAutomationCronUsesSelectedTimezone(t *testing.T) {
 	}
 }
 
+func TestAutomationNotifyTargetValidation(t *testing.T) {
+	now := time.Now()
+	base := func() Automation {
+		return Automation{Name: "x", Prompt: "x", AgentID: "a", Schedule: "once", RunAt: now.Add(time.Hour).UnixMilli(), SessionMode: "isolated", Timezone: "UTC"}
+	}
+
+	// A bare phone number normalizes to the user JID form.
+	a := base()
+	a.NotifyChannel, a.NotifyTarget = "whatsapp", "+62 812-3456-7890"
+	if err := ValidateAutomation(&a, now); err != nil {
+		t.Fatal(err)
+	}
+	if a.NotifyTarget != "6281234567890@s.whatsapp.net" {
+		t.Fatalf("normalized target = %q", a.NotifyTarget)
+	}
+	// Group JIDs and full user JIDs pass through.
+	a.NotifyTarget = "1203630@g.us"
+	if err := ValidateAutomation(&a, now); err != nil {
+		t.Fatal(err)
+	}
+	if a.NotifyTarget != "1203630@g.us" {
+		t.Fatalf("group target = %q", a.NotifyTarget)
+	}
+	// Channel without target — and target without channel — are refused.
+	a.NotifyTarget = ""
+	if err := ValidateAutomation(&a, now); err == nil {
+		t.Fatal("channel without target accepted")
+	}
+	a.NotifyChannel, a.NotifyTarget = "", "6281234567890@s.whatsapp.net"
+	if err := ValidateAutomation(&a, now); err == nil {
+		t.Fatal("target without channel accepted")
+	}
+	// Non-numeric garbage without @ is refused.
+	a.NotifyChannel = "whatsapp"
+	a.NotifyTarget = "not-a-jid"
+	if err := ValidateAutomation(&a, now); err == nil {
+		t.Fatal("garbage target accepted")
+	}
+
+	// The notify columns round-trip through the store.
+	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	enabled := true
+	ag, err := st.CreateAgent(context.Background(), AgentInput{Name: "Fake", Slug: "notify-store", Command: "/bin/true", Cwd: t.TempDir(), Enabled: &enabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := st.SaveAutomation(context.Background(), Automation{
+		Name: "notify", Prompt: "hello", AgentID: ag.ID, Schedule: "once",
+		RunAt: now.Add(time.Hour).UnixMilli(), SessionMode: "isolated", Timezone: "UTC", Enabled: true,
+		NotifyChannel: "whatsapp", NotifyTarget: "+62 812-3456-7890",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetAutomation(context.Background(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NotifyChannel != "whatsapp" || got.NotifyTarget != "6281234567890@s.whatsapp.net" {
+		t.Fatalf("notify round-trip = %q %q", got.NotifyChannel, got.NotifyTarget)
+	}
+}
+
 func TestAutomationHistoryKeepsTurnOutcome(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(filepath.Join(t.TempDir(), "test.db"))

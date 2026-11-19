@@ -47,6 +47,18 @@ func (c *Channel) indexMessage(ctx context.Context, evt *events.Message, chatNam
 		return nil
 	}
 	msg := evt.Message
+	// A revoke ("deleted for everyone") tombstones the indexed original —
+	// clearing the text and raw payload — instead of being stored as its own
+	// (empty) message. Unknown rows are ignored.
+	if proto := msg.GetProtocolMessage(); proto != nil && proto.GetType() == waE2E.ProtocolMessage_REVOKE {
+		key := proto.GetKey()
+		if key != nil && key.GetID() != "" && !evt.Info.Chat.IsEmpty() {
+			if err := c.store.RevokeWhatsAppMessage(ctx, evt.Info.Chat.ToNonAD().String(), key.GetID()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	id := string(evt.Info.ID)
 	if edit := msg.GetProtocolMessage(); edit != nil && edit.GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT && edit.GetEditedMessage() != nil {
 		msg = edit.GetEditedMessage()
@@ -80,7 +92,14 @@ func (c *Channel) indexSent(ctx context.Context, chat types.JID, resp whatsmeow.
 		chat = resp.Chat
 	}
 	evt := &events.Message{Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: chat, Sender: resp.Sender, IsFromMe: true, IsGroup: chat.Server == types.GroupServer}, ID: id, Timestamp: resp.Timestamp}, Message: msg}
-	if err := c.indexMessage(ctx, evt, "", true); err != nil {
+	// Sent messages carry no push name, so the chat name can only come from
+	// the cached group lookup — the same rule inbound messages use. Private
+	// chats stay unnamed until a contact name is known.
+	chatName := ""
+	if evt.Info.IsGroup {
+		chatName = c.cheapChatName(evt.Info)
+	}
+	if err := c.indexMessage(ctx, evt, chatName, true); err != nil {
 		c.log.Warn("could not index sent WhatsApp message", "error", err)
 	}
 }

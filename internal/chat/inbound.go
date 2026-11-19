@@ -585,6 +585,20 @@ func turnOriginSender(turn store.Turn) string {
 	return ref.SenderID
 }
 
+// turnIsAutomation reports whether the turn was launched by a scheduler run.
+// Such turns record no origin sender, so channel-based answering must stay
+// closed — approvals and poll questions belong to the web inbox.
+func turnIsAutomation(turn store.Turn) bool {
+	if turn.OriginRef == "" {
+		return false
+	}
+	var ref struct {
+		Automation bool `json:"automation"`
+	}
+	_ = json.Unmarshal([]byte(turn.OriginRef), &ref)
+	return ref.Automation
+}
+
 func parseCommand(text string) (string, []string) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "/") {

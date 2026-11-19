@@ -236,38 +236,7 @@ func (s *Service) rotateStream(a *activeTurn, kind string) {
 	a.mu.Unlock()
 	if id != "" {
 		s.finalizeMessage(id, text, "complete")
-		if kind == "assistant" {
-			s.deliverSegment(a, text)
-		}
 	}
-}
-
-func (s *Service) deliverSegment(a *activeTurn, text string) {
-	if strings.TrimSpace(text) == "" {
-		return
-	}
-	a.deliveryMu.Lock()
-	defer a.deliveryMu.Unlock()
-	a.mu.Lock()
-	d, ok := a.delivery.(channels.SegmentDelivery)
-	a.mu.Unlock()
-	if !ok {
-		return
-	}
-	s.collectOutboundFromText(a)
-	text = strings.TrimSpace(formatDeliveredText(text, a.outboundRefs()))
-	if text == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	if err := d.SendSegment(ctx, textfmt.Truncate(text, 3500)); err != nil {
-		s.log.Warn("failed to send channel reply", "conversation", a.conversationID, "error", err)
-		s.notifyOrigin(a, textfmt.Truncate(text, 3500))
-	}
-	a.mu.Lock()
-	a.deliveredSegment = true
-	a.mu.Unlock()
 }
 
 func (s *Service) appendAgentThought(a *activeTurn, delta string) {
@@ -685,6 +654,10 @@ func (s *Service) flushStreams(a *activeTurn, final bool, status string) {
 	s.updateDelivery(a, final)
 }
 
+// defaultReplyRunes caps a delivered reply for channels that do not declare
+// their own limit (see channels.TextLimiter).
+const defaultReplyRunes = 3500
+
 func (s *Service) updateDelivery(a *activeTurn, final bool) {
 	if !final {
 		return
@@ -697,46 +670,65 @@ func (s *Service) updateDelivery(a *activeTurn, final bool) {
 	deliver := a.deliverToChannel
 	text := strings.TrimSpace(a.assistantAll.String())
 	status, terminalError := a.finalStatus, a.finalError
-	_, segmented := d.(channels.SegmentDelivery)
-	deliveredSegment := a.deliveredSegment
-	if segmented {
-		text = strings.TrimSpace(a.assistant.String())
-	}
 	a.delivery = nil
 	a.mu.Unlock()
 	if !deliver && d == nil {
 		return
 	}
-	if text == "" && status != "error" && !(segmented && deliveredSegment) {
-		text = s.finalDigest(a)
+	limit := defaultReplyRunes
+	if lim, ok := d.(channels.TextLimiter); ok && lim.DeliveredTextLimit() > 0 {
+		limit = lim.DeliveredTextLimit()
+	}
+	if text == "" && status != "error" {
+		text = s.finalDigest(a, limit)
 	} else if text != "" {
 		s.collectOutboundFromText(a)
 		text = strings.TrimSpace(formatDeliveredText(text, a.outboundRefs()))
 	}
-	if strings.TrimSpace(text) == "" && status != "error" && !(segmented && deliveredSegment) {
+	if strings.TrimSpace(text) == "" && status != "error" {
 		text = "Done."
 	}
-	text = textfmt.Truncate(text, 3500)
+	text = textfmt.TruncateRunes(text, limit)
 	if d == nil {
+		// The channel delivery never started (Begin failed); the plain
+		// fallback is the last chance. If it fails too, the web must hear
+		// about it — the reply only exists in the transcript otherwise.
 		if text != "" {
-			s.notifyOrigin(a, text)
+			if err := s.notifyOriginErr(context.Background(), a, text); err != nil {
+				s.emit("notice", a.conversationID, map[string]any{
+					"severity": "error", "title": "Channel reply failed",
+					"description": fmt.Sprintf("The reply to %s could not be delivered: %v", a.turn.OriginChannel, err),
+				})
+			}
 		}
 	} else {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if err := d.Update(ctx, text, true); err != nil {
 			s.log.Warn("failed to send channel reply", "conversation", a.conversationID, "error", err)
+			s.emit("notice", a.conversationID, map[string]any{
+				"severity": "error", "title": "Channel reply failed",
+				"description": fmt.Sprintf("The reply to %s could not be delivered: %v", a.turn.OriginChannel, err),
+			})
 			if text != "" {
 				s.notifyOrigin(a, text)
 			}
 		}
 	}
 	if status == "error" {
-		s.notifyOrigin(a, "The agent hit an error: "+terminalError)
+		if err := s.notifyOriginErr(context.Background(), a, "The agent hit an error: "+terminalError); err != nil {
+			s.emit("notice", a.conversationID, map[string]any{
+				"severity": "error", "title": "Channel reply failed",
+				"description": fmt.Sprintf("The error notice for %s could not be delivered: %v", a.turn.OriginChannel, err),
+			})
+		}
 	}
 }
 
-func (s *Service) finalDigest(a *activeTurn) string {
+// finalDigest builds the one message a channel receives when the turn
+// produced no (or lost) cumulative assistant text. limit is the declared
+// per-message cap of the receiving delivery.
+func (s *Service) finalDigest(a *activeTurn, limit int) string {
 	a.mu.Lock()
 	terminalStatus, terminalError := a.finalStatus, a.finalError
 	text := a.assistantAll.String()
@@ -744,7 +736,7 @@ func (s *Service) finalDigest(a *activeTurn) string {
 	// assistantAll is the authoritative cumulative reply; prefer it over a
 	// windowed DB query so long turns never lose the assistant's text.
 	if strings.TrimSpace(text) != "" {
-		return textfmt.Truncate(textfmt.ChatMarkdown(text), 3500)
+		return textfmt.TruncateRunes(textfmt.ChatMarkdown(text), limit)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -770,16 +762,16 @@ func (s *Service) finalDigest(a *activeTurn) string {
 		}
 	}
 	if len(assistant) > 0 {
-		return textfmt.Truncate(textfmt.ChatMarkdown(strings.Join(assistant, "\n\n")), 3500)
+		return textfmt.TruncateRunes(textfmt.ChatMarkdown(strings.Join(assistant, "\n\n")), limit)
 	}
 	if terminalStatus == "error" {
-		return textfmt.Truncate("The agent hit an error: "+terminalError, 1200)
+		return textfmt.TruncateRunes("The agent hit an error: "+terminalError, 1200)
 	}
 	if terminalStatus == "cancelled" {
 		return "Cancelled."
 	}
 	if len(tools) > 0 {
-		return "Done. I used:\n" + textfmt.Truncate(strings.Join(tools, "\n"), 1200)
+		return "Done. I used:\n" + textfmt.TruncateRunes(strings.Join(tools, "\n"), 1200)
 	}
 	return "Done."
 }

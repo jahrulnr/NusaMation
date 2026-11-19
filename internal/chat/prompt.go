@@ -740,6 +740,42 @@ func (s *Service) notifyOriginErr(ctx context.Context, a *activeTurn, text strin
 	return nil
 }
 
+// HasChannel reports whether a channel with this name is registered, so the
+// scheduler can fail a launch with a clear error instead of losing the run's
+// result to an unknown channel.
+func (s *Service) HasChannel(name string) bool {
+	if s.channels == nil {
+		return false
+	}
+	_, ok := s.channels.Get(name)
+	return ok
+}
+
+// PrepareDeliveryConversation makes sure a conversation can deliver replies
+// to its turn origin: reply-to-origin is forced on so a scheduled run's
+// answer reaches the configured chat even when the global default is off.
+// It deliberately does not create channel links — links belong to chats the
+// conversation actually converses on.
+func (s *Service) PrepareDeliveryConversation(ctx context.Context, conversationID string) error {
+	conv, err := s.store.GetConversation(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	if conv.Routing.ReplyToOrigin {
+		return nil
+	}
+	routing := conv.Routing
+	routing.ReplyToOrigin = true
+	_, err = s.store.UpdateConversation(ctx, conversationID, store.ConversationUpdate{Routing: &routing})
+	if err == nil {
+		updated, e := s.store.GetConversation(ctx, conversationID)
+		if e == nil {
+			s.emit("conversation.updated", conversationID, updated)
+		}
+	}
+	return err
+}
+
 // NotifyActive sends a progress message to the origin channel of the
 // conversation's running turn. It is the report tool's delivery path; the
 // normal turn digest still runs once when the turn finishes.
@@ -774,6 +810,7 @@ func (s *Service) originChannel(a *activeTurn) (channels.Channel, channels.Targe
 		ThreadID    string `json:"threadId"`
 		DisplayName string `json:"displayName"`
 		IsGroup     bool   `json:"isGroup"`
+		SenderID    string `json:"senderId"`
 	}
 	_ = json.Unmarshal([]byte(a.turn.OriginRef), &ref)
 	a.mu.Lock()
@@ -784,13 +821,15 @@ func (s *Service) originChannel(a *activeTurn) (channels.Channel, channels.Targe
 			continue
 		}
 		if ref.ExternalID == "" || (l.ExternalID == ref.ExternalID && (ref.ThreadID == "" || l.ThreadID == ref.ThreadID)) {
-			return ch, targetFromLink(l), true
+			target := targetFromLink(l)
+			target.SenderID = ref.SenderID
+			return ch, target, true
 		}
 	}
 	if ref.ExternalID != "" {
 		return ch, channels.Target{
 			Channel: a.turn.OriginChannel, ExternalID: ref.ExternalID, ThreadID: ref.ThreadID,
-			DisplayName: ref.DisplayName, IsGroup: ref.IsGroup,
+			DisplayName: ref.DisplayName, IsGroup: ref.IsGroup, SenderID: ref.SenderID,
 		}, true
 	}
 	if a.turn.OriginRef != "" {
@@ -812,11 +851,11 @@ func (s *Service) mirrorFinal(a *activeTurn) {
 	if !routing.MirrorFinal || s.channels == nil || len(links) == 0 {
 		return
 	}
-	digest := s.finalDigest(a)
+	digest := s.finalDigest(a, defaultReplyRunes)
 	errorText := ""
 	if status == "error" {
 		errorText = "The agent hit an error: " + terminalError
-		if digest == textfmt.Truncate(errorText, 1200) {
+		if digest == textfmt.TruncateRunes(errorText, 1200) {
 			digest = ""
 		}
 	}
@@ -839,11 +878,21 @@ func (s *Service) mirrorFinal(a *activeTurn) {
 			continue
 		}
 		target := targetFromLink(l)
-		go func(ch channels.Channel, target channels.Target) {
+		// Honor the channel's own per-message cap — the same rule the agent
+		// was told — instead of a fixed cut.
+		limit := defaultReplyRunes
+		if lim, ok := ch.(channels.TextLimiter); ok && lim.DeliveredTextLimit() > 0 {
+			limit = lim.DeliveredTextLimit()
+		}
+		go func(ch channels.Channel, target channels.Target, limit int) {
 			if strings.TrimSpace(digest) != "" {
 				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-				if err := ch.Notify(ctx, target, textfmt.Truncate(digest, 3000)); err != nil {
+				if err := ch.Notify(ctx, target, textfmt.TruncateRunes(digest, limit)); err != nil {
 					s.log.Warn("failed to mirror final answer", "channel", ch.Name(), "error", err)
+					s.emit("notice", a.conversationID, map[string]any{
+						"severity": "error", "title": "Mirror failed",
+						"description": fmt.Sprintf("The final answer could not be mirrored to %s: %v", ch.Name(), err),
+					})
 				}
 				cancel()
 			}
@@ -852,8 +901,12 @@ func (s *Service) mirrorFinal(a *activeTurn) {
 				defer cancel()
 				if err := ch.Notify(ctx, target, errorText); err != nil {
 					s.log.Warn("failed to mirror agent error", "channel", ch.Name(), "error", err)
+					s.emit("notice", a.conversationID, map[string]any{
+						"severity": "error", "title": "Mirror failed",
+						"description": fmt.Sprintf("The agent error could not be mirrored to %s: %v", ch.Name(), err),
+					})
 				}
 			}
-		}(ch, target)
+		}(ch, target, limit)
 	}
 }

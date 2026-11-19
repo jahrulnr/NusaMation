@@ -73,8 +73,21 @@ server polls the database and picks up CLI changes without a restart. `list`,
   leaves an `interrupted` run rather than automatically replaying it. This
   recovery status is set after the claim has been outstanding for five
   minutes. Inspect the linked chat, when available, before deciding to retry.
-- Runs appear in the web conversation and history; scheduling does not itself
-  send the result to a WhatsApp chat. See [whatsapp.md](whatsapp.md) for chat
-  and agent routing.
+- Runs appear in the web conversation and history. A job can also deliver each
+  run's final answer to a chat channel: set **Result channel** and **Result
+  chat JID** in the automation form (CLI `--notify-channel whatsapp
+  --notify-target 628…@s.whatsapp.net`). The run's turn is submitted with that
+  chat as its origin, so the normal one-message delivery machinery sends the
+  answer there — typing indicator, truncation limit, and a web error notice on
+  failure included. A bare phone number is normalized to a full user JID. No
+  channel link is created: the chat keeps belonging to whatever conversation
+  it is already linked to, and the run conversation itself stays link-free.
+  Approvals and agent questions (elicitation) raised by an automation run stay
+  in the web inbox — an unattended job must not be answerable from a group
+  chat, and the result chat only ever receives the run's answer. Two buttons
+  on each job card verify the wiring without waiting for the schedule:
+  **Run now** launches one immediate run (the next cron occurrence still fires
+  normally) and **Test send** pings the result chat. See [whatsapp.md](whatsapp.md)
+  for chat and agent routing.
 
 For API payloads and endpoints, see [api.md](api.md).
