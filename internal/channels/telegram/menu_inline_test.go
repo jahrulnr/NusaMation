@@ -46,7 +46,7 @@ func TestSessionMenuGrammar(t *testing.T) {
 	}
 
 	var many []channels.SessionCommand
-	for i := 0; i < 90; i++ {
+	for i := range 90 {
 		many = append(many, channels.SessionCommand{Name: fmt.Sprintf("c%02d", i)})
 	}
 	capped := sessionMenu(many)
@@ -283,7 +283,7 @@ func TestInlineRoomCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	labels := map[string]bool{}
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		conv, err := st.CreateConversation(ctx, ag.ID, "Room", "", "web", "", "")
 		if err != nil {
 			t.Fatal(err)

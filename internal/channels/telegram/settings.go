@@ -152,10 +152,8 @@ func (s Settings) allows(senderID, chatID string) bool {
 	// user's own positive id as chat_id, so matching groups there would
 	// turn a mistyped group entry into a private allow.
 	if strings.HasPrefix(chatID, "-") {
-		for _, id := range s.AllowedGroupIDs {
-			if id == chatID {
-				return true
-			}
+		if slices.Contains(s.AllowedGroupIDs, chatID) {
+			return true
 		}
 	}
 	return false

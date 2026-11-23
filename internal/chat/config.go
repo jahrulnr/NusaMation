@@ -127,6 +127,41 @@ func setConfigValue(raw json.RawMessage, configID string, value any) json.RawMes
 	return b
 }
 
+// pruneModelDependentConfigs removes choices that follow the model (Devin
+// marks speed and thought level as model_config). keepID is the model option
+// being changed and always survives.
+func pruneModelDependentConfigs(raw json.RawMessage, keepID string) json.RawMessage {
+	var list []map[string]any
+	if json.Unmarshal(raw, &list) != nil {
+		return raw
+	}
+	kept := list[:0]
+	for _, item := range list {
+		id, _ := item["id"].(string)
+		category, _ := item["category"].(string)
+		if id != keepID && modelDependentCategory(category) {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	if len(kept) == len(list) {
+		return raw
+	}
+	b, err := json.Marshal(kept)
+	if err != nil {
+		return raw
+	}
+	return b
+}
+
+func modelDependentCategory(category string) bool {
+	switch strings.ToLower(strings.TrimSpace(category)) {
+	case "model_config", "thought_level", "reasoning_effort":
+		return true
+	}
+	return false
+}
+
 // SetConfig changes a live ACP session option (model, mode, thought level,
 // speed, ...). If no session is running yet the choice is stored and applied
 // when the conversation starts next.
@@ -173,29 +208,32 @@ func (s *Service) SetConfig(ctx context.Context, conversationID, configID string
 		}
 	}
 
-	// Nested merge, so it cannot go through patchMeta; hold metaMu across the
-	// read-modify-write like patchMeta does.
-	s.metaMu.Lock()
-	if fresh, err := s.store.GetConversation(ctx, conv.ID); err == nil {
-		meta, _ := s.metaMap(fresh)
+	// Nested merge, so it cannot use the shallow patchMeta.
+	if _, _, err := s.patchMetaFunc(ctx, conv.ID, func(meta map[string]any) {
 		desired, _ := meta["desiredConfig"].(map[string]any)
 		if desired == nil {
 			desired = map[string]any{}
 		}
 		desired[configID] = value
 		meta["desiredConfig"] = desired
-		if err := s.store.UpdateConversationMetadata(ctx, conv.ID, mustJSON(meta)); err != nil {
-			s.log.Warn("failed to persist desired config", "conversation", conv.ID, "error", err)
-		}
+	}); err != nil {
+		s.log.Warn("failed to persist desired config", "conversation", conv.ID, "error", err)
 	}
-	s.metaMu.Unlock()
 
 	if !applied {
 		model := conv.Model
-		newConfigs := setConfigValue(configs, configID, value)
+		newConfigs := configs
 		if strings.EqualFold(opt.Category, "model") {
 			model = configValueString(value)
+			// Without a live session the agent cannot republish the option set
+			// for the new model. Keep the model choice but drop options that
+			// follow it, so the picker never offers a value the new model does
+			// not publish; the next session refreshes the catalog.
+			if model != configValueString(opt.CurrentValue) {
+				newConfigs = pruneModelDependentConfigs(newConfigs, configID)
+			}
 		}
+		newConfigs = setConfigValue(newConfigs, configID, value)
 		_ = s.store.SetConversationConfig(ctx, conv.ID, model, newConfigs)
 	}
 	updated, err := s.store.GetConversation(ctx, conv.ID)

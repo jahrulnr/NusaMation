@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"slices"
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -107,8 +108,8 @@ func sanitizeHTML(text string) string {
 		stack = append(stack, name)
 		i = end + 1
 	}
-	for j := len(stack) - 1; j >= 0; j-- {
-		b.WriteString("</" + stack[j] + ">")
+	for _, s := range slices.Backward(stack) {
+		b.WriteString("</" + s + ">")
 	}
 	return b.String()
 }
@@ -123,10 +124,7 @@ func truncateUTF16(s string, maxUnits int) string {
 	}
 	units := 0
 	for i, r := range s {
-		n := utf16.RuneLen(r)
-		if n < 1 {
-			n = 1
-		}
+		n := max(utf16.RuneLen(r), 1)
 		if units+n > maxUnits {
 			return s[:i]
 		}
@@ -138,10 +136,7 @@ func truncateUTF16(s string, maxUnits int) string {
 func utf16Units(s string) int {
 	n := 0
 	for _, r := range s {
-		u := utf16.RuneLen(r)
-		if u < 1 {
-			u = 1
-		}
+		u := max(utf16.RuneLen(r), 1)
 		n += u
 	}
 	return n
@@ -192,8 +187,8 @@ func truncateHTML(s string, max int) string {
 		count += units
 		i += size
 	}
-	for j := len(stack) - 1; j >= 0; j-- {
-		b.WriteString("</" + stack[j] + ">")
+	for _, s := range slices.Backward(stack) {
+		b.WriteString("</" + s + ">")
 	}
 	return b.String()
 }

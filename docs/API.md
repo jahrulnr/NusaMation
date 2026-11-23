@@ -68,6 +68,8 @@ Login is rate limited per IP. Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` w
 
 Messages have `role`, `kind` (`text`, `thought`, `tool`, `system`, `error`, `notice`), `text`, `content`, `status`, `attachments`, `toolCallId`, `seq`, timestamps.
 
+`POST /conversations/{id}/prepare` separates its failures: 403 `agent_auth_required` carries `authMethods`; 409 `agent_config_unavailable` means a stored model or option was rejected (not a login problem) and carries `configId`; other startup failures are 502 `prepare_failed`.
+
 `GET /references?conversationId=...&q=...` searches the conversation's roots and registered MCPs. For a new draft, pass `agentId` and optionally `projectId` instead. It returns `{items:[{kind,id,name,detail}],truncated}`; search is bounded. In Git worktrees, when `git` is available, file and folder results follow Git ignore rules while retaining tracked files. Without Git or outside a worktree, the regular filesystem search is used. References on a message are explicit selections, validated against the message text and retained in its metadata. Draft reference offsets are browser UTF-16 positions; message reference offsets are UTF-8 bytes.
 
 A conversation includes `projectId` when it belongs to a project. Chats join a project only when created with `projectId` or restored by undo while still unassigned.

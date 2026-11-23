@@ -76,6 +76,8 @@ WS   /api/conversations/{id}/terminal   # interactive shell; ?cwd= may be any ex
 GET|POST /api/conversations/{id}/messages
 GET  /api/references?conversationId=...&q=... # picker candidates; draft uses agentId and optional projectId
 POST /api/conversations/{id}/cancel|retry|config|agent|routing|prepare
+                                        # prepare: 409 agent_config_unavailable + configId for a rejected stored
+                                        #   option; 403 agent_auth_required carries authMethods
 POST /api/conversation-control             # loopback MCP bridge, bearer token
 GET  /api/conversation-control/activity    # in-memory control audit trail
 POST /api/conversations/{id}/turns/{turnId}/cancel   # queued turn only; {"dropMessage":true} also removes the queued message

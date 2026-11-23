@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -81,12 +82,7 @@ func TestTokenReplacementRestartsPolling(t *testing.T) {
 	waitFor(t, "a poll with token B", func() bool {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		for _, tok := range f.pollTokens {
-			if tok == "token-B" {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(f.pollTokens, "token-B")
 	})
 
 	f.mu.Lock()
@@ -175,7 +171,7 @@ func TestReconnectAfterDisconnectKeepsTheNewFlow(t *testing.T) {
 		return polling && hasClient
 	})
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := ch.Disconnect(); err != nil {
 			t.Fatal(err)
 		}

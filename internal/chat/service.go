@@ -1073,6 +1073,39 @@ func (s *Service) patchMeta(ctx context.Context, conversationID string, patch ma
 	return s.store.GetConversation(ctx, conversationID)
 }
 
+// patchMetaFunc mutates the conversation metadata under metaMu. It re-reads
+// the row inside the lock and writes only when the marshaled result changed,
+// so concurrent patches cannot lose each other's keys. A key set to nil is
+// deleted, matching patchMeta. changed reports whether the row was written.
+func (s *Service) patchMetaFunc(ctx context.Context, conversationID string, mutate func(map[string]any)) (conv store.Conversation, changed bool, err error) {
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+	conv, err = s.store.GetConversation(ctx, conversationID)
+	if err != nil {
+		return conv, false, err
+	}
+	meta, _ := s.metaMap(conv)
+	before := mustJSON(meta)
+	mutate(meta)
+	for key, value := range meta {
+		if value == nil {
+			delete(meta, key)
+		}
+	}
+	after := mustJSON(meta)
+	if string(before) == string(after) {
+		return conv, false, nil
+	}
+	if err := s.store.UpdateConversationMetadata(ctx, conversationID, after); err != nil {
+		return conv, false, err
+	}
+	updated, err := s.store.GetConversation(ctx, conversationID)
+	if err != nil {
+		return conv, true, err
+	}
+	return updated, true, nil
+}
+
 func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b

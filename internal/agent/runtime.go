@@ -31,6 +31,43 @@ func (e *AuthRequiredError) Error() string {
 	return "agent authentication required"
 }
 
+// ConfigUnavailableError reports a stored session choice the agent would not
+// accept on a fresh session. It is not an authentication problem, so callers
+// must not offer a login flow for it.
+type ConfigUnavailableError struct {
+	ConfigID string
+	Err      error
+}
+
+func (e *ConfigUnavailableError) Error() string {
+	switch {
+	case e == nil:
+		return ""
+	case e.Err != nil:
+		return e.Err.Error()
+	default:
+		return "agent configuration unavailable"
+	}
+}
+
+func (e *ConfigUnavailableError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// configSelectError tags only a genuine option-value rejection. A timeout,
+// process exit, or transport failure stays an ordinary error, so prepare
+// reports it as a startup failure instead of steering the user to the picker.
+func configSelectError(configID string, err error) error {
+	var rpc *acp.RPCError
+	if errors.As(err, &rpc) && rpc.Code == acp.CodeInvalidParams {
+		return &ConfigUnavailableError{ConfigID: configID, Err: err}
+	}
+	return err
+}
+
 type pendingNotif struct {
 	method string
 	raw    json.RawMessage
@@ -448,6 +485,22 @@ func (r *Runtime) loadOrCreate(ctx context.Context, s *Session, req EnsureReques
 	return s, nil
 }
 
+// sessionChoiceValue resolves the value a default selection should apply. The
+// conversation's desired override wins while the agent still advertises it;
+// otherwise the snapshot's own value is the fallback. ok=false means neither
+// is available in the current catalog — the choice may still appear after a
+// later default (a model switch can publish it), so callers retry before
+// treating it as stale.
+func sessionChoiceValue(configs json.RawMessage, desired map[string]any, choice store.ConfigSelection) (value any, ok bool) {
+	if override, has := desired[choice.ID]; has && override != nil && configAccepts(configs, choice.ID, override) {
+		return override, true
+	}
+	if configAccepts(configs, choice.ID, choice.Value) {
+		return choice.Value, true
+	}
+	return nil, false
+}
+
 func (r *Runtime) applyDesiredConfig(ctx context.Context, client *acp.Client, s *Session, req EnsureRequest) error {
 	configs := s.Config()
 	modelID, currentModel, models := sessionConfigs(configs, "model")
@@ -464,55 +517,69 @@ func (r *Runtime) applyDesiredConfig(ctx context.Context, client *acp.Client, s 
 		}
 		if model != "" && !anyEqual(currentModel, model) && contains(models, model) {
 			if err := r.applyConfig(ctx, client, s, modelID, model); err != nil {
-				return fmt.Errorf("select model %q: %w", model, err)
+				return configSelectError(modelID, fmt.Errorf("select model %q: %w", model, err))
 			}
 			configs = s.Config()
 		}
 	}
 	// A later choice can reset an earlier one (e.g. a model id that implies an
 	// effort level), so re-apply selections whose value no longer holds until
-	// the state settles; the check below still rejects irreconcilable orders.
+	// the state settles. A choice the agent does not advertise yet is skipped
+	// instead of failing: a later default can publish it (the model switch
+	// that adds dependent options), and a choice that never appears is pruned
+	// below rather than making the whole session unopenable.
 	for round := 0; round <= len(req.DefaultConfig); round++ {
-		settled := true
+		applied := false
 		for _, choice := range req.DefaultConfig {
-			value := choice.Value
-			if override, ok := req.DesiredConfig[choice.ID]; ok {
-				value = override
-			}
-			if !configAccepts(configs, choice.ID, value) {
-				if round == 0 {
-					return fmt.Errorf("default option %q or its value is no longer available", choice.ID)
-				}
+			value, ok := sessionChoiceValue(configs, req.DesiredConfig, choice)
+			if !ok || anyEqual(findConfigCurrent(configs, choice.ID), value) {
 				continue
 			}
-			if !anyEqual(findConfigCurrent(configs, choice.ID), value) {
-				if err := r.applyConfig(ctx, client, s, choice.ID, value); err != nil {
-					return fmt.Errorf("select %s: %w", choice.ID, err)
-				}
-				configs = s.Config()
-				settled = false
+			if err := r.applyConfig(ctx, client, s, choice.ID, value); err != nil {
+				return configSelectError(choice.ID, fmt.Errorf("select %s: %w", choice.ID, err))
 			}
+			configs = s.Config()
+			applied = true
 		}
-		if settled {
+		if !applied {
 			break
 		}
 	}
 	configs = s.Config()
+	// Selections the agent no longer publishes are dropped from the
+	// conversation snapshot instead of failing session creation forever.
+	// A value that is still advertised but did not hold is a real ordering
+	// conflict and keeps failing loudly.
+	staleDefaults := map[string]store.ConfigSelection{}
 	for _, choice := range req.DefaultConfig {
-		value := choice.Value
-		if override, ok := req.DesiredConfig[choice.ID]; ok {
-			value = override
+		value, ok := sessionChoiceValue(configs, req.DesiredConfig, choice)
+		if !ok {
+			staleDefaults[choice.ID] = choice
+			continue
 		}
-		if !configAccepts(configs, choice.ID, value) || !anyEqual(findConfigCurrent(configs, choice.ID), value) {
-			return fmt.Errorf("default option %q changed or became unavailable after a later setting", choice.ID)
+		if !anyEqual(findConfigCurrent(configs, choice.ID), value) {
+			return &ConfigUnavailableError{ConfigID: choice.ID, Err: fmt.Errorf("default option %q changed after a later setting", choice.ID)}
 		}
+	}
+	staleDesired := map[string]any{}
+	covered := make(map[string]bool, len(req.DefaultConfig))
+	for _, choice := range req.DefaultConfig {
+		covered[choice.ID] = true
 	}
 	for id, value := range req.DesiredConfig {
 		if id == "" || value == nil {
 			continue
 		}
-		cur := findConfigCurrent(configs, id)
-		if cur == nil || anyEqual(cur, value) || !configAccepts(configs, id, value) {
+		if !configAccepts(configs, id, value) {
+			staleDesired[id] = value
+			continue
+		}
+		if cur := findConfigCurrent(configs, id); cur != nil && anyEqual(cur, value) {
+			continue
+		}
+		if covered[id] {
+			// The settled default carries this id, so the loop above already
+			// applied the override or proved it cannot hold.
 			continue
 		}
 		if err := r.applyConfig(ctx, client, s, id, value); err != nil {
@@ -521,6 +588,36 @@ func (r *Runtime) applyDesiredConfig(ctx context.Context, client *acp.Client, s 
 		}
 		configs = s.Config()
 	}
+	if len(staleDefaults) == 0 && len(staleDesired) == 0 {
+		return nil
+	}
+	defaultIDs := make([]string, 0, len(staleDefaults))
+	ids := make([]string, 0, len(staleDefaults)+len(staleDesired))
+	for id := range staleDefaults {
+		defaultIDs = append(defaultIDs, id)
+		ids = append(ids, id)
+	}
+	desiredIDs := make([]string, 0, len(staleDesired))
+	for id := range staleDesired {
+		desiredIDs = append(desiredIDs, id)
+		if _, ok := staleDefaults[id]; !ok {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(defaultIDs)
+	slices.Sort(desiredIDs)
+	slices.Sort(ids)
+	for _, id := range ids {
+		args := []any{"agent", r.agent.Slug, "conversation", s.ConversationID(), "config", id}
+		if choice, ok := staleDefaults[id]; ok {
+			args = append(args, "value", choice.Value)
+		}
+		if value, ok := staleDesired[id]; ok {
+			args = append(args, "desiredValue", value)
+		}
+		r.log.Warn("dropping unavailable session config", args...)
+	}
+	r.mgr.Sink().SessionConfigPruned(s, defaultIDs, desiredIDs)
 	return nil
 }
 

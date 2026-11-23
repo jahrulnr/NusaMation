@@ -54,11 +54,21 @@ export function showSlowAgent(connecting) {
   openModal(`${modalHead("Still waiting for the agent", agentName(currentAgent()))}<div class="modal-body" style="padding:18px"><p class="muted">${connecting ? "The agent has not finished connecting." : "The agent has not sent a response yet."} You can keep waiting, inspect its details, or stop.</p></div><div class="modal-foot"><button class="btn btn-secondary" data-action="agent-logs" data-id="${esc(currentAgent()?.id || "")}">Agent details</button><button class="btn btn-secondary" data-action="${connecting ? "stop-preparing" : "stop-slow-turn"}">Stop</button><button class="btn btn-primary" data-action="close-modal">Keep waiting</button></div>`, { size: "md" });
 }
 
+// Only an auth failure may fall back to the agent's cached login methods. A
+// rejected saved option must not look like a login problem.
+export function blockerAuthMethods(error, agent) {
+  const advertised = error.data?.authMethods;
+  if (Array.isArray(advertised) && advertised.length) return advertised;
+  if (error.code === "agent_auth_required" || error.code === "auth_failed") return agent?.authMethods || [];
+  return [];
+}
+
 export function showAgentBlocker(error) {
   const agent = currentAgent();
-  const methods = error.data?.authMethods?.length ? error.data.authMethods : (agent?.authMethods || []);
+  const methods = blockerAuthMethods(error, agent);
+  const configProblem = error.code === "agent_config_unavailable";
   S.modal = { type: "agent-blocker" };
-  openModal(`${modalHead("Agent needs attention", agentName(agent))}<div class="modal-body" style="padding:18px"><p class="muted">${esc(error.message)}</p>${methods.length ? `<div class="settings-title">Choose how to continue</div><div class="blocker-actions">${methods.map((m) => `<button class="btn btn-secondary" data-action="blocker-auth" data-id="${esc(agent?.id || "")}" data-method="${esc(m.id)}" data-auth-type="${esc(m.type || "agent")}">${esc(m.name || m.id)}</button>`).join("")}</div>` : ""}</div><div class="modal-foot"><button class="btn btn-secondary" data-action="agent-logs" data-id="${esc(agent?.id || "")}">View agent details</button><button class="btn btn-primary" data-action="retry-prepare">Try again</button></div>`, { size: "md" });
+  openModal(`${modalHead("Agent needs attention", agentName(agent))}<div class="modal-body" style="padding:18px"><p class="muted">${esc(error.message)}</p>${configProblem ? `<div class="settings-title">Session options</div><p class="muted">A saved model or option is not available for this session. Change the session options, then try again.</p>` : ""}${methods.length ? `<div class="settings-title">Choose how to continue</div><div class="blocker-actions">${methods.map((m) => `<button class="btn btn-secondary" data-action="blocker-auth" data-id="${esc(agent?.id || "")}" data-method="${esc(m.id)}" data-auth-type="${esc(m.type || "agent")}">${esc(m.name || m.id)}</button>`).join("")}</div>` : ""}</div><div class="modal-foot">${configProblem ? `<button class="btn btn-secondary" data-action="open-session-options">Change options</button>` : `<button class="btn btn-secondary" data-action="agent-logs" data-id="${esc(agent?.id || "")}">View agent details</button>`}<button class="btn btn-primary" data-action="retry-prepare">Try again</button></div>`, { size: "md" });
 }
 
 export function renderApprovalsModal() {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -252,9 +253,7 @@ func newFakeBotAPI(t *testing.T) *fakeBotAPI {
 		case "answerInlineQuery":
 			raw, _ := json.Marshal(body["results"])
 			copied := map[string]any{}
-			for k, v := range body {
-				copied[k] = v
-			}
+			maps.Copy(copied, body)
 			f.answers = append(f.answers, inlineAnswer{
 				ID: fmt.Sprint(body["inline_query_id"]), Results: string(raw), Body: copied,
 			})

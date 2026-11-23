@@ -26,6 +26,10 @@ type Sink interface {
 	SessionUpdate(s *Session, update acp.SessionUpdate, raw json.RawMessage)
 	TerminalUpdate(s *Session, update TerminalUpdate)
 	SessionConfigUpdated(s *Session, configOptions json.RawMessage)
+	// SessionConfigPruned reports stored defaults/desired choices the agent no
+	// longer advertises, so the chat layer can drop them from the conversation
+	// snapshot before the next session replays them.
+	SessionConfigPruned(s *Session, defaults, desired []string)
 	Permission(ctx context.Context, s *Session, req acp.PermissionRequest) (acp.PermissionResponse, error)
 	Elicit(ctx context.Context, s *Session, request json.RawMessage) (any, error)
 	AgentLog(agentID, line string)
@@ -40,6 +44,7 @@ func (NopSink) SessionCreated(*Session, json.RawMessage, bool)             {}
 func (NopSink) SessionUpdate(*Session, acp.SessionUpdate, json.RawMessage) {}
 func (NopSink) TerminalUpdate(*Session, TerminalUpdate)                    {}
 func (NopSink) SessionConfigUpdated(*Session, json.RawMessage)             {}
+func (NopSink) SessionConfigPruned(*Session, []string, []string)           {}
 func (NopSink) Permission(context.Context, *Session, acp.PermissionRequest) (acp.PermissionResponse, error) {
 	return acp.PermissionResponse{Outcome: acp.PermissionOutcome{Outcome: "cancelled"}}, nil
 }

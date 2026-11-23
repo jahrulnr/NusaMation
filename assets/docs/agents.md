@@ -39,6 +39,15 @@ defaults later does not rewrite existing conversations. Conversation-level
 choices can override them. Switching an existing conversation to the default
 agent also applies the configured defaults to the new ACP session.
 
+If the agent no longer publishes a saved option or value — for example a speed
+that the newly selected model does not offer — the conversation skips that
+choice and drops it from its saved snapshot instead of failing to open a
+session. The remaining choices still apply; if the conversation's own value is
+gone but the default snapshot's value is still published, the default is used
+and only the override is dropped. Changing the model without a live session
+also hides options that follow the model from the picker until the next session
+republishes them.
+
 The legacy `agent add/set --model` flag remains available for an individual
 agent. Prefer **Defaults** for capability-checked, ordered model and other
 session options. The HTTP preview and save endpoints are listed in [api.md](api.md).

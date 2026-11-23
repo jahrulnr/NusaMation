@@ -356,6 +356,16 @@ export function bindEvents() {
       case "conv-menu": e.preventDefault(); openConversationMenu(target, id); break;
       case "agent-menu": openAgentMenu(target); break;
       case "config-menu": openConfigMenu(target); break;
+      case "open-session-options": {
+        closeModal();
+        // <=800px hides .composer-configs, so the desktop picker has a zero
+        // size; anchor to the visible "+" button instead.
+        const anchor = isMobile()
+          ? ($(".composer-mobile-settings") || $(".composer-settings") || $(".composer-configs"))
+          : ($(".composer-settings") || $(".composer-mobile-settings") || $(".composer-configs"));
+        if (anchor) openConfigMenu(anchor);
+        break;
+      }
       case "usage-detail": openUsageDetail(target); break;
       case "prepare-composer": await prepareComposer(); break;
       case "show-agent-request": showPendingRequest(); break;

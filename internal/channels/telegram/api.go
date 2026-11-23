@@ -55,10 +55,7 @@ func retryAfterDelay(err error) (time.Duration, bool) {
 	if !errors.As(err, &ae) || ae.code != 429 || ae.retryAfter <= 0 {
 		return 0, false
 	}
-	secs := ae.retryAfter
-	if secs > 60 {
-		secs = 60
-	}
+	secs := min(ae.retryAfter, 60)
 	return time.Duration(secs) * time.Second, true
 }
 

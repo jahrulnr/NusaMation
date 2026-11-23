@@ -156,6 +156,67 @@ func (s *Service) SessionConfigUpdated(sess *agent.Session, configs json.RawMess
 	}
 }
 
+// SessionConfigPruned drops selections the agent no longer advertises from the
+// conversation's stored snapshots. Without this, every new session replays the
+// same unavailable choice, so a conversation that once picked a model without
+// an option could never open a session again.
+func (s *Service) SessionConfigPruned(sess *agent.Session, defaults, desired []string) {
+	if len(defaults) == 0 && len(desired) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conv, err := s.store.GetConversation(ctx, sess.ConversationID())
+	if err != nil || conv.AgentID != sess.AgentID() {
+		return
+	}
+	dropDefaults := make(map[string]bool, len(defaults))
+	for _, id := range defaults {
+		dropDefaults[id] = true
+	}
+	dropDesired := make(map[string]bool, len(desired))
+	for _, id := range desired {
+		dropDesired[id] = true
+	}
+	// Nested merge (filter defaultConfig, delete desired keys), so it cannot use
+	// the shallow patchMeta.
+	updated, changed, err := s.patchMetaFunc(ctx, conv.ID, func(meta map[string]any) {
+		if raw, ok := meta["defaultConfig"]; ok && len(dropDefaults) > 0 {
+			var list []store.ConfigSelection
+			if json.Unmarshal(mustJSON(raw), &list) == nil {
+				kept := make([]store.ConfigSelection, 0, len(list))
+				for _, choice := range list {
+					if !dropDefaults[choice.ID] {
+						kept = append(kept, choice)
+					}
+				}
+				if len(kept) != len(list) {
+					if len(kept) == 0 {
+						delete(meta, "defaultConfig")
+					} else {
+						meta["defaultConfig"] = kept
+					}
+				}
+			}
+		}
+		if raw, ok := meta["desiredConfig"].(map[string]any); ok && len(dropDesired) > 0 {
+			for id := range dropDesired {
+				delete(raw, id)
+			}
+			if len(raw) == 0 {
+				delete(meta, "desiredConfig")
+			}
+		}
+	})
+	if err != nil {
+		s.log.Warn("failed to prune unavailable session config", "conversation", conv.ID, "error", err)
+		return
+	}
+	if changed && updated.ID != "" {
+		s.emit("conversation.updated", updated.ID, updated)
+	}
+}
+
 func (s *Service) AgentLog(agentID, line string) {
 	line = textfmt.StripANSI(line)
 	if len(line) > 2000 {

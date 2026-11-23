@@ -23,6 +23,12 @@ func (s *Server) handlePrepareConversation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusForbidden, map[string]any{"code": "agent_auth_required", "error": err.Error(), "authMethods": authErr.Methods})
 			return
 		}
+		if cfgErr, ok := errors.AsType[*agent.ConfigUnavailableError](err); ok {
+			// Not an auth problem: the UI must offer the options picker, not
+			// a login flow.
+			writeJSON(w, http.StatusConflict, map[string]any{"code": "agent_config_unavailable", "error": err.Error(), "configId": cfgErr.ConfigID})
+			return
+		}
 		writeError(w, http.StatusBadGateway, "prepare_failed", err.Error())
 		return
 	}
