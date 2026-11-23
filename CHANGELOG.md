@@ -4,6 +4,14 @@ All notable changes to the Go core will be documented in this file. The format i
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-24
+
+### Fixed
+
+- A conversation whose stored defaults or desired session options are no longer published by the agent (for example Devin's `speed` after switching to a model without it) now opens its session: the unavailable choices are skipped and pruned instead of being replayed on every new ACP session, while the remaining choices still apply.
+- Changing the model while no session is live no longer leaves options that follow the model in the picker; the next session republishes them.
+- `POST /conversations/{id}/prepare` now returns 409 `agent_config_unavailable` with `configId` for a rejected stored option, separate from 403 `agent_auth_required` and 502 startup failures, so the UI no longer offers login buttons for a configuration problem.
+
 ## [0.3.0] - 2026-11-20
 
 ### Added
